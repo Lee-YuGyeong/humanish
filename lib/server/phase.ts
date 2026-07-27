@@ -12,7 +12,10 @@ import type { Phase } from '@/lib/game/types';
 export const PHASE_DURATION_MS: Record<Phase, number | null> = {
   lobby: null,
   question: 60_000,
-  target: 60_000,
+  // 한 사람이 한 문장 쓰는 데 60초는 길다. 나머지 넷은 그동안 할 일이 없다.
+  // 특히 대상이 봇이면 조기 종료가 없어(§5.3) 매번 꽉 채운다 — 그게 죽은 시간이었다.
+  // 답을 뜯어보는 시간은 바로 뒤 chat 120초가 맡는다.
+  target: 30_000,
   chat: 120_000,
   vote: 30_000,
   reveal: null,
