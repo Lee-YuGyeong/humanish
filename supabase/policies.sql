@@ -44,8 +44,15 @@ with (security_invoker = off) as
 
 grant select on public_players to anon, authenticated;
 
--- TODO(A): 뷰가 방으로 스코프되지 않는다. where 절 없이 긁으면 전체 방의
--- 닉네임·좌석이 보인다. is_bot이 없어 게임은 안 깨지지만 인증 붙이면 막을 것.
+-- 뷰가 방으로 스코프되지 않는다. where 절 없이 긁으면 전체 방의 닉네임·좌석이 보인다.
+-- 아래 answers/messages/questions/rooms 정책도 마찬가지로 방 조건이 없다. 의도된 상태다.
+--
+-- 헤더나 GUC로 방 id를 넘겨 정책에 쓰는 방법은 쓰지 않는다. Realtime Postgres Changes는
+-- 배달 시점에 RLS를 평가하는데 그 경로에는 REST 요청 헤더가 없다. rooms·players에
+-- 그런 정책을 걸면 실시간 이벤트가 아무에게도 배달되지 않는다 (SPEC §7.3).
+--
+-- 방 격리는 클라이언트 계약으로 유지한다 — 모든 구독·쿼리에 방 필터 (SPEC §6.3, I10).
+-- DB로 강제하려면 익명 인증이 선행돼야 한다 (SPEC §15-2, §15-6).
 
 ------------------------------------------------------------------------------
 -- rooms — 코드로 방을 찾아야 하므로 읽기는 열어둔다

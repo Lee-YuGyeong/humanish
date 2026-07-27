@@ -82,6 +82,11 @@ create table agent_logs (
   action    text not null
 );
 
-create index on players (room_id);
-create index on messages (room_id, visible_at);
-create index on answers  (room_id, question_id);
+create index on players    (room_id);
+create index on messages   (room_id, visible_at);
+create index on answers    (room_id, question_id);
+create index on questions  (room_id, round);
+create index on agent_logs (room_id);
+
+-- pg_cron 워치독이 15초마다 훑는다. 없으면 방이 쌓일수록 전체 스캔이 된다 (SPEC §16.3)
+create index on rooms (phase_ends_at) where phase_ends_at is not null;
