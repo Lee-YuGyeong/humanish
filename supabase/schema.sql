@@ -3,7 +3,7 @@
 --
 -- 적용:
 --   psql "$SUPABASE_DB_URL_DIRECT" -f supabase/schema.sql
---   (SPEC §12.2 — 마이그레이션은 직결 포트 5432, 런타임은 풀러 6543)
+--   (SPEC §12.2 — 마이그레이션은 직결 포트 5432)
 
 create table rooms (
   id            uuid primary key default gen_random_uuid(),

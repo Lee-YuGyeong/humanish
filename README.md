@@ -4,6 +4,7 @@
 인간 중 한 명은 AI인 척해야 하는 스파이다.
 
 기술 설계는 [`docs/SPEC.md`](docs/SPEC.md)가 유일한 기준이다. 코드와 어긋나면 SPEC을 먼저 고친다.
+AI 코딩 에이전트로 작업한다면 [`CLAUDE.md`](CLAUDE.md)가 매 세션 자동으로 읽히는 요약이다.
 
 ## 시작하기
 
@@ -35,8 +36,10 @@ psql "$SUPABASE_DB_URL_DIRECT" -f supabase/policies.sql
 
 스캐폴딩 단계. 폴더 뼈대와 타입·스키마만 있고 로직은 대부분 `TODO(A/B/C)`다.
 
-다음 순서 (SPEC §12.7):
+구현 순서와 각 단계의 완료 조건은 **SPEC §13**에 있다. 다음 세 개가 먼저다.
 
-1. 페이즈 상태머신 (`advance_phase` RPC + `phase_seq` 낙관적 잠금)
-2. pg_cron 안전망 — 없으면 데모 중에 방이 멈춘다
-3. LLM 타임아웃 + 폴백
+1. 방 생성 · 입장
+2. 페이즈 상태머신 (`advance_phase` RPC + `phase_seq` 낙관적 잠금)
+3. pg_cron 안전망 — 없으면 데모 중에 방이 멈춘다
+
+시작하기 전에 **SPEC §15(미결정 사항)**을 확인한다. LLM 공급자가 아직 정해지지 않았다.

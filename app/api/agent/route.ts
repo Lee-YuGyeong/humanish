@@ -1,8 +1,10 @@
 /**
  * LLM 프록시. 껍데기는 A, 내용은 B (SPEC §2).
  *
- * 클라이언트에서 NIM을 직접 부르면 키가 노출된다. 모든 봇 호출은 여기를 지난다.
- * SPEC §11 — Edge Runtime. Node 런타임보다 콜드스타트가 짧다.
+ * 클라이언트에서 LLM API를 직접 부르면 키가 노출된다. 모든 봇 호출은 여기를 지난다 (SPEC I4).
+ *
+ * 공급자 미확정 (SPEC §15-1). 잠정으로 NVIDIA NIM 키를 본다.
+ * 런타임도 함께 확정한다 — 공급자 SDK가 Edge를 지원하지 않으면 'nodejs'로 바꾼다.
  */
 
 export const runtime = 'edge';

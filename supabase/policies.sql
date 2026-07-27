@@ -70,7 +70,7 @@ create policy questions_select on questions
 -- 행은 구독자에게 아예 전달되지 않는다. 그래서 SPEC §6의 "미래 레코드를 받아
 -- 두고 그 시각에 렌더" 방식이 이 정책과 충돌한다.
 --
--- 해결: 답변·채팅은 SPEC §11/§12.4대로 Broadcast로 배달한다. 트리거가 쏘는
+-- 해결: 답변·채팅은 SPEC §6.1대로 Broadcast로 배달한다. 트리거가 쏘는
 -- 페이로드에는 visible_at이 실려 있고 클라이언트가 그 시각에 렌더한다.
 -- 아래 select 정책은 재접속·새로고침 시의 백필 경로에만 적용된다.
 create policy answers_select on answers
