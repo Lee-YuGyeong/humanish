@@ -34,6 +34,12 @@ yarn-error.log*
 .env*
 !.env.local.example
 
+# 로컬 비밀. Claude 접근 차단 대상 (.claude/settings.json + .claude/hooks/deny-secrets.mjs)
+dev.vars
+.dev.vars
+secrets.json
+secrets.yaml
+
 # vercel
 .vercel
 

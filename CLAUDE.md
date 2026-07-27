@@ -41,6 +41,29 @@ npm run lint
 
 이 저장소에서 작업하는 세션은 **A 영역**을 맡는다. B·C 영역 파일이 필요하면 스텁만 두고 사용자에게 알린다.
 
+## 작업 보드 (`/`)
+
+여러 명이 동시에 작업하므로 **한 사람이 한 라우트 폴더를 소유한다.** `/`는 게임 화면이 아니라 진입 버튼 목록이다.
+
+| 라우트 | 폴더 | 소유 |
+|---|---|---|
+| `/intro` | `app/intro/` | 원상 — 제목 · 역할 소개 |
+| `/main` | `app/main/` | C — 방 만들기 · 입장 |
+| `/room/[code]` | `app/room/` | C — 게임 화면 |
+| `/lab` | `app/lab/` | B — 규칙 · 봇 응답 확인 |
+| `/admin` | `app/admin/` | A — 방 · 페이즈 점검 |
+| 목록 자체 | `app/workspaces.ts` | 공동. **한 줄씩만** 고친다 |
+
+새 작업 공간은 `app/workspaces.ts`에 한 줄 추가 + `app/<경로>/page.tsx` 생성. 남의 폴더는 열지 않는다.
+
+## 비밀 파일
+
+`dev.vars` · `.dev.vars` · `.env*` · `secrets.*`는 **Claude가 읽지도 쓰지도 못한다.**
+`.claude/settings.json`의 `permissions.deny` + `.claude/hooks/deny-secrets.mjs`(PreToolUse 훅)가 Bash 우회까지 막는다.
+
+- 키 이름만 알아야 하면 `.env.local.example`을 읽는다. 값은 사용자에게 요청한다.
+- 보호 대상을 늘리려면 `deny-secrets.mjs` 위쪽 정규식만 고치고 `node .claude/hooks/deny-secrets.test.mjs`로 확인한다.
+
 ## 작업할 때
 
 - **손대기 전에** SPEC에서 해당 섹션을 읽는다. 섹션 번호(`§5.2` 등)는 코드 주석이 참조하므로 **재번호를 매기지 않는다.**

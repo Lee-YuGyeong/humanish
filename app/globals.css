@@ -12,15 +12,14 @@
   --font-mono: var(--font-geist-mono);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+/* 라이트 전용이다. OS가 다크 모드여도 흰 배경을 유지한다.
+   (다크 대응을 다시 넣으려면 여기 미디어 쿼리 + 각 페이지의 bg-white 를 같이 고친다) */
+html {
+  color-scheme: light;
 }
 
 body {
   background: var(--background);
   color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: var(--font-sans), system-ui, sans-serif;
 }
