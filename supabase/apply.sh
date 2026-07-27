@@ -125,6 +125,9 @@ check "public_players 컬럼이 정확히 6개다" "id,room_id,nickname,mask_id,
   "$(q "select string_agg(column_name, ',' order by ordinal_position) from information_schema.columns where table_name='public_players';")"
 check "rooms가 Realtime publication에 있다 (§6)" "1" \
   "$(q "select count(*) from pg_publication_tables where pubname='supabase_realtime' and tablename='rooms';")"
+# publication에 갓 추가한 직후에는 Realtime이 몇 분간 이벤트를 안 보낼 수 있다.
+# 구독은 SUBSCRIBED로 뜨는데 이벤트만 안 오므로 코드를 의심하게 된다. 실제로 그랬다.
+# 화면이 안 갱신되면 이 표시를 먼저 떠올릴 것 — 조금 기다렸다 다시 해본다.
 check "질문 풀이 차 있다" "t" "$(q "select count(*) > 0 from question_pool;")"
 check "봇 문구 풀이 차 있다" "t" "$(q "select count(*) > 0 from bot_line_pool;")"
 check "advance_phase가 있다" "1" \
