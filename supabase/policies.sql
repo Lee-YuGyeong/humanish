@@ -90,7 +90,14 @@ grant select on public_players to anon, authenticated;
 -- grant를 깔아주지만, 그 암묵적 동작에 기대면 이 파일만으로는 재현되지 않는다.
 -- 로컬 Postgres에 그대로 적용하면 클라이언트가 아무것도 못 읽는 게임이 된다.
 --
+-- ★ 반드시 revoke를 먼저 한다.
+--   Supabase는 public 스키마의 새 테이블에 anon·authenticated 권한을 자동으로 깔아준다
+--   (alter default privileges). 그래서 아무것도 안 하면 anon이 insert·update·delete까지
+--   갖는다. RLS에 해당 정책이 없어 실제 쓰기는 막히지만, 권한을 남겨둘 이유가 없다.
+--   PUBLIC에서 회수하는 것으로는 anon에게 준 명시적 권한이 없어지지 않는다 — 따로 적는다.
+--
 -- select만 준다. 쓰기는 전부 service role 서버를 거친다 (I9).
+revoke all on rooms, questions, answers, messages, votes from anon, authenticated;
 grant select on rooms, questions, answers, messages, votes to anon, authenticated;
 
 ------------------------------------------------------------------------------

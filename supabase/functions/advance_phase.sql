@@ -392,17 +392,23 @@ $$;
 ------------------------------------------------------------------------------
 -- 권한 — I9
 ------------------------------------------------------------------------------
--- ★ 함수는 기본으로 PUBLIC에게 execute가 열린다. security definer 함수를 그대로 두면
---   anon이 직접 불러 남의 방을 전환시킬 수 있다. 전부 닫고 service role만 남긴다.
---   클라이언트는 /api/phase/advance를 거친다 (SPEC §17.4).
-revoke all on function next_phase(text, int)                    from public;
-revoke all on function phase_duration(text)                     from public;
-revoke all on function early_exit_met(uuid, text, int)          from public;
-revoke all on function pick_bot_line(text)                      from public;
-revoke all on function on_enter_phase(uuid, text, int, timestamptz) from public;
-revoke all on function advance_phase(uuid, int, uuid)           from public;
-revoke all on function advance_expired_rooms(int)               from public;
-revoke all on function cleanup_stale_rooms(interval)            from public;
+-- ★ 함수는 기본으로 PUBLIC에게 execute가 열린다. 게다가 Supabase는 public 스키마의
+--   새 함수에 anon·authenticated execute를 자동으로 깔아준다(alter default privileges).
+--   security definer 함수라 anon이 부르면 **RLS를 통째로 우회한다** — 누구나 남의 방
+--   페이즈를 넘길 수 있다는 뜻이다. RLS로는 못 막는다.
+--
+--   PUBLIC에서 회수하는 것만으로는 anon에게 준 명시적 권한이 없어지지 않는다.
+--   anon·authenticated를 따로 적어야 한다. 전부 닫고 service role만 남긴다.
+--   클라이언트는 /api/phase/advance를 거친다 (I9, SPEC §17.4).
+revoke all on function next_phase(text, int)                    from public, anon, authenticated;
+revoke all on function phase_duration(text)                     from public, anon, authenticated;
+revoke all on function early_exit_met(uuid, text, int)          from public, anon, authenticated;
+revoke all on function pick_bot_line(text)                      from public, anon, authenticated;
+revoke all on function on_enter_phase(uuid, text, int, timestamptz) from public, anon, authenticated;
+revoke all on function advance_phase(uuid, int, uuid)           from public, anon, authenticated;
+revoke all on function advance_expired_rooms(int)               from public, anon, authenticated;
+revoke all on function cleanup_stale_rooms(interval)            from public, anon, authenticated;
+revoke all on function bump_roster_seq()                        from public, anon, authenticated;
 
 grant execute on function advance_phase(uuid, int, uuid)        to service_role;
 grant execute on function advance_expired_rooms(int)            to service_role;

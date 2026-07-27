@@ -38,6 +38,16 @@ psql -q -d postgres \
   -c "create database whois_test;" \
   -c "create role anon nologin; create role authenticated nologin; create role service_role nologin;"
 
+# ★ Supabase의 기본 권한을 흉내 낸다. 이걸 안 하면 로컬이 실제보다 안전해 보인다.
+#   Supabase는 public 스키마의 새 테이블·함수에 anon·authenticated 권한을 자동으로 깔아준다.
+#   그 상태에서 우리가 제대로 revoke하는지가 검사 대상이다.
+#   (실제로 이 줄이 없어서 "anon이 advance_phase를 부를 수 있다"를 로컬이 놓쳤다)
+psql -q -d whois_test \
+  -c "grant usage on schema public to anon, authenticated, service_role;" \
+  -c "alter default privileges in schema public grant all on tables to anon, authenticated, service_role;" \
+  -c "alter default privileges in schema public grant all on functions to anon, authenticated, service_role;" \
+  -c "alter default privileges in schema public grant all on sequences to anon, authenticated, service_role;"
+
 echo "▸ SQL 적용"
 for f in schema.sql policies.sql seed.sql functions/advance_phase.sql; do
   psql -v ON_ERROR_STOP=1 -q -f "$ROOT/supabase/$f" >/dev/null 2>&1 \
@@ -194,6 +204,18 @@ blocked "advance_expired_rooms 직접 호출"    "select advance_expired_rooms()
 blocked "rooms 쓰기"                         "update rooms set phase='reveal' where id='$R';"
 blocked "answers 쓰기 (위조)"                "insert into answers (question_id,room_id,player_id,text,visible_at) values ('$QID','$R','$P1','위조',now());"
 blocked "players 삭제"                       "delete from players;"
+blocked "votes 쓰기 (위조)"                  "insert into votes values ('$R','$P1','$B3','위조');"
+blocked "questions 쓰기"                     "insert into questions (room_id,round,kind,text) values ('$R',1,'common','위조');"
+
+echo ""
+echo "── 권한 자체가 없어야 한다 (Supabase 기본 grant를 제대로 걷어냈나) ──"
+for t in rooms questions answers messages votes; do
+  check "anon은 $t 에 쓰기 권한이 없다" "f" \
+    "$(q "select has_table_privilege('anon','$t','insert') or has_table_privilege('anon','$t','update') or has_table_privilege('anon','$t','delete');")"
+done
+for fn in "advance_phase(uuid,int,uuid)" "advance_expired_rooms(int)" "on_enter_phase(uuid,text,int,timestamptz)" "pick_bot_line(text)" "cleanup_stale_rooms(interval)"; do
+  check "anon은 ${fn%%(*} 를 못 부른다" "f" "$(q "select has_function_privilege('anon','$fn','execute');")"
+done
 
 echo ""
 echo "── 반대로 이건 보여야 정상 ──"
