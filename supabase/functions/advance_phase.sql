@@ -50,7 +50,9 @@ create or replace function phase_duration(p_phase text)
 returns interval language sql immutable as $$
   select case p_phase
     when 'question' then interval '60 seconds'
-    when 'target'   then interval '60 seconds'
+    -- 30초다. 60초면 나머지 넷이 멍하니 기다린다. 특히 대상이 봇이면 조기 종료가
+    -- 없어서(early_exit_met 참고) 매번 꽉 채운다. 답을 씹는 시간은 뒤의 chat이 맡는다.
+    when 'target'   then interval '30 seconds'
     when 'chat'     then interval '120 seconds'
     when 'vote'     then interval '30 seconds'
     else null
