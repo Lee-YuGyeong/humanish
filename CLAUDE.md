@@ -63,6 +63,8 @@ npm run lint
 
 - 키 이름만 알아야 하면 `.env.local.example`을 읽는다. 값은 사용자에게 요청한다.
 - 보호 대상을 늘리려면 `deny-secrets.mjs` 위쪽 정규식만 고치고 `node .claude/hooks/deny-secrets.test.mjs`로 확인한다.
+- **경로를 개인 절대경로로 쓰지 않는다.** `deny` 규칙은 `/**/…`(프로젝트 루트 기준) 형태여야
+  팀원 각자의 체크아웃 위치에서 똑같이 걸린다. `//Users/…` 로 쓰면 그 사람 머신에서만 동작한다.
 
 ## 작업할 때
 
