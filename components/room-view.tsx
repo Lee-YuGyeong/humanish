@@ -13,7 +13,7 @@ import Link from 'next/link';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { getBrowserClient } from '@/lib/server/supabase';
 import { PlayerGrid } from '@/components/player-grid';
-import type { Phase, PublicPlayer, Question, Room } from '@/lib/game/types';
+import type { Phase, PublicPlayer, Question, Role, Room } from '@/lib/game/types';
 
 interface Me {
   player: PublicPlayer | null;
@@ -32,6 +32,24 @@ interface VoteRow {
   voter_id: string;
   target_id: string;
   reason: string;
+}
+
+/**
+ * /api/reveal 응답. 게임에서 정체가 클라이언트로 오는 곳은 여기 하나뿐이고,
+ * 그 라우트가 phase와 참가 여부를 확인한 뒤에만 준다 (I1).
+ */
+interface RevealData {
+  players: {
+    id: string;
+    nickname: string;
+    seat: number;
+    is_bot: boolean;
+    role: Role | null;
+    votes_received: number;
+    score: number;
+  }[];
+  votes: { voter_id: string; target_id: string; reason: string; correct: boolean }[];
+  rule: string[];
 }
 
 const PHASE_LABEL: Record<Phase, string> = {
@@ -412,28 +430,112 @@ function Panel({
   }
 
   // reveal · replay
+  return <RevealPanel room={room} me={me} votes={votes} nameOf={nameOf} />;
+}
+
+/** 정답 공개. 정체는 /api/reveal에서만 온다 — 그 라우트가 페이즈와 참가 여부를 확인한다. */
+function RevealPanel({
+  room,
+  me,
+  votes,
+  nameOf,
+}: {
+  room: Room;
+  me: Me;
+  votes: VoteRow[];
+  nameOf: (id: string) => string;
+}) {
+  const [data, setData] = useState<RevealData | null>(null);
+  const [failed, setFailed] = useState<string | null>(null);
+
+  useEffect(() => {
+    void fetch(`/api/reveal?room_id=${room.id}`)
+      .then((r) => r.json())
+      .then((d) => (d.error ? setFailed(d.error) : setData(d as RevealData)));
+  }, [room.id]);
+
+  if (failed) {
+    return (
+      <Box>
+        <p className="text-sm text-red-600">{failed}</p>
+      </Box>
+    );
+  }
+  if (!data) {
+    return (
+      <Box>
+        <p className="text-sm text-gray-400">집계하는 중…</p>
+      </Box>
+    );
+  }
+
+  const ranked = [...data.players].sort((a, b) => b.score - a.score);
+  const myVote = votes.find((v) => v.voter_id === me.player?.id);
+  const iWasRight = myVote != null && data.players.find((p) => p.id === myVote.target_id)?.is_bot;
+
   return (
-    <Box>
-      <p className="text-sm font-medium">투표 결과</p>
-      {votes.length === 0 ? (
-        <p className="text-sm text-gray-400">아직 집계되지 않았다.</p>
-      ) : (
-        <ul className="space-y-1 text-sm">
-          {votes.map((v) => (
-            <li key={v.voter_id}>
-              <span className="text-gray-500">{nameOf(v.voter_id)}</span> → {nameOf(v.target_id)}
-              {v.reason && <span className="text-gray-400"> · {v.reason}</span>}
+    <>
+      <Box>
+        <p className="text-sm font-medium">
+          {myVote == null
+            ? '투표하지 않았다'
+            : iWasRight
+              ? '맞혔다 — AI를 골랐다'
+              : '틀렸다 — 사람을 골랐다'}
+        </p>
+        <ul className="space-y-1.5 text-sm">
+          {ranked.map((p) => (
+            <li key={p.id} className="flex items-baseline justify-between gap-3">
+              <span className="flex items-baseline gap-2">
+                <span className={p.id === me.player?.id ? 'font-medium' : ''}>{p.nickname}</span>
+                <span
+                  className={[
+                    'rounded px-1.5 py-0.5 text-[11px]',
+                    p.role === 'ai'
+                      ? 'bg-red-100 text-red-700 dark:bg-red-950/50 dark:text-red-300'
+                      : p.role === 'spy'
+                        ? 'bg-amber-100 text-amber-800 dark:bg-amber-950/50 dark:text-amber-300'
+                        : 'bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-300',
+                  ].join(' ')}
+                >
+                  {p.role === 'ai' ? 'AI' : p.role === 'spy' ? '스파이' : '시민'}
+                </span>
+                <span className="text-xs text-gray-400">표 {p.votes_received}</span>
+              </span>
+              <span className="font-mono tabular-nums text-sm">{p.score}점</span>
             </li>
           ))}
         </ul>
-      )}
-      <p className="border-t pt-3 text-xs text-gray-400">
-        정답(누가 AI였는지)과 점수는 아직 안 붙었다 — calcScores가 미구현이다 (SPEC §8, §17.2).
-      </p>
-      <Link href="/" className="text-sm underline">
-        처음으로
-      </Link>
-    </Box>
+      </Box>
+
+      <Box>
+        <p className="text-sm font-medium">누가 누구를 찍었나</p>
+        {data.votes.length === 0 ? (
+          <p className="text-sm text-gray-400">투표가 없다.</p>
+        ) : (
+          <ul className="space-y-1 text-sm">
+            {data.votes.map((v) => (
+              <li key={v.voter_id}>
+                <span className="text-gray-500">{nameOf(v.voter_id)}</span> → {nameOf(v.target_id)}
+                <span className={v.correct ? 'text-green-600' : 'text-gray-400'}>
+                  {' '}
+                  {v.correct ? '○' : '✕'}
+                </span>
+                {v.reason && <span className="text-gray-400"> · {v.reason}</span>}
+              </li>
+            ))}
+          </ul>
+        )}
+        <p className="border-t pt-3 text-xs text-gray-400">
+          채점: {data.rule.join(' · ')}
+          <br />
+          이 규칙은 SPEC에 없다. 정하면 app/api/reveal/route.ts와 lib/game/rules.ts를 고친다.
+        </p>
+        <Link href="/" className="text-sm underline">
+          처음으로
+        </Link>
+      </Box>
+    </>
   );
 }
 
