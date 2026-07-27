@@ -98,7 +98,33 @@ grant select on public_players to anon, authenticated;
 --
 -- select만 준다. 쓰기는 전부 service role 서버를 거친다 (I9).
 revoke all on rooms, questions, answers, messages, votes from anon, authenticated;
-grant select on rooms, questions, answers, messages, votes to anon, authenticated;
+grant select on rooms, questions, answers, votes to anon, authenticated;
+-- messages는 테이블을 주지 않는다. 아래 public_messages 뷰만 준다.
+
+------------------------------------------------------------------------------
+-- messages — created_at을 가리고 visible_at을 뷰에서 강제한다
+------------------------------------------------------------------------------
+-- ★ created_at이 봇을 드러낸다. 봇 메시지는 타이핑 지연 때문에 created_at보다
+--   visible_at이 몇 초 뒤다. 사람 메시지는 둘이 같다. 그 간격만 보면 봇이 갈린다 (I1).
+--   public_players에서 created_at을 뺀 것과 같은 이유다 (§7.2).
+--
+-- ★ 필터를 뷰 안에 박는다. RLS 정책으로 거는 것과 결과는 같지만, 이쪽은 컬럼을
+--   고르는 일과 행을 고르는 일이 한 군데 모여 있어 빠뜨리기 어렵다.
+--
+-- 이 뷰는 방으로 스코프되지 않는다. 클라이언트가 .eq('room_id', ...)를 걸어야 한다 (I10).
+drop view if exists public_messages;
+do $$
+declare v_sql constant text :=
+  'select id, room_id, player_id, text, visible_at from messages where visible_at <= now()';
+begin
+  if current_setting('server_version_num')::int >= 150000 then
+    execute 'create view public_messages with (security_invoker = off) as ' || v_sql;
+  else
+    execute 'create view public_messages as ' || v_sql;
+  end if;
+end $$;
+
+grant select on public_messages to anon, authenticated;
 
 ------------------------------------------------------------------------------
 -- rooms — 코드로 방을 찾아야 하므로 읽기는 열어둔다

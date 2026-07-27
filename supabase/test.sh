@@ -49,7 +49,7 @@ psql -q -d whois_test \
   -c "alter default privileges in schema public grant all on sequences to anon, authenticated, service_role;"
 
 echo "▸ SQL 적용"
-for f in schema.sql policies.sql seed.sql functions/advance_phase.sql; do
+for f in schema.sql policies.sql seed.sql functions/advance_phase.sql functions/room.sql functions/chat.sql; do
   psql -v ON_ERROR_STOP=1 -q -f "$ROOT/supabase/$f" >/dev/null 2>&1 \
     || { echo "  ✗ $f 적용 실패"; psql -v ON_ERROR_STOP=1 -f "$ROOT/supabase/$f" 2>&1 | tail -20; exit 1; }
   echo "  ✓ $f"
@@ -184,6 +184,29 @@ check "안 잠긴 B방은 전환됐다"          "vote"   "$(q "select phase fro
 wait $LOCKER 2>/dev/null || true
 
 echo ""
+echo "── 자유 채팅: 봇 쿨다운과 지연 (SPEC §5.4, §13-6) ──"
+psql -q -c "update rooms set phase='chat', phase_ends_at = now() + interval '120s' where id='$R';"
+for i in 1 2 3 4 5; do
+  q "select send_message('$R','$P1','도배 $i', 8);" >/dev/null
+done
+HUMAN_MSGS="$(q "select count(*) from messages m join players p on p.id=m.player_id where m.room_id='$R' and not p.is_bot;")"
+BOT_MSGS="$(q "select count(*) from messages m join players p on p.id=m.player_id where m.room_id='$R' and p.is_bot;")"
+check "사람 메시지 5건 들어감" "5" "$HUMAN_MSGS"
+# 봇은 3명이고 각자 쿨다운 8초다. 몇 초 안에 5번을 보내면 봇당 한 번씩 3건이 나오고
+# 나머지 2건은 전원 쿨다운이라 조용하다. 5건이 나오면 쿨다운이 안 걸린 것이다.
+check "5번 도배해도 봇 응답은 3건 (봇당 쿨다운 8초)" "3" "$BOT_MSGS"
+check "한 메시지에 반응하는 봇은 최대 1명" "t" \
+  "$(q "select coalesce(bool_and(c <= 1),true) from (select date_trunc('milliseconds', m.created_at) t, count(*) c from messages m join players p on p.id=m.player_id where m.room_id='$R' and p.is_bot group by 1) x;")"
+check "사람 메시지는 지연이 없다" "t" \
+  "$(q "select coalesce(bool_and(m.visible_at = m.created_at),false) from messages m join players p on p.id=m.player_id where m.room_id='$R' and not p.is_bot;")"
+check "봇 메시지는 지연이 있다" "t" \
+  "$(q "select coalesce(bool_and(m.visible_at > m.created_at),false) from messages m join players p on p.id=m.player_id where m.room_id='$R' and p.is_bot;")"
+check "public_messages에 created_at이 없다 (I1)" "id,room_id,player_id,text,visible_at" \
+  "$(q "select string_agg(column_name,',' order by ordinal_position) from information_schema.columns where table_name='public_messages';")"
+check "아직 시간이 안 된 봇 메시지는 뷰에 안 나온다" "t" \
+  "$(q "select (select count(*) from messages where room_id='$R') > (select count(*) from public_messages where room_id='$R');")"
+
+echo ""
 echo "── §14.2 RLS 침투 (anon). 전부 에러 또는 0행이어야 한다 ──"
 psql -q -c "update rooms set phase='chat' where id='$R';
             insert into answers (question_id,room_id,player_id,text,visible_at)
@@ -192,6 +215,7 @@ psql -q -c "update rooms set phase='chat' where id='$R';
 blocked "select * from player_roles"        "select count(*) from player_roles;"
 blocked "select is_bot from players"        "select count(*) from players where is_bot;"
 blocked "select * from players"             "select count(*) from players;"
+blocked "messages 테이블 직접 조회"          "select count(*) from messages;"
 blocked "미공개 답변"                        "select count(*) from answers where visible_at > now();"
 blocked "reveal 이전 votes"                  "select count(*) from votes;"
 blocked "select * from agent_logs"          "select count(*) from agent_logs;"
@@ -213,7 +237,7 @@ for t in rooms questions answers messages votes; do
   check "anon은 $t 에 쓰기 권한이 없다" "f" \
     "$(q "select has_table_privilege('anon','$t','insert') or has_table_privilege('anon','$t','update') or has_table_privilege('anon','$t','delete');")"
 done
-for fn in "advance_phase(uuid,int,uuid)" "advance_expired_rooms(int)" "on_enter_phase(uuid,text,int,timestamptz)" "pick_bot_line(text)" "cleanup_stale_rooms(interval)"; do
+for fn in "advance_phase(uuid,int,uuid)" "advance_expired_rooms(int)" "on_enter_phase(uuid,text,int,timestamptz)" "pick_bot_line(text)" "cleanup_stale_rooms(interval)" "bot_reply(uuid,int)" "send_message(uuid,uuid,text,int)" "create_room(text)" "join_room(text)" "fill_with_bots(uuid)" "server_now()"; do
   check "anon은 ${fn%%(*} 를 못 부른다" "f" "$(q "select has_function_privilege('anon','$fn','execute');")"
 done
 

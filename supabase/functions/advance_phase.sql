@@ -45,6 +45,19 @@ begin
 end;
 $$;
 
+------------------------------------------------------------------------------
+-- 기준 시계 — SPEC §12.5, I2
+------------------------------------------------------------------------------
+-- ★ 이 게임의 시계는 DB 하나다. phase_ends_at도 visible_at도 전부 여기서 나온다.
+--   Route Handler가 new Date()로 시각을 만들면 앱 서버 시계가 섞인다. 실제로
+--   개발 기계에서 두 시계가 2.26초 어긋나 있었고, 그만큼 카운트다운이 밀렸다.
+--   /api/time은 이 함수를 부른다.
+create or replace function server_now()
+returns timestamptz
+language sql
+stable
+as $$ select now() $$;
+
 -- lobby / reveal / replay는 시간이 아니라 사람 조작으로 넘어간다 → null
 create or replace function phase_duration(p_phase text)
 returns interval language sql immutable as $$
@@ -402,6 +415,7 @@ $$;
 --   PUBLIC에서 회수하는 것만으로는 anon에게 준 명시적 권한이 없어지지 않는다.
 --   anon·authenticated를 따로 적어야 한다. 전부 닫고 service role만 남긴다.
 --   클라이언트는 /api/phase/advance를 거친다 (I9, SPEC §17.4).
+revoke all on function server_now()                             from public, anon, authenticated;
 revoke all on function next_phase(text, int)                    from public, anon, authenticated;
 revoke all on function phase_duration(text)                     from public, anon, authenticated;
 revoke all on function early_exit_met(uuid, text, int)          from public, anon, authenticated;
@@ -412,6 +426,7 @@ revoke all on function advance_expired_rooms(int)               from public, ano
 revoke all on function cleanup_stale_rooms(interval)            from public, anon, authenticated;
 revoke all on function bump_roster_seq()                        from public, anon, authenticated;
 
+grant execute on function server_now()                          to service_role;
 grant execute on function advance_phase(uuid, int, uuid)        to service_role;
 grant execute on function advance_expired_rooms(int)            to service_role;
 grant execute on function cleanup_stale_rooms(interval)         to service_role;

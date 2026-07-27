@@ -377,15 +377,7 @@ function Panel({
   }
 
   if (room.phase === 'chat') {
-    return (
-      <Box>
-        <p className="text-sm text-gray-500">
-          자유 채팅 구간이다. 아직 안 붙었다 (SPEC §13-6).
-          <br />
-          시간이 지나면 투표로 넘어간다.
-        </p>
-      </Box>
-    );
+    return <ChatPanel room={room} nameOf={nameOf} meId={me.player.id} post={post} />;
   }
 
   if (room.phase === 'vote') {
@@ -431,6 +423,111 @@ function Panel({
 
   // reveal · replay
   return <RevealPanel room={room} me={me} votes={votes} nameOf={nameOf} />;
+}
+
+/**
+ * 자유 채팅. 소유: C (SPEC §5.4, §13-6)
+ *
+ * ★ Broadcast를 쓰지 않고 public_messages를 짧게 폴링한다.
+ *   봇 메시지는 타이핑 지연 때문에 미래 visible_at을 갖는데, Broadcast는 insert 순간에
+ *   나가므로 도착 시각과 표시 시각의 간격이 봇만 유독 길어진다. devtools를 열면
+ *   그것만으로 봇이 갈린다 (I1). 뷰가 visible_at이 지난 행만 내보내므로 이쪽은 샐 게 없다.
+ *
+ *   대가는 최대 1.5초의 지연이다. 봇이 일부러 2~8초를 끄는 판에서 문제가 되지 않는다.
+ */
+function ChatPanel({
+  room,
+  meId,
+  nameOf,
+  post,
+}: {
+  room: Room;
+  meId: string;
+  nameOf: (id: string) => string;
+  post: (path: string, body: unknown) => Promise<boolean>;
+}) {
+  const [messages, setMessages] = useState<{ id: string; player_id: string; text: string }[]>([]);
+  const [text, setText] = useState('');
+  const bottomRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const db = getBrowserClient();
+    let alive = true;
+
+    const pull = async () => {
+      const { data } = await db
+        .from('public_messages')
+        .select('id, player_id, text, visible_at')
+        .eq('room_id', room.id) // 방 필터 (I10)
+        .order('visible_at');
+      if (alive && data) setMessages(data);
+    };
+
+    void pull();
+    const id = setInterval(pull, 1500);
+    return () => {
+      alive = false;
+      clearInterval(id);
+    };
+  }, [room.id]);
+
+  useEffect(() => {
+    bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [messages.length]);
+
+  return (
+    <Box>
+      <p className="text-sm text-gray-500">
+        누가 AI 같은지 얘기해본다. 시간이 지나면 투표로 넘어간다.
+      </p>
+
+      <ul className="flex max-h-64 flex-col gap-1.5 overflow-y-auto text-sm">
+        {messages.length === 0 && <li className="text-gray-400">아직 아무도 말하지 않았다.</li>}
+        {messages.map((m) => (
+          <li key={m.id} className={m.player_id === meId ? 'text-right' : ''}>
+            <span className="text-xs text-gray-500">{nameOf(m.player_id)}</span>{' '}
+            <span
+              className={[
+                'inline-block rounded-lg px-2.5 py-1',
+                m.player_id === meId
+                  ? 'bg-black text-white dark:bg-white dark:text-black'
+                  : 'bg-gray-100 dark:bg-gray-800',
+              ].join(' ')}
+            >
+              {m.text}
+            </span>
+          </li>
+        ))}
+        <div ref={bottomRef} />
+      </ul>
+
+      <form
+        className="flex gap-2"
+        onSubmit={(e) => {
+          e.preventDefault();
+          const t = text.trim();
+          if (!t) return;
+          setText('');
+          void post('/api/message', { room_id: room.id, text: t });
+        }}
+      >
+        <input
+          value={text}
+          onChange={(e) => setText(e.target.value)}
+          maxLength={200}
+          placeholder="말한다"
+          className="min-w-0 flex-1 rounded-lg border px-3 py-2 text-sm"
+        />
+        <button
+          type="submit"
+          disabled={!text.trim()}
+          className="rounded-lg border px-4 py-2 text-sm disabled:opacity-40"
+        >
+          보내기
+        </button>
+      </form>
+    </Box>
+  );
 }
 
 /** 정답 공개. 정체는 /api/reveal에서만 온다 — 그 라우트가 페이즈와 참가 여부를 확인한다. */
