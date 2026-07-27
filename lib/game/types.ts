@@ -26,7 +26,13 @@ export interface Room {
   phase_seq: number; // 전환마다 +1. 중복 전환 방지 키
   phase_ends_at: string | null; // ISO. null이면 무기한(lobby)
   round: number; // question 페이즈에서만 의미 있음
-  host_id: string;
+  host_id: string | null;
+  /**
+   * 참가자 명단이 바뀌었다는 신호 (SPEC §17.3).
+   * 이 값이 변하면 클라이언트가 public_players를 다시 읽는다.
+   * phase_seq와 헷갈리지 않는다 — 이건 잠금 키가 아니다.
+   */
+  roster_seq: number;
 }
 
 export interface Player {
@@ -40,11 +46,23 @@ export interface Player {
 }
 
 /**
- * 클라이언트가 실제로 받는 플레이어 모양. `is_bot`이 없다.
- * SPEC §7: is_bot이 새어나가면 게임이 즉시 끝난다.
- * 클라이언트는 players 테이블이 아니라 public_players 뷰를 읽는다.
+ * 클라이언트가 실제로 받는 플레이어 모양. `public_players` 뷰와 1:1이다.
+ * SPEC §7.2: is_bot이 새어나가면 게임이 즉시 끝난다.
+ *
+ * **`Omit<Player, 'is_bot'>`이 아니라 넣을 필드를 하나씩 적는다.**
+ * Omit이면 Player에 컬럼이 늘 때마다 자동으로 따라 새어나간다.
+ * 실제로 `created_at`이 그렇게 샜다 — 봇은 게임 시작 순간 한꺼번에 만들어져서
+ * 생성 시각이 몇 ms 안에 뭉치고, 그것만으로 봇이 전부 특정된다.
+ * 필드를 더할 때마다 "이걸로 봇을 골라낼 수 있나"를 먼저 묻는다.
  */
-export type PublicPlayer = Omit<Player, 'is_bot'>;
+export interface PublicPlayer {
+  id: string;
+  room_id: string;
+  nickname: string;
+  mask_id: string;
+  seat: number;
+  connected: boolean;
+}
 
 export interface Question {
   id: string;
@@ -59,9 +77,10 @@ export interface Question {
 export interface Answer {
   id: string;
   question_id: string;
+  room_id: string; // 방 스코프 쿼리에 쓴다 (I10). 스키마에서 not null이다
   player_id: string;
   text: string;
-  visible_at: string; // 이 시각 이후에만 노출
+  visible_at: string; // 이 시각 이후에만 노출. 기본값이 없으니 항상 명시한다
 }
 
 export interface Message {

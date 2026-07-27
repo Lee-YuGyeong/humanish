@@ -4,6 +4,7 @@
  * 모든 쓰기는 service role로 수행한다 (supabase/policies.sql 전제 참고).
  */
 
+import { getServiceClient } from '@/lib/server/supabase';
 import type { Player, Room } from '@/lib/game/types';
 
 /** 방 정원. 사람이 덜 차면 나머지는 봇이 채운다. */
@@ -30,12 +31,21 @@ export async function createRoom(_hostNickname: string): Promise<{ room: Room; p
 }
 
 /**
- * TODO(A): 끝난 방 정리 (SPEC §16.4).
- * phase = 'replay'이거나 created_at이 24시간 지난 방을 지운다. cascade가 딸린 데이터를 함께 정리한다.
+ * 끝난 방 정리 (SPEC §16.4). **평소에는 pg_cron이 매시 정각에 DB 안에서 직접 부른다**
+ * (`supabase/functions/advance_phase.sql`의 `cron.schedule('room-cleanup', ...)`).
  * 안 하면 코드가 계속 점유되고 워치독 스캔 대상으로도 남는다.
+ *
+ * replay 방은 아직 지우지 않는다 — replay가 같은 방 재시작인지 새 방인지가
+ * 미결정이라(SPEC §15-5), 지금 지우면 재시작이 깨진다.
+ *
+ * @returns 지운 방 수
  */
 export async function cleanupStaleRooms(): Promise<number> {
-  throw new Error('cleanupStaleRooms: 미구현');
+  const { data, error } = await getServiceClient().rpc('cleanup_stale_rooms', {});
+  if (error) {
+    throw new Error(`cleanup_stale_rooms 실패: ${error.message}`);
+  }
+  return typeof data === 'number' ? data : 0;
 }
 
 /** TODO(A): 코드로 방을 찾아 빈 seat에 앉힌다. 정원 초과·게임 진행 중이면 거절. */
@@ -46,6 +56,10 @@ export async function joinRoom(_code: string, _nickname: string): Promise<{ room
 /**
  * TODO(A): lobby → question 전환 직전에 빈 자리를 봇으로 채운다.
  * 봇을 몇 명 채웠는지는 클라이언트에 절대 알리지 않는다 (SPEC §7).
+ *
+ * **seat과 nickname을 섞어서 배정한다 (SPEC §17.4).** 빈 seat을 순서대로 채우면
+ * 봇이 늘 뒷자리·뒷번호에 몰려서 seat만 보고 봇을 고를 수 있다.
+ * created_at도 마찬가지라 public_players 뷰에서 뺀다 (SPEC §7.2).
  */
 export async function fillWithBots(_roomId: string): Promise<void> {
   throw new Error('fillWithBots: 미구현');
