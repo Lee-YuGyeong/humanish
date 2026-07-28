@@ -30,7 +30,9 @@ export default function Home() {
 
         <ul className="mt-10 space-y-3">
           {workspaces.map((ws) => (
-            <li key={ws.href}>
+            // href가 아니라 title을 key로 쓴다. 두 항목이 같은 경로를 가리킬 수 있다
+            // (게임 방은 /main 을 거쳐 들어간다). href를 key로 두면 중복 key가 된다.
+            <li key={ws.title}>
               <Link
                 href={ws.href}
                 className="group flex items-center gap-4 rounded-xl border border-neutral-200 bg-white p-5 transition-colors hover:border-neutral-400 hover:bg-neutral-50"

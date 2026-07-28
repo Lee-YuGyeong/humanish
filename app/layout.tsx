@@ -14,7 +14,7 @@ const geistMono = Geist_Mono({
 
 export const metadata: Metadata = {
   title: "사람인 척",
-  description: "5명 중 누가 AI인지 찾는 게임",
+  description: "3~8명 중 누가 AI인지 찾는 게임",
 };
 
 export default function RootLayout({

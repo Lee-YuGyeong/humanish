@@ -29,10 +29,10 @@ export const workspaces: Workspace[] = [
     status: "작업 중",
   },
   {
-    href: "/room/af-8204",
-    title: "게임 방 (대기방)",
+    href: "/main",
+    title: "게임 방 — 로비에서 들어간다",
     owner: "C",
-    description: "자리 8칸 · 준비 · 방 채팅 (목업 데이터)",
+    description: "방 코드는 4자 대문자다. 로비에서 만들거나 코드로 입장한다",
     status: "작업 중",
   },
   {
