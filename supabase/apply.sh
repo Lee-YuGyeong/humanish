@@ -122,50 +122,17 @@ check() { if [ "$2" = "$3" ]; then printf '  ✓ %s\n' "$1"; else printf '  ✗ 
 echo ""
 echo "── 점검 ──"
 
-# ★ 뷰가 아예 없으면 "그 컬럼이 없다"도 참이 된다. 먼저 뷰의 존재부터 확인한다.
-#   안 그러면 스키마를 안 올린 DB에서 I1 검사가 통째로 가짜 통과한다.
-check "public_players 뷰가 있다" "1" \
-  "$(q "select count(*) from information_schema.views where table_name='public_players';")"
-check "public_players 컬럼이 정확히 6개다" "id,room_id,nickname,mask_id,seat,connected" \
-  "$(q "select string_agg(column_name, ',' order by ordinal_position) from information_schema.columns where table_name='public_players';")"
-check "rooms가 Realtime publication에 있다 (§6)" "1" \
-  "$(q "select count(*) from pg_publication_tables where pubname='supabase_realtime' and tablename='rooms';")"
-# publication에 갓 추가한 직후에는 Realtime이 몇 분간 이벤트를 안 보낼 수 있다.
-# 구독은 SUBSCRIBED로 뜨는데 이벤트만 안 오므로 코드를 의심하게 된다. 실제로 그랬다.
-# 화면이 안 갱신되면 이 표시를 먼저 떠올릴 것 — 조금 기다렸다 다시 해본다.
-check "질문 풀이 차 있다" "t" "$(q "select count(*) > 0 from question_pool;")"
-check "봇 문구 풀이 차 있다" "t" "$(q "select count(*) > 0 from bot_line_pool;")"
-check "advance_phase가 있다" "1" \
-  "$(q "select count(*) from pg_proc where proname='advance_phase';")"
-check "anon은 advance_phase를 못 부른다 (I9)" "f" \
-  "$(q "select has_function_privilege('anon','advance_phase(uuid,int,uuid)','execute');")"
+# ★ 목록은 supabase/checks.sh 하나다. test.sh도 같은 것을 돌린다.
+#   **여기에 검사를 직접 적지 않는다** — 한쪽에만 있는 검사가 사고를 두 번 냈다.
+#   이유는 그 파일 머리말에 있다.
+# shellcheck source=./checks.sh
+. "$ROOT/supabase/checks.sh"
+schema_checks
 
-# ★ 시그니처까지 본다. 이름만 세면 옛 create_room(text)가 남아 있어도 통과한다.
-#   정원이 방마다 달라지면서 create_room(text) → create_room(text,int)로 바뀌었다
-#   (SPEC §17.6). 옛 함수만 있는 DB에서는 방 만들기가 PGRST202로 죽는데
-#   화면에는 그냥 "방 생성 실패"만 뜬다.
-check "create_room(text,int)이 있다 (§17.6)" "1" \
-  "$(q "select count(*) from pg_proc where proname='create_room' and pg_get_function_identity_arguments(oid)='text, integer';")"
-check "옛 create_room(text)이 남아 있지 않다" "0" \
-  "$(q "select count(*) from pg_proc where proname='create_room' and pg_get_function_identity_arguments(oid)='text';")"
-check "room_capacity(uuid)가 있다 (방마다 정원)" "1" \
-  "$(q "select count(*) from pg_proc where proname='room_capacity' and pg_get_function_identity_arguments(oid)='uuid';")"
-check "join_room · fill_with_bots · send_message가 있다" "3" \
-  "$(q "select count(*) from pg_proc where proname in ('join_room','fill_with_bots','send_message');")"
-check "anon은 create_room을 못 부른다 (I9)" "f" \
-  "$(q "select has_function_privilege('anon','create_room(text,int)','execute');")"
-check "anon은 send_message를 못 부른다 (I9)" "f" \
-  "$(q "select has_function_privilege('anon','send_message(uuid,uuid,text,int)','execute');")"
-check "rooms에 capacity 컬럼이 있다 (§17.6)" "1" \
-  "$(q "select count(*) from information_schema.columns where table_name='rooms' and column_name='capacity';")"
-check "anon은 players를 못 읽는다 (I1)" "f" \
-  "$(q "select has_table_privilege('anon','players','select');")"
-check "anon은 public_players를 읽는다" "t" \
-  "$(q "select has_table_privilege('anon','public_players','select');")"
-check "anon은 rooms에 쓰지 못한다 (I9)" "f" \
-  "$(q "select has_table_privilege('anon','rooms','update');")"
-
+echo ""
+echo "── 배포 DB에만 있는 것 ──"
 # ★ 워치독. 이게 없으면 데모 중에 방이 멈춘다 (SPEC §12.1) — 선택이 아니다.
+#   로컬 Postgres에는 pg_cron이 없으므로 이 검사만 checks.sh 밖에 남긴다.
 CRON="$(q "select count(*) from cron.job where jobname='phase-watchdog';")"
 if [ "$CRON" = "1" ]; then
   echo "  ✓ pg_cron 워치독이 등록돼 있다"

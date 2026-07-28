@@ -70,6 +70,13 @@ denied_if() {
   case "$out" in *"$2"*) echo denied;; *) echo allowed;; esac
 }
 
+# ★ apply.sh(배포 DB)와 **같은 스키마 검사**를 먼저 돌린다.
+#   여기서만 통과하고 배포에서 깨지는(또는 그 반대인) 사고를 두 번 냈다.
+#   이유와 목록은 supabase/checks.sh에 있다. 새 검사는 그쪽에 넣는다.
+# shellcheck source=./checks.sh
+. "$ROOT/supabase/checks.sh"
+schema_checks
+
 R=11111111-1111-1111-1111-111111111111
 RB=11111111-1111-1111-1111-111111111112
 P1=22222222-0000-0000-0000-000000000001   # 사람 · 방장
@@ -201,8 +208,7 @@ check "사람 메시지는 지연이 없다" "t" \
   "$(q "select coalesce(bool_and(m.visible_at = m.created_at),false) from messages m join players p on p.id=m.player_id where m.room_id='$R' and not p.is_bot;")"
 check "봇 메시지는 지연이 있다" "t" \
   "$(q "select coalesce(bool_and(m.visible_at > m.created_at),false) from messages m join players p on p.id=m.player_id where m.room_id='$R' and p.is_bot;")"
-check "public_messages에 created_at이 없다 (I1)" "id,room_id,player_id,text,visible_at" \
-  "$(q "select string_agg(column_name,',' order by ordinal_position) from information_schema.columns where table_name='public_messages';")"
+# public_messages의 컬럼 목록(created_at이 없는지)은 schema_checks가 본다.
 check "아직 시간이 안 된 봇 메시지는 뷰에 안 나온다" "t" \
   "$(q "select (select count(*) from messages where room_id='$R') > (select count(*) from public_messages where room_id='$R');")"
 
@@ -231,15 +237,8 @@ blocked "players 삭제"                       "delete from players;"
 blocked "votes 쓰기 (위조)"                  "insert into votes values ('$R','$P1','$B3','위조');"
 blocked "questions 쓰기"                     "insert into questions (room_id,round,kind,text) values ('$R',1,'common','위조');"
 
-echo ""
-echo "── 권한 자체가 없어야 한다 (Supabase 기본 grant를 제대로 걷어냈나) ──"
-for t in rooms questions answers messages votes; do
-  check "anon은 $t 에 쓰기 권한이 없다" "f" \
-    "$(q "select has_table_privilege('anon','$t','insert') or has_table_privilege('anon','$t','update') or has_table_privilege('anon','$t','delete');")"
-done
-for fn in "advance_phase(uuid,int,uuid)" "advance_expired_rooms(int)" "on_enter_phase(uuid,text,int,timestamptz)" "pick_bot_line(text)" "cleanup_stale_rooms(interval)" "bot_reply(uuid,int)" "send_message(uuid,uuid,text,int)" "create_room(text,int)" "join_room(text)" "fill_with_bots(uuid)" "server_now()" "default_room_capacity()" "room_capacity(uuid)" "pick_free_seat(uuid)"; do
-  check "anon은 ${fn%%(*} 를 못 부른다" "f" "$(q "select has_function_privilege('anon','$fn','execute');")"
-done
+# 「권한 자체가 없어야 한다」(anon의 테이블 쓰기 · 함수 실행)는 위의 schema_checks가
+# 이미 돌렸다. supabase/checks.sh로 옮겨서 apply.sh와 목록을 공유한다.
 
 echo ""
 echo "── 반대로 이건 보여야 정상 ──"
