@@ -27,6 +27,11 @@ export default function RootLayout({
       <body
         className={`${geistSans.variable} ${geistMono.variable} antialiased`}
       >
+        {/*
+          지하 라운지 조명 — 모든 화면 뒤에 한 장 깔린다 (app/globals.css의 .room-backdrop).
+          /bg-3d 의 진짜 Three.js 씬은 자기 캔버스로 이걸 덮는다. 그 폴더는 건드리지 않는다.
+        */}
+        <div aria-hidden className="room-backdrop" />
         {children}
       </body>
     </html>

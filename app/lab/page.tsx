@@ -8,11 +8,11 @@ import Link from "next/link";
 
 export default function LabPage() {
   return (
-    <main className="min-h-screen bg-white text-neutral-900">
+    <main className="min-h-screen text-bone">
       <div className="mx-auto max-w-2xl px-6 py-16">
         <Link
           href="/"
-          className="text-xs text-neutral-400 transition-colors hover:text-neutral-700"
+          className="text-xs text-grime transition-colors hover:text-bone"
         >
           ← 작업 보드
         </Link>
@@ -21,7 +21,7 @@ export default function LabPage() {
           규칙 · 에이전트 실험실
         </h1>
 
-        <p className="mt-6 rounded-lg border border-dashed border-neutral-300 p-4 text-sm text-neutral-500">
+        <p className="mt-6 rounded-lg border border-dashed border-bone/15 p-4 text-sm text-dust">
           TODO(B): lib/game 규칙 함수 확인 · 봇 응답 미리보기
         </p>
       </div>

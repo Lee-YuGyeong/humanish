@@ -9,7 +9,12 @@
  *  - 스파이만 수가 정해져 있다 — 사람이 2명 이상이면 그중 정확히 1명 (§8)
  *
  * 이미지는 public/roles/*.svg 자리표시자다. 실제 아트로 교체하면 된다.
+ *
+ * 진입 화면이라 여기만 방 사진(public/textures/room-bg.png)을 실제로 깐다. 나머지 화면은
+ * app/layout.tsx 의 .room-backdrop(CSS 조명)으로 같은 무드를 낸다 — 2MB를 매 화면 지고
+ * 다닐 이유가 없다.
  */
+import Image from "next/image";
 import Link from "next/link";
 import {
   AnimatedTestimonials,
@@ -59,29 +64,43 @@ const roles: Testimonial[] = [
  * 시민 수도 마찬가지다 — "정원 − 시민 수 − 1"로 봇 수가 새어나간다.
  */
 const composition = [
-  { label: "정원", value: "3 ~ 8명", tone: "text-neutral-900" },
-  { label: "진짜 AI", value: "? 명", tone: "text-sky-600" },
-  { label: "스파이", value: "사람 중 1명", tone: "text-orange-600" },
-  { label: "시민", value: "나머지 사람 전원", tone: "text-teal-600" },
+  { label: "정원", value: "3 ~ 8명", tone: "text-bone" },
+  { label: "진짜 AI", value: "? 명", tone: "text-lamp" },
+  { label: "스파이", value: "사람 중 1명", tone: "text-blood" },
+  { label: "시민", value: "나머지 사람 전원", tone: "text-door" },
 ];
 
 export default function IntroPage() {
   return (
-    <main className="min-h-screen bg-white text-neutral-900">
+    <main className="relative isolate min-h-screen text-bone">
+      {/* 레퍼런스 방 사진. 글자가 읽히도록 깊게 눌러 깐다 */}
+      <div aria-hidden className="pointer-events-none absolute inset-x-0 top-0 -z-10 h-[80vh]">
+        <Image
+          src="/textures/room-bg.png"
+          alt=""
+          fill
+          priority
+          sizes="100vw"
+          className="object-cover object-center opacity-45"
+        />
+        {/* 아래로 갈수록 방이 어둠에 잠긴다 — 사진과 CSS 조명의 이음매를 지운다 */}
+        <div className="absolute inset-0 bg-gradient-to-b from-ink/70 via-ink/80 to-ink" />
+      </div>
+
       <div className="mx-auto max-w-5xl px-6 py-16">
         {/* 개발용 링크다. 실제 진입 화면이라 눈에 덜 띄게 둔다 */}
         <Link
           href="/"
-          className="text-[11px] text-neutral-300 transition-colors hover:text-neutral-600"
+          className="text-[11px] text-ash transition-colors hover:text-dust"
         >
           ← 작업 보드
         </Link>
 
         <header className="mt-8 space-y-4">
-          <p className="font-mono text-xs tracking-[0.3em] text-neutral-400">
+          <p className="font-mono text-xs tracking-[0.3em] text-blood/80">
             SEATS 3-8 · SPY 1 · MACHINES ?
           </p>
-          <h1 className="text-5xl font-bold tracking-tight md:text-7xl">
+          <h1 className="text-5xl font-bold tracking-tight drop-shadow-[0_2px_20px_rgba(0,0,0,0.9)] md:text-7xl">
             기계인 척
           </h1>
           {/*
@@ -90,7 +109,7 @@ export default function IntroPage() {
               빈 좌석 번호가 곧 봇의 자리가 된다. is_bot을 한 바이트도 안 흘려도
               결과는 같다. 이 방에 기계가 몇인지 모른다는 것까지만 말한다.
           */}
-          <p className="max-w-xl text-lg text-neutral-500">
+          <p className="max-w-xl text-lg leading-relaxed text-dust">
             셋에서 여덟, 자리 수는 방을 만들 때 정한다.
             <br />
             그중 몇이 기계인지는 아무도 모른다. 여럿일 수도, 아예 없을 수도 있다.
@@ -103,26 +122,26 @@ export default function IntroPage() {
           {composition.map((c) => (
             <li
               key={c.label}
-              className="rounded-full border border-neutral-200 bg-neutral-50 px-4 py-2 text-sm"
+              className="panel rounded-full px-4 py-2 text-sm"
             >
               <span className={`font-semibold ${c.tone}`}>{c.label}</span>
-              <span className="ml-2 text-neutral-500">{c.value}</span>
+              <span className="ml-2 text-dust">{c.value}</span>
             </li>
           ))}
         </ul>
 
-        <section className="mt-6 border-t border-neutral-100 pt-6">
+        <section className="mt-6 border-t border-bone/10 pt-6">
           <AnimatedTestimonials testimonials={roles} autoplay />
         </section>
 
         <div className="mt-10 flex flex-wrap items-center gap-4">
           <Link
             href="/main"
-            className="rounded-full bg-neutral-900 px-6 py-3 text-sm font-semibold text-white transition-colors hover:bg-neutral-700"
+            className="rounded-full bg-blood px-6 py-3 text-sm font-semibold text-white shadow-[0_0_28px_-6px_rgba(255,43,29,0.7)] transition-colors hover:bg-blood/85"
           >
             게임 시작하기
           </Link>
-          <span className="text-xs text-neutral-400">
+          <span className="text-xs text-grime">
             {/* 봇을 언제 채우는지는 아직 미결정이다 (SPEC §15-3). 시점을 문구로 못 박지 않는다 */}
             역할은 게임이 시작될 때 무작위로 배정된다. 아무도 남의 역할을 모른다.
           </span>

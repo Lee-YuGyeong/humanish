@@ -1,8 +1,20 @@
 @import "tailwindcss";
 
+/*
+ * 지하 라운지 — /bg-3d 씬에서 그대로 가져온 팔레트.
+ *
+ * 값은 app/bg-3d/room-scene.tsx 의 조명·재질 색과 짝이다. 씬의 색이 바뀌면
+ * 여기도 같이 본다. (그 폴더는 건드리지 않는다. 색만 따라간다)
+ *   #07050a  Canvas 배경          #ffd0a0  천장 다운라이트 발광 원판
+ *   #0a0709  fogExp2              #c98a5a  스크린이 방으로 뿜는 미광
+ *   #2a2724  천장 각재            #ff2b1d  벽 비상등
+ *   #3c3a36  무대 턱              #3e5245  왼쪽 철문
+ *
+ * 전부 어두운 화면이다. 라이트로 되돌리려면 여기와 각 페이지의 색을 같이 고친다.
+ */
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --background: #07050a;
+  --foreground: #ded5c7;
 }
 
 @theme inline {
@@ -10,16 +22,151 @@
   --color-foreground: var(--foreground);
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
+
+  /* 방 — 어두운 쪽부터 */
+  --color-ink: #07050a;
+  --color-fog: #0d0a0e;
+  --color-concrete: #14100f;
+  --color-slab: #1c1715;
+  --color-seam: #2b2724;
+  --color-ledge: #3c3a36;
+
+  /* 글자 — 텅스텐 아래에서 흰색은 뼈빛이 된다 */
+  --color-bone: #ded5c7;
+  --color-dust: #a1968a;
+  --color-grime: #6f665d;
+  --color-ash: #4b433d;
+
+  /* 조명 */
+  --color-lamp: #ffd0a0;
+  --color-ember: #c98a5a;
+
+  /* 벽 비상등 — 경고 · 위험 · 실패 */
+  --color-blood: #ff2b1d;
+  --color-rust: #8a2f26;
+
+  /* 철문의 초록 — 정상 · 연결됨 · 성공. 어두운 원색(#3e5245)을 글자용으로 올린 값 */
+  --color-door: #86a891;
 }
 
-/* 라이트 전용이다. OS가 다크 모드여도 흰 배경을 유지한다.
-   (다크 대응을 다시 넣으려면 여기 미디어 쿼리 + 각 페이지의 bg-white 를 같이 고친다) */
 html {
-  color-scheme: light;
+  color-scheme: dark;
 }
 
 body {
   background: var(--background);
   color: var(--foreground);
   font-family: var(--font-sans), system-ui, sans-serif;
+  /* .room-backdrop 의 z-index:-1 이 body 밖으로 새지 않게 가둔다 */
+  isolation: isolate;
+}
+
+::selection {
+  background: rgba(255, 43, 29, 0.32);
+  color: #fff;
+}
+
+/*
+ * 키보드 초점은 조명 색으로. 어두운 화면에서 파란 기본 링은 튄다.
+ *
+ * ★ 반드시 base 레이어 안에 둔다. 레이어 밖에 두면 @layer 전체를 이기는 규칙이 되어
+ *   Tailwind의 focus:outline-none 같은 유틸리티로 영영 못 끈다.
+ */
+@layer base {
+  :focus-visible {
+    outline: 2px solid rgba(255, 208, 160, 0.7);
+    outline-offset: 2px;
+  }
+}
+
+@layer components {
+  /*
+   * 방 조명을 CSS로 흉내 낸 배경. app/layout.tsx 가 모든 화면 뒤에 한 장 깐다.
+   *
+   * 3D 씬을 페이지마다 띄우지 않는 이유: /bg-3d 만 244kB다. 로비·게임 화면까지
+   * Three.js를 지고 가면 첫 화면이 그만큼 늦는다. 무드만 가져오면 충분하다.
+   */
+  .room-backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: -1;
+    pointer-events: none;
+    background-color: #07050a;
+  }
+
+  /* 조명 웅덩이 — 천장 다운라이트 두 줄 · 스크린 미광 · 벽 비상등 · 바닥 반사광 */
+  .room-backdrop::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background-image:
+      radial-gradient(58% 42% at 17% -6%, rgba(255, 208, 160, 0.17), transparent 70%),
+      radial-gradient(58% 42% at 83% -6%, rgba(255, 208, 160, 0.17), transparent 70%),
+      radial-gradient(46% 34% at 50% 10%, rgba(201, 138, 90, 0.15), transparent 74%),
+      radial-gradient(26% 28% at -2% 46%, rgba(255, 43, 29, 0.11), transparent 70%),
+      radial-gradient(26% 28% at 102% 46%, rgba(255, 43, 29, 0.11), transparent 70%),
+      radial-gradient(92% 42% at 50% 106%, rgba(42, 29, 24, 0.9), transparent 72%);
+    /* 접촉 불량처럼 아주 약하게 흔들린다. 씬의 RedLamp 와 같은 결이다 */
+    animation: room-breathe 11s ease-in-out infinite;
+  }
+
+  /* 비네팅 + 필름 그레인. 씬의 radial 비네팅과 같은 모양이다 */
+  .room-backdrop::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background-image:
+      radial-gradient(
+        120% 90% at 50% 45%,
+        transparent 35%,
+        rgba(0, 0, 0, 0.55) 78%,
+        rgba(0, 0, 0, 0.85) 100%
+      ),
+      /* 콘크리트 입자. 외부 요청 없이 SVG 노이즈를 인라인한다 (CSP·오프라인 안전) */
+        url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='3'/%3E%3C/filter%3E%3Crect width='140' height='140' filter='url(%23n)' opacity='0.45'/%3E%3C/svg%3E");
+    background-blend-mode: normal, overlay;
+  }
+
+  @keyframes room-breathe {
+    0%,
+    100% {
+      opacity: 1;
+    }
+    43% {
+      opacity: 0.93;
+    }
+    47% {
+      opacity: 0.99;
+    }
+    71% {
+      opacity: 0.9;
+    }
+  }
+
+  /* 깜빡임을 꺼달라고 한 사람에게는 켜지 않는다 */
+  @media (prefers-reduced-motion: reduce) {
+    .room-backdrop::before {
+      animation: none;
+    }
+  }
+
+  /*
+   * 콘크리트 위에 얹힌 표면. 방 안의 물건처럼 보이게 반투명 + 실금 테두리다.
+   * 배경이 비쳐야 아래 조명이 카드를 지나간다.
+   */
+  .panel {
+    border: 1px solid rgba(222, 213, 199, 0.1);
+    background: linear-gradient(
+      to bottom,
+      rgba(28, 23, 21, 0.72),
+      rgba(12, 10, 11, 0.72)
+    );
+    backdrop-filter: blur(6px);
+  }
+
+  /* 안으로 파인 표면. 입력칸·로그처럼 눌린 것들 */
+  .inset {
+    border: 1px solid rgba(222, 213, 199, 0.08);
+    background: rgba(0, 0, 0, 0.32);
+  }
 }

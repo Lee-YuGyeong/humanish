@@ -20,21 +20,22 @@ export const friends: Friend[] = [
   { name: "Ghost_User", state: "오프라인" },
 ];
 
+/** 색은 지하 라운지 팔레트에서 고른다 (app/globals.css) — 철문 초록 · 조명 앰버 · 비상등 붉은색. */
 export const friendStyle: Record<Friend["state"], { dot: string; text: string }> = {
-  "대기 중": { dot: "bg-emerald-500", text: "text-emerald-600" },
-  "게임 중": { dot: "bg-blue-500", text: "text-blue-600" },
-  오프라인: { dot: "bg-neutral-300", text: "text-neutral-400" },
+  "대기 중": { dot: "bg-door", text: "text-door" },
+  "게임 중": { dot: "bg-lamp", text: "text-lamp" },
+  오프라인: { dot: "bg-ash", text: "text-grime" },
 };
 
 export type ChatLine = { user: string; message: string; tone: string };
 
 export const chat: ChatLine[] = [
-  { user: "User_99", message: "같이 하실 분?", tone: "text-indigo-600" },
-  { user: "Bot_A", message: "방금 AI 연기 오졌음ㅋㅋㅋ", tone: "text-neutral-400" },
+  { user: "User_99", message: "같이 하실 분?", tone: "text-lamp" },
+  { user: "Bot_A", message: "방금 AI 연기 오졌음ㅋㅋㅋ", tone: "text-grime" },
   // 목업 문구라도 게임 규칙을 말하지 않는다. 봇 수를 숫자로 적으면 그게 곧 안내문이
   // 되고, 사람이 정원을 거의 채운 방에서는 우연히 맞아떨어지기까지 한다 (I1).
-  { user: "Master", message: "이번 판 진짜 못 맞히겠던데요", tone: "text-amber-600" },
-  { user: "Spy_X", message: "님들 방 드가셈", tone: "text-neutral-700" },
+  { user: "Master", message: "이번 판 진짜 못 맞히겠던데요", tone: "text-ember" },
+  { user: "Spy_X", message: "님들 방 드가셈", tone: "text-blood/80" },
 ];
 
 export const recentGames = [

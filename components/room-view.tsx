@@ -7,8 +7,9 @@
  *   I9  쓰기는 전부 /api를 거친다. anon 키는 읽기 전용이다
  *   I10 모든 구독·쿼리에 방 필터를 건다. 채널 이름은 room:<room_id>
  *
- * 화면은 라이트 전용이다 (app/globals.css의 `html { color-scheme: light }`).
- * dark: 변형을 새로 넣지 않는다.
+ * 화면은 지하 라운지 팔레트를 쓴다 (app/globals.css). 배경은 app/layout.tsx가 깐
+ * .room-backdrop이 맡으므로 여기서 배경색을 칠하지 않는다 — 칠하면 조명이 가려진다.
+ * 색을 추가할 때는 씬(app/bg-3d/room-scene.tsx)에 있는 색인지 먼저 본다.
  */
 'use client';
 
@@ -314,12 +315,12 @@ export function RoomView({ code }: { code: string }) {
   if (error && !room) {
     return (
       <main className="mx-auto flex min-h-screen max-w-2xl flex-col justify-center gap-4 px-6">
-        <p className="rounded-2xl border border-red-200 bg-red-50 p-5 text-sm font-medium text-red-600">
+        <p className="rounded-2xl border border-blood/30 bg-blood/10 p-5 text-sm font-medium text-blood">
           {error}
         </p>
         <Link
           href="/main"
-          className="inline-flex items-center gap-2 text-sm font-bold text-neutral-400 transition-colors hover:text-neutral-900"
+          className="inline-flex items-center gap-2 text-sm font-bold text-grime transition-colors hover:text-bone"
         >
           <ArrowLeftIcon className="h-4 w-4" />
           로비로
@@ -330,7 +331,7 @@ export function RoomView({ code }: { code: string }) {
 
   if (!room) {
     return (
-      <main className="flex min-h-screen items-center justify-center text-sm text-neutral-400">
+      <main className="flex min-h-screen items-center justify-center text-sm text-grime">
         불러오는 중…
       </main>
     );
@@ -340,32 +341,32 @@ export function RoomView({ code }: { code: string }) {
   const urgent = seconds != null && seconds <= URGENT_SECONDS;
 
   return (
-    <div className="flex min-h-screen flex-col bg-neutral-50/50 text-neutral-900">
-      <header className="sticky top-0 z-10 border-b border-neutral-200 bg-white/85 backdrop-blur-md">
+    <div className="flex min-h-screen flex-col text-bone">
+      <header className="sticky top-0 z-10 border-b border-bone/10 bg-ink/70 backdrop-blur-md">
         <div className="mx-auto flex w-full max-w-3xl items-center justify-between gap-4 px-6 py-4">
           <div className="flex min-w-0 items-center gap-3">
             <Link
               href="/main"
               aria-label="로비로"
-              className="shrink-0 text-neutral-400 transition-colors hover:text-neutral-900"
+              className="shrink-0 text-grime transition-colors hover:text-bone"
             >
               <ArrowLeftIcon className="h-4 w-4" />
             </Link>
             <div className="min-w-0">
-              <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-neutral-400">
+              <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-grime">
                 Room
               </p>
-              <h1 className="truncate font-mono text-lg font-black tracking-[0.25em] text-neutral-900">
+              <h1 className="truncate font-mono text-lg font-black tracking-[0.25em] text-bone">
                 {room.code}
               </h1>
             </div>
           </div>
 
           <div className="flex shrink-0 items-center gap-3">
-            <span className="rounded-full border border-neutral-200 bg-white px-3 py-1.5 text-xs font-bold text-neutral-900">
+            <span className="rounded-full border border-bone/10 bg-bone/5 px-3 py-1.5 text-xs font-bold text-bone">
               {PHASE_LABEL[room.phase]}
               {room.phase === 'question' && (
-                <span className="ml-1.5 font-mono text-neutral-400 tabular-nums">
+                <span className="ml-1.5 font-mono text-grime tabular-nums">
                   {room.round}/2
                 </span>
               )}
@@ -374,7 +375,10 @@ export function RoomView({ code }: { code: string }) {
               <span
                 className={[
                   'min-w-14 rounded-full px-3 py-1.5 text-center font-mono text-sm font-black tabular-nums transition-colors',
-                  urgent ? 'bg-red-50 text-red-600' : 'bg-neutral-900 text-white',
+                  // 마지막 10초는 벽 비상등처럼 붉어진다
+                  urgent
+                    ? 'bg-blood/15 text-blood shadow-[0_0_20px_-6px_rgba(255,43,29,0.9)]'
+                    : 'bg-seam text-bone',
                 ].join(' ')}
                 aria-live="polite"
               >
@@ -394,7 +398,7 @@ export function RoomView({ code }: { code: string }) {
 
         {/* 내가 스파이라는 건 나만 본다. 남의 역할은 reveal까지 아무 데도 오지 않는다 (I1) */}
         {me?.role === 'spy' && room.phase !== 'reveal' && room.phase !== 'replay' && (
-          <p className="flex items-center gap-2 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-bold text-amber-800">
+          <p className="flex items-center gap-2 rounded-2xl border border-lamp/30 bg-lamp/10 px-4 py-3 text-sm font-bold text-lamp">
             <SpyIcon className="h-4 w-4 shrink-0" />
             너는 스파이다 — 기계인 척해서 표를 끌어와라. 이건 너에게만 보인다.
           </p>
@@ -413,12 +417,12 @@ export function RoomView({ code }: { code: string }) {
         />
 
         {error && (
-          <p className="rounded-2xl border border-red-200 bg-red-50 p-4 text-sm font-medium text-red-600">
+          <p className="rounded-2xl border border-blood/30 bg-blood/10 p-4 text-sm font-medium text-blood">
             {error}
           </p>
         )}
 
-        <p className="mt-auto flex items-center gap-2 pt-2 text-[11px] text-neutral-400">
+        <p className="mt-auto flex items-center gap-2 pt-2 text-[11px] text-grime">
           <InfoIcon className="h-3.5 w-3.5 shrink-0" />
           타이머는 표시용이다. 페이즈 전환은 서버가 정한다 (SPEC I2).
         </p>
@@ -464,14 +468,15 @@ function LobbyHero({
   };
 
   return (
-    <section className="rounded-2xl border border-neutral-200 bg-white p-6 text-center shadow-sm">
-      <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-neutral-400">
+    <section className="panel rounded-2xl p-6 text-center">
+      <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-grime">
         방 코드
       </p>
-      <p className="mt-2 font-mono text-5xl font-black tracking-[0.3em] text-neutral-900">
+      {/* 안쪽 벽 스크린에 코드가 걸린 것처럼 은은하게 빛난다 */}
+      <p className="mt-2 font-mono text-5xl font-black tracking-[0.3em] text-bone drop-shadow-[0_0_24px_rgba(201,138,90,0.45)]">
         {code}
       </p>
-      <p className="mt-3 text-sm text-neutral-400">
+      <p className="mt-3 text-sm text-grime">
         친구에게 이 코드를 알려주면 들어온다.
       </p>
 
@@ -479,14 +484,14 @@ function LobbyHero({
         <button
           type="button"
           onClick={() => void copy()}
-          className="inline-flex items-center gap-2 rounded-xl border border-neutral-200 bg-white px-4 py-2.5 text-xs font-bold text-neutral-900 transition-colors hover:border-indigo-400 hover:text-indigo-600"
+          className="inline-flex items-center gap-2 rounded-xl border border-bone/10 bg-bone/5 px-4 py-2.5 text-xs font-bold text-bone transition-colors hover:border-lamp/40 hover:text-lamp"
         >
-          {copied ? <CheckIcon className="h-3.5 w-3.5 text-emerald-600" /> : null}
+          {copied ? <CheckIcon className="h-3.5 w-3.5 text-door" /> : null}
           {copied ? '복사됨' : '코드 복사'}
         </button>
-        <span className="inline-flex items-center gap-2 rounded-xl border border-neutral-200 bg-neutral-50 px-4 py-2.5 text-xs font-bold text-neutral-500">
-          <UserPlusIcon className="h-3.5 w-3.5 text-indigo-500" />
-          <span className="font-mono tabular-nums text-neutral-900">
+        <span className="inset inline-flex items-center gap-2 rounded-xl px-4 py-2.5 text-xs font-bold text-dust">
+          <UserPlusIcon className="h-3.5 w-3.5 text-lamp" />
+          <span className="font-mono tabular-nums text-bone">
             {seated} / {capacity}
           </span>
         </span>
@@ -525,10 +530,10 @@ function Panel({
   if (!me?.player) {
     return (
       <Box>
-        <p className="text-sm font-bold text-neutral-900">이 방의 참가자가 아니다.</p>
+        <p className="text-sm font-bold text-bone">이 방의 참가자가 아니다.</p>
         <Link
           href="/main"
-          className="inline-flex items-center gap-2 text-sm font-bold text-indigo-600 transition-colors hover:text-indigo-500"
+          className="inline-flex items-center gap-2 text-sm font-bold text-lamp transition-colors hover:text-bone"
         >
           <ArrowLeftIcon className="h-4 w-4" />
           코드로 다시 입장하기
@@ -579,22 +584,22 @@ function Panel({
         <Box>
           {me.is_host ? (
             <>
-              <p className="flex items-center gap-2 text-xs font-bold text-neutral-400">
-                <CrownIcon className="h-4 w-4 text-indigo-500" />
+              <p className="flex items-center gap-2 text-xs font-bold text-grime">
+                <CrownIcon className="h-4 w-4 text-lamp" />
                 방장이다. 사람이 다 모이지 않아도 시작할 수 있다.
               </p>
               <button
                 type="button"
                 disabled={busy}
                 onClick={() => void post('/api/room/start', { room_id: room.id })}
-                className="w-full rounded-xl bg-indigo-600 px-6 py-3.5 text-sm font-black uppercase tracking-[0.2em] text-white transition-colors hover:bg-indigo-500 disabled:cursor-default disabled:opacity-50"
+                className="w-full rounded-xl bg-blood px-6 py-3.5 text-sm font-black uppercase tracking-[0.2em] text-white shadow-[0_0_30px_-8px_rgba(255,43,29,0.9)] transition-colors hover:bg-blood/85 disabled:cursor-default disabled:opacity-50"
               >
                 {busy ? '시작하는 중…' : '게임 시작'}
               </button>
             </>
           ) : (
-            <p className="flex items-center justify-center gap-2 py-2 text-sm text-neutral-400">
-              <span className="h-2 w-2 animate-pulse rounded-full bg-indigo-500" />
+            <p className="flex items-center justify-center gap-2 py-2 text-sm text-grime">
+              <span className="h-2 w-2 animate-pulse rounded-full bg-blood" />
               방장이 시작하기를 기다리는 중…
             </p>
           )}
@@ -611,11 +616,11 @@ function Panel({
     return (
       <Box>
         <Label>{isTargetPhase ? '지목 질문' : '공통 질문'}</Label>
-        <p className="text-lg font-bold leading-snug tracking-tight text-neutral-900">
+        <p className="text-lg font-bold leading-snug tracking-tight text-bone">
           {question?.text ?? '질문을 기다리는 중…'}
         </p>
         {isTargetPhase && question?.target_id && (
-          <p className="text-sm font-bold text-indigo-600">
+          <p className="text-sm font-bold text-lamp">
             → {nameOf(question.target_id)}에게
           </p>
         )}
@@ -640,7 +645,7 @@ function Panel({
             </button>
           </form>
         ) : (
-          <p className="rounded-xl border border-neutral-200 bg-neutral-50 px-4 py-3 text-sm text-neutral-400">
+          <p className="inset rounded-xl px-4 py-3 text-sm text-grime">
             {me.answered
               ? '제출했다. 시간이 끝나면 전부 공개된다.'
               : '지목받은 사람이 답하는 중…'}
@@ -648,27 +653,24 @@ function Panel({
         )}
 
         {answers.length > 0 && (
-          <ul className="flex flex-col gap-2 border-t border-neutral-100 pt-4">
+          <ul className="flex flex-col gap-2 border-t border-bone/10 pt-4">
             {/*
               지금 질문의 답이 아니라 직전 질문의 답일 수 있다 — 답은 페이즈가
               끝나야 열리기 때문이다. 어느 질문의 답인지 밝히지 않으면 화면이
               엉뚱한 대화를 하는 것처럼 보인다.
             */}
             {answerOf != null && answerOf.id !== question?.id && (
-              <li className="text-[11px] text-neutral-400">
+              <li className="text-[11px] text-grime">
                 <span className="font-bold uppercase tracking-[0.2em]">지난 질문</span>{' '}
                 {answerOf.text}
               </li>
             )}
             {answers.map((a) => (
-              <li
-                key={a.id}
-                className="rounded-xl border border-neutral-200 bg-neutral-50/70 px-4 py-3"
-              >
-                <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-neutral-400">
+              <li key={a.id} className="inset rounded-xl px-4 py-3">
+                <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-lamp/70">
                   {nameOf(a.player_id)}
                 </p>
-                <p className="mt-1 text-sm leading-relaxed text-neutral-900">{a.text}</p>
+                <p className="mt-1 text-sm leading-relaxed text-bone">{a.text}</p>
               </li>
             ))}
           </ul>
@@ -689,18 +691,15 @@ function Panel({
           <Box>
             <Label>지난 답변</Label>
             {answerOf && (
-              <p className="text-sm font-bold text-neutral-900">{answerOf.text}</p>
+              <p className="text-sm font-bold text-bone">{answerOf.text}</p>
             )}
             <ul className="flex flex-col gap-2">
               {answers.map((a) => (
-                <li
-                  key={a.id}
-                  className="rounded-xl border border-neutral-200 bg-neutral-50/70 px-4 py-3"
-                >
-                  <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-neutral-400">
+                <li key={a.id} className="inset rounded-xl px-4 py-3">
+                  <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-lamp/70">
                     {nameOf(a.player_id)}
                   </p>
-                  <p className="mt-1 text-sm leading-relaxed text-neutral-900">{a.text}</p>
+                  <p className="mt-1 text-sm leading-relaxed text-bone">{a.text}</p>
                 </li>
               ))}
             </ul>
@@ -715,7 +714,7 @@ function Panel({
     return (
       <Box>
         <Label>투표</Label>
-        <p className="text-lg font-bold tracking-tight text-neutral-900">누가 AI인가?</p>
+        <p className="text-lg font-bold tracking-tight text-bone">누가 AI인가?</p>
         <PlayerGrid
           players={players}
           capacity={room.capacity}
@@ -725,7 +724,7 @@ function Panel({
           onSelect={setTarget}
         />
         {me.voted ? (
-          <p className="rounded-xl border border-neutral-200 bg-neutral-50 px-4 py-3 text-sm text-neutral-400">
+          <p className="inset rounded-xl px-4 py-3 text-sm text-grime">
             투표했다. 결과는 전원이 마치면 공개된다.
           </p>
         ) : (
@@ -809,13 +808,13 @@ function ChatPanel({
   return (
     <Box>
       <Label>자유 채팅</Label>
-      <p className="text-sm text-neutral-400">
+      <p className="text-sm text-grime">
         누가 AI 같은지 얘기해본다. 시간이 지나면 투표로 넘어간다.
       </p>
 
-      <ul className="flex max-h-72 flex-col gap-3 overflow-y-auto rounded-xl border border-neutral-200 bg-neutral-50/60 p-4">
+      <ul className="inset flex max-h-72 flex-col gap-3 overflow-y-auto rounded-xl p-4">
         {messages.length === 0 && (
-          <li className="py-6 text-center text-sm text-neutral-400">
+          <li className="py-6 text-center text-sm text-grime">
             아직 아무도 말하지 않았다.
           </li>
         )}
@@ -823,15 +822,15 @@ function ChatPanel({
           const mine = m.player_id === meId;
           return (
             <li key={m.id} className={mine ? 'flex flex-col items-end' : 'flex flex-col items-start'}>
-              <span className="mb-1 px-1 text-[10px] font-bold uppercase tracking-[0.15em] text-neutral-400">
+              <span className="mb-1 px-1 text-[10px] font-bold uppercase tracking-[0.15em] text-grime">
                 {nameOf(m.player_id)}
               </span>
               <span
                 className={[
                   'max-w-[80%] rounded-2xl px-3.5 py-2 text-sm leading-relaxed',
                   mine
-                    ? 'rounded-br-sm bg-indigo-600 text-white'
-                    : 'rounded-bl-sm border border-neutral-200 bg-white text-neutral-900',
+                    ? 'rounded-br-sm bg-blood text-white'
+                    : 'rounded-bl-sm border border-bone/10 bg-slab text-bone',
                 ].join(' ')}
               >
                 {m.text}
@@ -874,9 +873,9 @@ function ChatPanel({
 
 /** 역할 배지 모양. role이 null이면 시민으로 본다 (원래 표시 규칙 그대로다). */
 const ROLE_BADGE = {
-  ai: { label: 'AI', tone: 'border-indigo-200 bg-indigo-50 text-indigo-700', Icon: ChipIcon },
-  spy: { label: '스파이', tone: 'border-amber-200 bg-amber-50 text-amber-700', Icon: SpyIcon },
-  citizen: { label: '시민', tone: 'border-neutral-200 bg-neutral-50 text-neutral-500', Icon: CheckIcon },
+  ai: { label: 'AI', tone: 'border-ember/40 bg-ember/15 text-ember', Icon: ChipIcon },
+  spy: { label: '스파이', tone: 'border-lamp/40 bg-lamp/15 text-lamp', Icon: SpyIcon },
+  citizen: { label: '시민', tone: 'border-bone/10 bg-bone/5 text-dust', Icon: CheckIcon },
 } as const;
 
 function RoleBadge({ role }: { role: Role | null }) {
@@ -916,14 +915,14 @@ function RevealPanel({
   if (failed) {
     return (
       <Box>
-        <p className="text-sm font-medium text-red-600">{failed}</p>
+        <p className="text-sm font-medium text-blood">{failed}</p>
       </Box>
     );
   }
   if (!data) {
     return (
       <Box>
-        <p className="py-6 text-center text-sm text-neutral-400">집계하는 중…</p>
+        <p className="py-6 text-center text-sm text-grime">집계하는 중…</p>
       </Box>
     );
   }
@@ -934,14 +933,14 @@ function RevealPanel({
 
   const verdict =
     myVote == null
-      ? { text: '투표하지 않았다', sub: '다음 판에는 한 명을 골라보자', tone: 'border-neutral-200 bg-neutral-50 text-neutral-500' }
+      ? { text: '투표하지 않았다', sub: '다음 판에는 한 명을 골라보자', tone: 'border-bone/10 bg-bone/5 text-dust' }
       : iWasRight
-        ? { text: '맞혔다', sub: 'AI를 골랐다', tone: 'border-emerald-200 bg-emerald-50 text-emerald-700' }
-        : { text: '틀렸다', sub: '사람을 골랐다', tone: 'border-red-200 bg-red-50 text-red-600' };
+        ? { text: '맞혔다', sub: 'AI를 골랐다', tone: 'border-door/40 bg-door/10 text-door' }
+        : { text: '틀렸다', sub: '사람을 골랐다', tone: 'border-blood/40 bg-blood/10 text-blood' };
 
   return (
     <>
-      <section className={`rounded-2xl border p-6 text-center shadow-sm ${verdict.tone}`}>
+      <section className={`rounded-2xl border p-6 text-center ${verdict.tone}`}>
         <p className="text-[10px] font-bold uppercase tracking-[0.2em] opacity-60">결과</p>
         <p className="mt-2 text-4xl font-black tracking-tight">{verdict.text}</p>
         <p className="mt-1 text-sm opacity-80">{verdict.sub}</p>
@@ -957,29 +956,29 @@ function RevealPanel({
                 key={p.id}
                 className={[
                   'flex items-center gap-3 rounded-xl border p-3',
-                  isMe ? 'border-indigo-300 bg-indigo-50/60' : 'border-neutral-200 bg-white',
+                  isMe ? 'border-blood/40 bg-blood/10' : 'border-bone/10 bg-black/25',
                 ].join(' ')}
               >
-                <span className="w-5 shrink-0 text-center font-mono text-sm font-black tabular-nums text-neutral-300">
+                <span className="w-5 shrink-0 text-center font-mono text-sm font-black tabular-nums text-ash">
                   {i + 1}
                 </span>
                 <span
-                  className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-neutral-900 font-mono text-xs font-bold tabular-nums text-white"
+                  className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-seam font-mono text-xs font-bold tabular-nums text-bone"
                   aria-hidden
                 >
                   {p.seat}
                 </span>
                 <span className="min-w-0 flex-1">
-                  <span className="block truncate text-sm font-bold text-neutral-900">
+                  <span className="block truncate text-sm font-bold text-bone">
                     {p.nickname}
-                    {isMe && <span className="ml-1.5 text-[11px] text-indigo-600">나</span>}
+                    {isMe && <span className="ml-1.5 text-[11px] text-blood">나</span>}
                   </span>
-                  <span className="block text-[10px] font-bold uppercase tracking-[0.15em] text-neutral-400">
+                  <span className="block text-[10px] font-bold uppercase tracking-[0.15em] text-grime">
                     받은 표 {p.votes_received}
                   </span>
                 </span>
                 <RoleBadge role={p.role} />
-                <span className="w-14 shrink-0 text-right font-mono text-lg font-black tabular-nums text-neutral-900">
+                <span className="w-14 shrink-0 text-right font-mono text-lg font-black tabular-nums text-bone">
                   {p.score}
                 </span>
               </li>
@@ -991,31 +990,31 @@ function RevealPanel({
       <Box>
         <Label>누가 누구를 찍었나</Label>
         {data.votes.length === 0 ? (
-          <p className="text-sm text-neutral-400">투표가 없다.</p>
+          <p className="text-sm text-grime">투표가 없다.</p>
         ) : (
           <ul className="flex flex-col gap-2">
             {data.votes.map((v) => (
               <li
                 key={v.voter_id}
-                className="flex flex-wrap items-baseline gap-x-2 gap-y-1 rounded-xl border border-neutral-200 bg-neutral-50/70 px-4 py-2.5 text-sm"
+                className="inset flex flex-wrap items-baseline gap-x-2 gap-y-1 rounded-xl px-4 py-2.5 text-sm"
               >
-                <span className="font-bold text-neutral-900">{nameOf(v.voter_id)}</span>
-                <span className="text-neutral-300">→</span>
-                <span className="font-bold text-neutral-900">{nameOf(v.target_id)}</span>
+                <span className="font-bold text-bone">{nameOf(v.voter_id)}</span>
+                <span className="text-ash">→</span>
+                <span className="font-bold text-bone">{nameOf(v.target_id)}</span>
                 <span
                   className={
-                    v.correct ? 'font-bold text-emerald-600' : 'font-bold text-neutral-300'
+                    v.correct ? 'font-bold text-door' : 'font-bold text-ash'
                   }
                 >
                   {v.correct ? '○' : '✕'}
                 </span>
-                {v.reason && <span className="text-neutral-400">· {v.reason}</span>}
+                {v.reason && <span className="text-grime">· {v.reason}</span>}
               </li>
             ))}
           </ul>
         )}
 
-        <p className="border-t border-neutral-100 pt-4 text-[11px] leading-relaxed text-neutral-400">
+        <p className="border-t border-bone/10 pt-4 text-[11px] leading-relaxed text-grime">
           채점: {data.rule.join(' · ')}
           <br />이 규칙은 SPEC에 없다. 정하면 app/api/reveal/route.ts와 lib/game/rules.ts를
           고친다.
@@ -1023,7 +1022,7 @@ function RevealPanel({
 
         <Link
           href="/main"
-          className="inline-flex items-center gap-2 text-sm font-bold text-indigo-600 transition-colors hover:text-indigo-500"
+          className="inline-flex items-center gap-2 text-sm font-bold text-lamp transition-colors hover:text-bone"
         >
           <ArrowLeftIcon className="h-4 w-4" />
           로비로
@@ -1036,14 +1035,14 @@ function RevealPanel({
 /* ─────────────────────────────── 공통 조각 ─────────────────────────────── */
 
 const INPUT =
-  'min-w-0 flex-1 rounded-xl border border-neutral-200 bg-white px-4 py-3 text-sm text-neutral-900 transition-colors placeholder:text-neutral-400 focus:border-indigo-500 focus:outline-none';
+  'inset min-w-0 flex-1 rounded-xl px-4 py-3 text-sm text-bone transition-colors placeholder:text-grime focus:border-lamp/50 focus:outline-none';
 
 const PRIMARY_BUTTON =
-  'shrink-0 rounded-xl bg-indigo-600 px-5 py-3 text-sm font-bold text-white transition-colors hover:bg-indigo-500 disabled:cursor-not-allowed disabled:bg-neutral-200 disabled:text-neutral-400';
+  'shrink-0 rounded-xl bg-blood px-5 py-3 text-sm font-bold text-white transition-colors hover:bg-blood/85 disabled:cursor-not-allowed disabled:bg-seam disabled:text-ash';
 
 function Label({ children }: { children: React.ReactNode }) {
   return (
-    <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-neutral-400">{children}</p>
+    <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-grime">{children}</p>
   );
 }
 
@@ -1059,20 +1058,20 @@ function RuleRow({
   accent?: boolean;
 }) {
   return (
-    <li className="flex items-center gap-3 rounded-xl border border-neutral-200 bg-neutral-50/70 px-3 py-2.5">
+    <li className="inset flex items-center gap-3 rounded-xl px-3 py-2.5">
       <span
         className={[
           'flex h-8 w-8 shrink-0 items-center justify-center rounded-lg',
-          accent ? 'bg-indigo-50 text-indigo-600' : 'bg-white text-neutral-400',
+          accent ? 'bg-lamp/15 text-lamp' : 'bg-bone/5 text-grime',
         ].join(' ')}
       >
         {icon}
       </span>
       <span className="min-w-0 flex-1">
-        <span className="block text-[10px] font-bold uppercase tracking-[0.2em] text-neutral-400">
+        <span className="block text-[10px] font-bold uppercase tracking-[0.2em] text-grime">
           {label}
         </span>
-        <span className="block text-sm font-medium text-neutral-900">{value}</span>
+        <span className="block text-sm font-medium text-bone">{value}</span>
       </span>
     </li>
   );
@@ -1080,7 +1079,7 @@ function RuleRow({
 
 function Box({ children }: { children: React.ReactNode }) {
   return (
-    <section className="flex flex-col gap-3 rounded-2xl border border-neutral-200 bg-white p-5 shadow-sm">
+    <section className="panel flex flex-col gap-3 rounded-2xl p-5">
       {children}
     </section>
   );

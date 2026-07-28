@@ -71,13 +71,12 @@ export function PlayerGrid({
               onClick={() => p && onSelect?.(p.id)}
               aria-pressed={selectable ? picked : undefined}
               className={[
-                'flex w-full flex-col items-center gap-1.5 rounded-2xl border p-2.5 text-center transition',
-                p
-                  ? 'border-neutral-200 bg-white shadow-sm'
-                  : 'border-dashed border-neutral-200 bg-neutral-50/60',
-                picked ? 'border-indigo-600 ring-2 ring-indigo-600/25' : '',
+                'flex w-full flex-col items-center gap-1.5 rounded-2xl p-2.5 text-center transition',
+                // 앉은 자리는 조명을 받은 물건처럼, 빈 자리는 어둠에 잠긴 의자처럼
+                p ? 'panel' : 'border border-dashed border-bone/10 bg-black/25',
+                picked ? 'border-blood ring-2 ring-blood/30' : '',
                 canPick
-                  ? 'cursor-pointer hover:-translate-y-0.5 hover:border-indigo-400 hover:shadow-md'
+                  ? 'cursor-pointer hover:-translate-y-0.5 hover:border-blood/50 hover:shadow-[0_0_28px_-10px_rgba(255,43,29,0.9)]'
                   : 'cursor-default',
               ].join(' ')}
             >
@@ -86,9 +85,9 @@ export function PlayerGrid({
                   'flex h-9 w-9 items-center justify-center rounded-full font-mono text-xs font-bold tabular-nums',
                   p
                     ? isMe
-                      ? 'bg-indigo-600 text-white'
-                      : 'bg-neutral-900 text-white'
-                    : 'border border-dashed border-neutral-300 text-neutral-300',
+                      ? 'bg-blood text-white'
+                      : 'bg-seam text-bone'
+                    : 'border border-dashed border-bone/15 text-ash',
                 ].join(' ')}
                 aria-hidden
               >
@@ -98,14 +97,14 @@ export function PlayerGrid({
               <span
                 className={[
                   'w-full truncate text-[11px] leading-tight',
-                  p ? 'font-bold text-neutral-900' : 'text-neutral-400',
+                  p ? 'font-bold text-bone' : 'text-ash',
                 ].join(' ')}
               >
                 {p ? p.nickname : '빈자리'}
               </span>
 
               {/* 자리마다 높이를 맞추려고 '나'가 아니어도 한 줄을 비워 둔다 */}
-              <span className="text-[10px] font-bold uppercase tracking-[0.15em] text-indigo-600">
+              <span className="text-[10px] font-bold uppercase tracking-[0.15em] text-blood">
                 {isMe ? '나' : ' '}
               </span>
             </button>
