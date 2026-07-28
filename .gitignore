@@ -46,6 +46,9 @@ secrets.yaml
 # 개인 로컬 설정
 .claude/settings.local.json
 
+# bkit 로컬 런타임 상태 (감사 로그 · 체크포인트). 공유하지 않는다
+/.bkit/
+
 # typescript
 *.tsbuildinfo
 next-env.d.ts

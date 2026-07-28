@@ -46,7 +46,7 @@ export const workspaces: Workspace[] = [
     href: "/bg-3d",
     title: "3D 배경화면",
     owner: "원상",
-    description: "지하 라운지를 Three.js 로 재현 (텍스처 Higgsfield)",
+    description: "창고 시네마 라운지를 Three.js 로 재현 (텍스처 Higgsfield)",
     status: "작업 중",
   },
   {

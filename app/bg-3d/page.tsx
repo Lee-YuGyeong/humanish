@@ -1,5 +1,5 @@
 /**
- * 3D 배경화면 — 레퍼런스 지하 라운지를 Three.js 로 세운 전체화면 씬.
+ * 3D 배경화면 — 레퍼런스 창고 시네마 라운지를 Three.js 로 세운 전체화면 씬.
  *
  * 씬 구현은 ./room-scene.tsx 에 있다.
  * 이 폴더(app/bg-3d) 밖은 건드리지 않는다.
@@ -35,8 +35,8 @@ export default function Bg3dPage() {
             3D 배경화면
           </h1>
           <p className="mt-1 max-w-md text-xs leading-relaxed text-neutral-500">
-            사진을 붙인 판이 아니라 바닥·벽·천장·가구가 각각 놓인 방입니다.
-            벽 · 바닥 · 스크린 · 벽화 텍스처는 Higgsfield 로 뽑아 타일링했습니다.
+            사진을 붙인 판이 아니라 바닥·벽·박공지붕·트러스·가구가 각각 놓인
+            창고입니다. 벽 · 바닥 · 박스 텍스처는 Higgsfield 로 뽑아 타일링했습니다.
           </p>
         </div>
 
@@ -47,7 +47,7 @@ export default function Bg3dPage() {
           </div>
           <div>
             <dt className="text-neutral-600">텍스처</dt>
-            <dd className="font-mono text-neutral-300">Higgsfield 4장</dd>
+            <dd className="font-mono text-neutral-300">Higgsfield 3장</dd>
           </div>
         </dl>
       </header>
