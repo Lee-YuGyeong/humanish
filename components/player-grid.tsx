@@ -6,6 +6,9 @@
  *
  * ★ 칸 수는 방마다 다르다 (정원 3~8, SPEC §17.6). 여기서 5로 하드코딩하면 정원 8인
  *   방의 뒷자리 세 명이 화면에서 사라진다. 정원은 항상 room.capacity에서 받는다.
+ *
+ * 자리는 창고 바닥에 늘어놓은 플라이트 케이스로 그린다. 그리드에 원근을 살짝 걸어
+ * 바닥에 놓인 물건처럼 보이게 했다 — 각도는 6도다. 그 이상 눕히면 글자가 읽기 나빠진다.
  */
 import type { PublicPlayer } from '@/lib/game/types';
 
@@ -56,61 +59,66 @@ export function PlayerGrid({
   const cols = GRID_COLS[seatCount] ?? 'grid-cols-4';
 
   return (
-    <ul className={`grid gap-2 ${cols}`}>
-      {Array.from({ length: seatCount }, (_, i) => i + 1).map((seat) => {
-        const p = bySeat.get(seat);
-        const isMe = p != null && p.id === meId;
-        const canPick = selectable && p != null && !isMe;
-        const picked = p != null && p.id === selectedId;
+    // 바닥에 놓인 것처럼 보이게 하는 원근. 자식 ul 이 이 소실점을 받는다.
+    <div style={{ perspective: '900px', perspectiveOrigin: '50% 0%' }}>
+      <ul
+        className={`grid gap-1.5 ${cols}`}
+        style={{ transform: 'rotateX(6deg)', transformStyle: 'preserve-3d' }}
+      >
+        {Array.from({ length: seatCount }, (_, i) => i + 1).map((seat) => {
+          const p = bySeat.get(seat);
+          const isMe = p != null && p.id === meId;
+          const canPick = selectable && p != null && !isMe;
+          const picked = p != null && p.id === selectedId;
 
-        return (
-          <li key={seat}>
-            <button
-              type="button"
-              disabled={!canPick}
-              onClick={() => p && onSelect?.(p.id)}
-              aria-pressed={selectable ? picked : undefined}
-              className={[
-                'flex w-full flex-col items-center gap-1.5 rounded-2xl p-2.5 text-center transition',
-                // 앉은 자리는 조명을 받은 물건처럼, 빈 자리는 어둠에 잠긴 의자처럼
-                p ? 'panel' : 'border border-dashed border-bone/10 bg-black/25',
-                picked ? 'border-blood ring-2 ring-blood/30' : '',
-                canPick
-                  ? 'cursor-pointer hover:-translate-y-0.5 hover:border-blood/50 hover:shadow-[0_0_28px_-10px_rgba(255,43,29,0.9)]'
-                  : 'cursor-default',
-              ].join(' ')}
-            >
-              <span
+          return (
+            <li key={seat}>
+              <button
+                type="button"
+                disabled={!canPick}
+                onClick={() => p && onSelect?.(p.id)}
+                aria-pressed={selectable ? picked : undefined}
                 className={[
-                  'flex h-9 w-9 items-center justify-center rounded-full font-mono text-xs font-bold tabular-nums',
-                  p
-                    ? isMe
-                      ? 'bg-blood text-white'
-                      : 'bg-seam text-bone'
-                    : 'border border-dashed border-bone/15 text-ash',
-                ].join(' ')}
-                aria-hidden
-              >
-                {p ? seat : '·'}
-              </span>
-
-              <span
-                className={[
-                  'w-full truncate text-[11px] leading-tight',
-                  p ? 'font-bold text-bone' : 'text-ash',
+                  'relative flex w-full flex-col items-center gap-2 px-2 py-3.5 text-center',
+                  // 앉은 자리는 바닥에 놓인 케이스, 빈 자리는 바닥에 파인 자국
+                  p ? 'case' : 'cut',
+                  picked
+                    ? 'shadow-[inset_0_0_0_1px_rgba(255,51,32,0.7),0_0_28px_-8px_rgba(255,51,32,0.9)]'
+                    : '',
+                  canPick ? 'case-live cursor-pointer' : 'cursor-default',
                 ].join(' ')}
               >
-                {p ? p.nickname : '빈자리'}
-              </span>
+                {/* 케이스에 스텐실로 찍힌 자리 번호 */}
+                <span
+                  className={[
+                    'readout flex h-8 w-8 items-center justify-center rounded-[2px] text-[13px]',
+                    p
+                      ? isMe
+                        ? 'bg-tung/15 text-flare shadow-[inset_0_0_0_1px_rgba(255,217,172,0.45)]'
+                        : 'bg-black/45 text-dust'
+                      : 'text-ash',
+                  ].join(' ')}
+                  aria-hidden
+                >
+                  {p ? seat : '·'}
+                </span>
 
-              {/* 자리마다 높이를 맞추려고 '나'가 아니어도 한 줄을 비워 둔다 */}
-              <span className="text-[10px] font-bold uppercase tracking-[0.15em] text-blood">
-                {isMe ? '나' : ' '}
-              </span>
-            </button>
-          </li>
-        );
-      })}
-    </ul>
+                <span
+                  className={[
+                    'w-full truncate text-[11px] leading-tight',
+                    p ? 'font-semibold text-bone' : 'text-ash',
+                  ].join(' ')}
+                >
+                  {p ? p.nickname : '빈자리'}
+                </span>
+
+                {/* 자리마다 높이를 맞추려고 '나'가 아니어도 한 줄을 비워 둔다 */}
+                <span className="stencil h-3 text-[8px] text-signal">{isMe ? '나' : ' '}</span>
+              </button>
+            </li>
+          );
+        })}
+      </ul>
+    </div>
   );
 }

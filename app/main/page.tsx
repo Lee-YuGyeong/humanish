@@ -14,8 +14,12 @@
  * 버튼을 disabled로 두어, 눌러도 아무 일이 없다는 것이 화면에서 드러나게 했다.
  * 값 자체는 app/main/mock-lobby.ts에 있다.
  *
- * 색은 /bg-3d 지하 라운지에서 온다 (app/globals.css). 배경은 layout이 깐 .room-backdrop이
- * 맡으므로 여기서 배경색을 칠하지 않는다 — 칠하면 조명이 가려진다.
+ * 화면은 창고의 상영 안내판으로 읽힌다 — 골강판 기둥 사이에 케이스가 늘어서 있고
+ * 각 케이스에 코드가 스텐실로 찍혀 있다. 재질은 app/globals.css의 .rib / .case / .cut 셋뿐이다.
+ *
+ * ★ 좌석은 막대가 아니라 **칸**으로 그린다. 정원이 방마다 3~8로 다르므로(§17.6)
+ *   비율 막대는 "몇 자리짜리 방인지"를 지워버린다. 칸을 정원만큼 그리면 8인 방과
+ *   3인 방이 한눈에 갈린다.
  *
  * TODO(C): 필터 · 전체 채팅 입력 동작.
  */
@@ -200,7 +204,7 @@ export default function MainPage() {
   const isCode = /^[A-Z]{4}$/.test(query);
 
   return (
-    <div className="flex h-screen flex-col overflow-hidden text-dust">
+    <div className="flex h-screen flex-col overflow-hidden">
       <Header />
 
       <main className="flex flex-1 overflow-hidden">
@@ -236,18 +240,18 @@ export default function MainPage() {
   );
 }
 
-/* ─────────────────────────────── 헤더 ─────────────────────────────── */
+/* ─────────────────────────────── 머리말 ─────────────────────────────── */
 
 const navItems = ["멀티플레이", "상점", "컬렉션", "기록"];
 
 function Header() {
   return (
-    <header className="flex h-20 shrink-0 items-center justify-between border-b border-bone/10 bg-ink/60 px-8 backdrop-blur-md">
-      <div className="flex items-center gap-8">
-        <Link href="/" className="text-2xl font-black tracking-tighter text-bone">
+    <header className="rib flex h-16 shrink-0 items-center justify-between border-b border-black/70 px-6 shadow-[0_1px_0_rgba(214,207,194,0.05)]">
+      <div className="flex items-center gap-7">
+        <Link href="/" className="engraved text-xl font-black tracking-tighter">
           기계인 척
         </Link>
-        <nav className="hidden items-center gap-6 md:flex">
+        <nav className="hidden items-center gap-5 md:flex">
           {navItems.map((item, i) => (
             <button
               key={item}
@@ -255,8 +259,8 @@ function Header() {
               disabled={i !== 0}
               className={
                 i === 0
-                  ? "border-b-2 border-blood pb-1 text-sm font-bold text-bone"
-                  : "cursor-default text-sm text-ash"
+                  ? "stencil border-b border-signal pb-1 text-[10px] text-bone"
+                  : "stencil cursor-default pb-1 text-[10px] text-ash"
               }
             >
               {item}
@@ -266,111 +270,90 @@ function Header() {
         </nav>
       </div>
 
-      <div className="flex items-center gap-6">
-        <div className="panel flex items-center gap-3 rounded-full px-4 py-2">
+      <div className="flex items-center gap-5">
+        <div className="cut flex items-center gap-3 px-3 py-1.5">
           <MockBadge />
-          <span className="flex items-center gap-2">
-            <CoinIcon className="h-4 w-4 text-lamp" />
-            <span className="text-sm font-bold tracking-wider text-bone">12,450</span>
+          <span className="flex items-center gap-1.5">
+            <CoinIcon className="h-3.5 w-3.5 text-tung" />
+            <span className="readout text-xs text-bone">12,450</span>
           </span>
-          <span className="h-4 w-px bg-bone/15" />
-          <span className="flex items-center gap-2">
-            <GemIcon className="h-4 w-4 text-ember" />
-            <span className="text-sm font-bold tracking-wider text-bone">420</span>
+          <span className="h-3 w-px bg-bone/10" />
+          <span className="flex items-center gap-1.5">
+            <GemIcon className="h-3.5 w-3.5 text-bounce" />
+            <span className="readout text-xs text-bone">420</span>
           </span>
         </div>
 
-        <div className="flex items-center gap-3 border-l border-bone/10 pl-4">
+        <div className="flex items-center gap-3 border-l border-bone/10 pl-5">
           <div className="text-right">
-            <p className="text-xs font-bold uppercase tracking-widest text-bone">
-              Player_K
-            </p>
-            <p className="flex items-center justify-end gap-1.5 text-[10px] font-black text-lamp">
-              LV. 24
+            <p className="stencil text-[10px] text-bone">Player_K</p>
+            <p className="readout flex items-center justify-end gap-1.5 text-[10px] text-tung/70">
+              LV 24
               <MockBadge />
             </p>
           </div>
           <div className="relative">
-            <Avatar name="Player_K" className="h-10 w-10 ring-2 ring-blood/60" />
-            <span className="absolute bottom-0 right-0 h-3 w-3 rounded-full border-2 border-ink bg-door" />
+            <Avatar name="Player_K" className="h-9 w-9" />
+            <span className="absolute -bottom-0.5 -right-0.5 h-2 w-2 rounded-full bg-tung shadow-[0_0_8px_2px] shadow-tung/60" />
           </div>
         </div>
 
-        <button
-          type="button"
-          aria-label="설정 (목업)"
-          disabled
-          className="cursor-default text-ash"
-        >
-          <GearIcon className="h-5 w-5" />
+        <button type="button" aria-label="설정 (목업)" disabled className="cursor-default text-ash">
+          <GearIcon className="h-4 w-4" />
         </button>
       </div>
     </header>
   );
 }
 
-/* ───────────────────────────── 왼쪽 사이드바 ───────────────────────────── */
+/* ───────────────────────────── 왼쪽 기둥 ───────────────────────────── */
 
 function ProfileSidebar() {
   return (
-    <aside className="hidden w-80 shrink-0 overflow-y-auto border-r border-bone/10 bg-ink/40 p-6 lg:block">
-      <SectionTitle mock>플레이어 정보</SectionTitle>
-      <div className="panel mb-8 rounded-2xl p-4">
-        <div className="mb-4">
-          <div className="mb-1 flex justify-between text-[10px] font-bold uppercase">
-            <span className="text-grime">경험치 (EXP)</span>
-            <span className="text-lamp">75%</span>
-          </div>
-          <div className="h-1.5 w-full overflow-hidden rounded-full bg-black/40">
-            <div className="h-full w-3/4 rounded-full bg-lamp/80" />
-          </div>
+    <aside className="hidden w-72 shrink-0 overflow-y-auto border-r border-black/60 bg-void/50 p-5 lg:block">
+      <SectionTitle mock>운영자</SectionTitle>
+      <div className="case p-4">
+        <div className="flex items-baseline justify-between">
+          <span className="stencil text-[9px] text-ash">exp</span>
+          <span className="readout text-[11px] text-tung">75%</span>
         </div>
-        <div className="grid grid-cols-2 gap-3">
+        {/* 눈금 막대. 매끄러운 바 대신 칸으로 — 계기판처럼 읽힌다 */}
+        <div className="mt-2 flex gap-px" aria-hidden>
+          {Array.from({ length: 20 }, (_, i) => (
+            <span
+              key={i}
+              className={`h-2 flex-1 ${
+                i < 15 ? "bg-tung/80 shadow-[0_0_5px] shadow-tung/40" : "bg-bone/8"
+              }`}
+            />
+          ))}
+        </div>
+        <div className="mt-4 grid grid-cols-2 gap-px">
           <Stat label="승률" value="64%" />
           <Stat label="판수" value="128" />
         </div>
       </div>
 
-      <SectionTitle mock>선호 역할</SectionTitle>
-      <div className="mb-8 space-y-3">
-        <RolePreference
-          icon={<ChipIcon className="h-4 w-4" />}
-          name="진짜 AI"
-          level="High"
-          accent
-        />
-        <RolePreference
-          icon={<SpyIcon className="h-4 w-4" />}
-          name="스파이"
-          level="Mid"
-        />
+      <SectionTitle mock>선호 배역</SectionTitle>
+      <div className="space-y-px">
+        <RolePreference icon={<ChipIcon className="h-3.5 w-3.5" />} name="진짜 AI" level="High" accent />
+        <RolePreference icon={<SpyIcon className="h-3.5 w-3.5" />} name="스파이" level="Mid" />
       </div>
 
-      <SectionTitle mock>최근 게임</SectionTitle>
-      <div className="space-y-2">
+      <SectionTitle mock>최근 판</SectionTitle>
+      <div className="space-y-px">
         {recentGames.map((game) => (
-          <div
-            key={game.result}
-            className={`flex items-center gap-3 rounded-xl border p-3 ${
-              game.win
-                ? "border-door/25 bg-door/10"
-                : "border-blood/25 bg-blood/10"
-            }`}
-          >
+          <div key={game.result} className="case flex items-center gap-3 px-3 py-2.5">
             <span
-              className={`h-2 w-2 rounded-full ${
-                game.win ? "bg-door" : "bg-blood"
+              className={`h-1.5 w-1.5 shrink-0 rounded-full ${
+                game.win ? "bg-tung shadow-[0_0_8px_2px] shadow-tung/50" : "bg-signal/70"
               }`}
             />
-            <div className="flex-1">
-              <p className="text-xs font-bold text-bone">{game.result}</p>
-              <p className="text-[10px] text-grime">{game.time}</p>
+            <div className="min-w-0 flex-1">
+              <p className="truncate text-[12px] text-bone">{game.result}</p>
+              <p className="text-[10px] text-ash">{game.time}</p>
             </div>
-            <span
-              className={`text-xs font-bold ${
-                game.win ? "text-door" : "text-blood"
-              }`}
-            >
+            <span className={`readout text-[11px] ${game.win ? "text-tung" : "text-signal/80"}`}>
               {game.score}
             </span>
           </div>
@@ -380,15 +363,9 @@ function ProfileSidebar() {
   );
 }
 
-function SectionTitle({
-  children,
-  mock = false,
-}: {
-  children: React.ReactNode;
-  mock?: boolean;
-}) {
+function SectionTitle({ children, mock = false }: { children: React.ReactNode; mock?: boolean }) {
   return (
-    <h3 className="mb-4 flex items-center gap-2 text-xs font-bold uppercase tracking-[0.2em] text-bone">
+    <h3 className="stencil mb-3 mt-7 flex items-center gap-2 text-[9px] text-grime first:mt-0">
       {children}
       {mock && <MockBadge />}
     </h3>
@@ -397,9 +374,9 @@ function SectionTitle({
 
 function Stat({ label, value }: { label: string; value: string }) {
   return (
-    <div className="inset rounded-xl p-2 text-center">
-      <p className="text-[10px] uppercase text-grime">{label}</p>
-      <p className="text-lg font-bold text-bone">{value}</p>
+    <div className="cut px-2 py-2 text-center">
+      <p className="stencil text-[8px] text-ash">{label}</p>
+      <p className="readout mt-1 text-base text-bone">{value}</p>
     </div>
   );
 }
@@ -416,25 +393,17 @@ function RolePreference({
   accent?: boolean;
 }) {
   return (
-    <div className="panel flex items-center justify-between rounded-xl p-3">
-      <div className="flex items-center gap-3">
-        <span
-          className={`flex h-8 w-8 items-center justify-center rounded-lg ${
-            accent
-              ? "bg-lamp/15 text-lamp"
-              : "bg-bone/5 text-grime"
-          }`}
-        >
-          {icon}
-        </span>
-        <span className="text-sm font-medium text-bone">{name}</span>
+    <div className="case flex items-center justify-between px-3 py-2.5">
+      <div className="flex items-center gap-2.5">
+        <span className={accent ? "text-tung" : "text-grime"}>{icon}</span>
+        <span className="text-[13px] text-bone">{name}</span>
       </div>
-      <span className="text-xs italic text-grime">{level}</span>
+      <span className="stencil text-[9px] text-ash">{level}</span>
     </div>
   );
 }
 
-/* ───────────────────────────── 가운데 방 목록 ───────────────────────────── */
+/* ───────────────────────────── 가운데 상영 안내 ───────────────────────────── */
 
 function RoomList({
   rooms,
@@ -465,32 +434,31 @@ function RoomList({
   const total = rooms?.length ?? 0;
 
   return (
-    <section className="flex-1 overflow-y-auto p-8">
-      <div className="mb-8 flex flex-wrap items-center justify-between gap-4">
+    <section className="flex-1 overflow-y-auto px-8 py-7">
+      <div className="flex flex-wrap items-end justify-between gap-5">
         <div>
-          <h2 className="text-3xl font-black tracking-tight text-bone">
-            공개 대기방
-          </h2>
-          <p className="text-sm text-grime">
+          <p className="stencil text-[10px] text-signal/70">waiting rooms</p>
+          <h2 className="engraved mt-2 text-3xl font-black">시작을 기다리는 방</h2>
+          <p className="mt-1.5 text-[13px] text-grime">
             {loading
-              ? "방 목록을 불러오는 중…"
+              ? "불러오는 중…"
               : query
-                ? `${total}개 중 ${visible.length}개가 “${query}”와 맞습니다.`
-                : `현재 ${total}개의 방이 시작을 기다리는 중입니다.`}
+                ? `${total}개 중 ${visible.length}개가 “${query}”와 맞는다.`
+                : `${total}개가 열려 있다. 이미 시작한 방은 목록에 없다.`}
           </p>
         </div>
 
-        <div className="flex flex-wrap gap-3">
+        <div className="flex flex-wrap items-center gap-2">
           <div className="relative">
-            <SearchIcon className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-grime" />
+            <SearchIcon className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-ash" />
             <input
               type="text"
               value={query}
               // 코드는 대문자 4자다. maxLength는 걸지 않는다 — 이 칸은 검색도 겸한다.
               onChange={(e) => onQueryChange(e.target.value)}
-              placeholder="방 코드 검색"
+              placeholder="CODE"
               aria-label="방 코드 검색"
-              className="inset w-56 rounded-xl py-3 pl-11 pr-6 font-mono text-sm tracking-widest text-bone transition-colors placeholder:font-sans placeholder:tracking-normal placeholder:text-grime focus:border-lamp/50 focus:outline-none"
+              className="cut readout w-44 py-2.5 pl-9 pr-3 text-sm tracking-[0.3em] text-bone transition-colors placeholder:font-sans placeholder:tracking-[0.2em] placeholder:text-ash focus:border-tung/40 focus:outline-none"
             />
           </div>
 
@@ -499,7 +467,7 @@ function RoomList({
               type="button"
               disabled={busy}
               onClick={() => onEnter(query)}
-              className="rounded-xl border border-lamp/30 bg-lamp/10 px-5 py-3 text-sm font-bold text-lamp transition-colors hover:bg-lamp/20 disabled:opacity-50"
+              className="case case-live stencil px-4 py-2.5 text-[10px] text-tung disabled:opacity-40"
             >
               이 코드로 입장
             </button>
@@ -509,29 +477,30 @@ function RoomList({
             type="button"
             aria-label="필터 (목업)"
             disabled
-            className="panel cursor-default rounded-xl p-3 text-ash"
+            className="case cursor-default px-3 py-2.5 text-ash"
           >
-            <SlidersIcon className="h-4 w-4" />
+            <SlidersIcon className="h-3.5 w-3.5" />
           </button>
 
           <button
             type="button"
             disabled={busy}
             onClick={onCreate}
-            className="rounded-xl bg-blood px-6 py-3 text-sm font-black uppercase tracking-widest text-white shadow-[0_0_24px_-8px_rgba(255,43,29,0.9)] transition-colors hover:bg-blood/85 disabled:opacity-50"
+            className="case case-live group flex items-center gap-3 px-5 py-2.5 disabled:opacity-40"
           >
-            방 만들기
+            <PlusIcon className="h-3.5 w-3.5 text-signal" />
+            <span className="stencil text-[10px] text-flare">방 만들기</span>
           </button>
         </div>
       </div>
 
       {listError && (
-        <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-blood/30 bg-blood/10 p-4">
-          <p className="text-sm text-blood">{listError}</p>
+        <div className="case mt-6 flex flex-wrap items-center justify-between gap-3 border-signal/30 px-5 py-3">
+          <p className="text-[13px] text-signal">{listError}</p>
           <button
             type="button"
             onClick={onRetry}
-            className="rounded-lg border border-blood/40 px-4 py-2 text-xs font-bold text-blood transition-colors hover:bg-blood/20"
+            className="stencil text-[10px] text-signal/80 underline-offset-4 hover:underline"
           >
             다시 시도
           </button>
@@ -539,15 +508,12 @@ function RoomList({
       )}
 
       {joinError && (
-        <div
-          role="alert"
-          className="mb-4 rounded-2xl border border-blood/30 bg-blood/10 p-4 text-sm text-blood"
-        >
+        <div role="alert" className="case mt-6 border-signal/30 px-5 py-3 text-[13px] text-signal">
           {joinError}
         </div>
       )}
 
-      <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
+      <div className="mt-6 grid grid-cols-1 gap-px md:grid-cols-2 2xl:grid-cols-3">
         {loading
           ? [0, 1, 2].map((i) => <RoomCardSkeleton key={i} />)
           : visible.map((room) => (
@@ -558,28 +524,22 @@ function RoomList({
           type="button"
           disabled={busy}
           onClick={onCreate}
-          className="group flex min-h-44 flex-col items-center justify-center rounded-2xl border-2 border-dashed border-bone/10 p-6 transition-colors hover:border-blood/40 hover:bg-blood/5 disabled:opacity-50"
+          className="group flex min-h-[8.5rem] flex-col items-center justify-center gap-2 border border-dashed border-bone/10 transition-colors hover:border-tung/30 hover:bg-tung/[0.03] disabled:opacity-40"
         >
-          <span className="mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-bone/5 text-grime transition-colors group-hover:bg-blood/15 group-hover:text-blood">
-            <PlusIcon className="h-5 w-5" />
-          </span>
-          <span className="text-sm font-bold text-grime transition-colors group-hover:text-blood">
-            새로운 방 만들기
+          <PlusIcon className="h-4 w-4 text-ash transition-colors group-hover:text-tung" />
+          <span className="stencil text-[9px] text-ash transition-colors group-hover:text-tung">
+            새 방
           </span>
         </button>
       </div>
 
       {!loading && visible.length === 0 && (
-        <p className="mt-6 text-sm text-grime">
+        <p className="mt-6 max-w-md text-[13px] leading-relaxed text-grime">
           {query
             ? `“${query}”와 맞는 방이 목록에 없다. 코드가 정확하면 위의 “이 코드로 입장”으로 바로 들어갈 수 있다.`
-            : "아직 기다리는 방이 없다. 새로 만들면 첫 방이 된다."}
+            : "기다리는 방이 없다. 새로 만들면 첫 방이 된다."}
         </p>
       )}
-
-      <p className="mt-6 text-xs leading-relaxed text-ash">
-        목록에는 아직 시작하지 않은 방만 나온다. 이미 시작한 방은 코드를 알아도 들어갈 수 없다.
-      </p>
     </section>
   );
 }
@@ -593,7 +553,6 @@ function RoomCard({
   busy: boolean;
   onEnter: (code: string) => void;
 }) {
-  const ratio = Math.min(100, Math.round((room.players / room.capacity) * 100));
   const full = room.players >= room.capacity;
 
   return (
@@ -604,42 +563,47 @@ function RoomCard({
       type="button"
       disabled={busy}
       onClick={() => onEnter(room.code)}
-      className="panel group min-h-44 rounded-2xl p-6 text-left transition-all hover:-translate-y-0.5 hover:border-blood/40 hover:shadow-[0_0_36px_-14px_rgba(255,43,29,0.8)] disabled:pointer-events-none disabled:opacity-50"
+      className="case case-live riveted group min-h-[8.5rem] px-7 py-5 text-left disabled:pointer-events-none disabled:opacity-40"
     >
-      <div className="mb-4 flex items-start justify-between gap-4">
+      <div className="flex items-start justify-between gap-4">
         <div className="min-w-0">
-          <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-grime">
-            Room Code
-          </p>
-          <p className="mt-1 truncate font-mono text-2xl font-black tracking-widest text-bone">
+          <p className="stencil text-[9px] text-ash">room</p>
+          <p className="readout mt-1 truncate text-3xl tracking-[0.28em] text-linen transition-colors group-hover:text-flare">
             {room.code}
           </p>
         </div>
         <div className="shrink-0 text-right">
-          <p className="text-sm font-bold text-bone">
-            {room.players} / {room.capacity}
+          <p className="readout text-lg text-bone">
+            {room.players}
+            <span className="text-ash">/{room.capacity}</span>
           </p>
-          <p className="text-[10px] uppercase text-grime">Players</p>
+          <p className="stencil text-[8px] text-ash">seats</p>
         </div>
       </div>
 
-      <div className="mb-6 flex items-center gap-2 text-xs text-grime">
-        <span>{timeAgo(room.created_at)} 만들어짐</span>
-        {full && (
-          <>
-            <span>•</span>
-            <span className="font-bold text-lamp">정원이 찼다</span>
-          </>
-        )}
+      {/*
+        ★ 좌석 칸. 정원만큼 그린다 — 8인 방과 3인 방이 눈으로 갈린다.
+          비율 막대로 그리면 둘 다 같은 길이가 되어 정원 정보가 사라진다 (§17.6).
+          채워진 칸은 사람 수다. 봇은 아직 없다 (lobby 목록이므로).
+      */}
+      <div className="mt-5 flex gap-1" aria-hidden>
+        {Array.from({ length: room.capacity }, (_, i) => (
+          <span
+            key={i}
+            className={`h-2.5 flex-1 rounded-[1px] transition-colors ${
+              i < room.players
+                ? full
+                  ? "bg-signal/80 shadow-[0_0_7px] shadow-signal/50"
+                  : "bg-tung/85 shadow-[0_0_7px] shadow-tung/40"
+                : "bg-bone/8"
+            }`}
+          />
+        ))}
       </div>
 
-      <div className="h-1 w-full overflow-hidden rounded-full bg-black/40">
-        <div
-          className={`h-full rounded-full transition-all ${
-            full ? "bg-lamp" : "bg-blood"
-          }`}
-          style={{ width: `${ratio}%` }}
-        />
+      <div className="mt-3 flex items-center justify-between text-[11px]">
+        <span className="text-ash">{timeAgo(room.created_at)}</span>
+        {full && <span className="stencil text-[9px] text-signal">정원 참</span>}
       </div>
     </button>
   );
@@ -647,14 +611,11 @@ function RoomCard({
 
 function RoomCardSkeleton() {
   return (
-    <div
-      aria-hidden
-      className="panel min-h-44 animate-pulse rounded-2xl p-6"
-    >
-      <div className="h-2.5 w-16 rounded bg-bone/10" />
-      <div className="mt-2 h-7 w-28 rounded bg-bone/10" />
-      <div className="mt-6 h-2.5 w-24 rounded bg-bone/10" />
-      <div className="mt-7 h-1 w-full rounded-full bg-bone/10" />
+    <div aria-hidden className="case min-h-[8.5rem] animate-pulse px-7 py-5">
+      <div className="h-2 w-8 bg-bone/8" />
+      <div className="mt-2 h-8 w-32 bg-bone/8" />
+      <div className="mt-6 h-2.5 w-full bg-bone/8" />
+      <div className="mt-4 h-2 w-16 bg-bone/8" />
     </div>
   );
 }
@@ -691,26 +652,19 @@ function CreateRoomDialog({
       onClick={() => {
         if (!busy) onClose();
       }}
-      className="fixed inset-0 z-50 flex items-center justify-center bg-ink/80 p-6 backdrop-blur-sm"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-void/85 p-6 backdrop-blur-sm"
     >
       <div
         onClick={(e) => e.stopPropagation()}
-        className="panel w-full max-w-md rounded-2xl p-8 shadow-[0_30px_80px_-20px_rgba(0,0,0,0.9)]"
+        className="case riveted w-full max-w-md px-9 py-8"
       >
-        <h2
-          id="create-room-title"
-          className="text-2xl font-black tracking-tight text-bone"
-        >
-          방 만들기
+        <p className="stencil text-[10px] text-signal/80">new room</p>
+        <h2 id="create-room-title" className="engraved mt-2 text-2xl font-black">
+          몇 자리로 열까
         </h2>
-        <p className="mt-1 text-sm text-grime">
-          정원을 고르면 바로 방이 열리고 방장으로 앉는다.
-        </p>
 
-        <p className="mt-8 text-[10px] font-bold uppercase tracking-[0.2em] text-grime">
-          정원
-        </p>
-        <div className="mt-3 grid grid-cols-6 gap-2">
+        {/* 정원 선택 — 좌석 수만큼 칸이 켜지는 다이얼 */}
+        <div className="mt-8 flex gap-1.5">
           {CAPACITY_OPTIONS.map((n) => {
             const selected = n === capacity;
             return (
@@ -720,10 +674,10 @@ function CreateRoomDialog({
                 aria-pressed={selected}
                 disabled={busy}
                 onClick={() => setCapacity(n)}
-                className={`rounded-xl border py-3 text-sm font-black tabular-nums transition-colors disabled:opacity-50 ${
+                className={`readout flex-1 py-4 text-lg transition-all disabled:opacity-40 ${
                   selected
-                    ? "border-blood bg-blood text-white"
-                    : "border-bone/10 bg-black/30 text-dust hover:border-blood/40 hover:text-blood"
+                    ? "bg-tung/15 text-flare shadow-[inset_0_0_0_1px_rgba(255,217,172,0.45),0_0_22px_-8px_rgba(255,217,172,0.9)]"
+                    : "cut text-grime hover:text-tung"
                 }`}
               >
                 {n}
@@ -732,26 +686,29 @@ function CreateRoomDialog({
           })}
         </div>
 
+        <div className="mt-4 flex gap-1" aria-hidden>
+          {Array.from({ length: capacity }, (_, i) => (
+            <span key={i} className="h-1.5 flex-1 rounded-[1px] bg-tung/70" />
+          ))}
+        </div>
+
         {/* ★ 빈자리를 "무엇이" 채우는지 말하지 않는다. 그 사실은 공개되지 않는다 (I1). */}
-        <p className="mt-3 text-xs leading-relaxed text-grime">
+        <p className="mt-5 text-[12px] leading-relaxed text-grime">
           빈자리는 시작할 때 채워진다. 몇 자리가 채워졌는지는 아무에게도 보이지 않는다.
         </p>
 
         {error && (
-          <p
-            role="alert"
-            className="mt-5 rounded-xl border border-blood/30 bg-blood/10 p-3 text-sm text-blood"
-          >
+          <p role="alert" className="cut mt-5 px-4 py-3 text-[13px] text-signal">
             {error}
           </p>
         )}
 
-        <div className="mt-8 flex justify-end gap-3">
+        <div className="mt-8 flex items-center justify-end gap-3">
           <button
             type="button"
             disabled={busy}
             onClick={onClose}
-            className="rounded-xl border border-bone/10 px-5 py-3 text-sm font-bold text-dust transition-colors hover:border-bone/30 hover:text-bone disabled:opacity-50"
+            className="stencil px-4 py-3 text-[10px] text-grime transition-colors hover:text-bone disabled:opacity-40"
           >
             취소
           </button>
@@ -759,9 +716,9 @@ function CreateRoomDialog({
             type="button"
             disabled={busy}
             onClick={() => onSubmit(capacity)}
-            className="rounded-xl bg-blood px-6 py-3 text-sm font-black uppercase tracking-widest text-white shadow-[0_0_24px_-8px_rgba(255,43,29,0.9)] transition-colors hover:bg-blood/85 disabled:opacity-50"
+            className="case case-live stencil px-7 py-3.5 text-[10px] text-flare disabled:opacity-40"
           >
-            {busy ? "만드는 중…" : `${capacity}인 방 만들기`}
+            {busy ? "여는 중…" : `${capacity}자리로 연다`}
           </button>
         </div>
       </div>
@@ -769,60 +726,46 @@ function CreateRoomDialog({
   );
 }
 
-/* ───────────────────────────── 오른쪽 사이드바 ───────────────────────────── */
+/* ───────────────────────────── 오른쪽 기둥 ───────────────────────────── */
 
 function SocialSidebar() {
   return (
-    <aside className="hidden w-72 shrink-0 flex-col border-l border-bone/10 bg-ink/40 xl:flex">
-      <div className="flex flex-1 flex-col overflow-hidden p-6">
-        <div className="mb-6 flex items-center justify-between">
-          <h3 className="flex items-center gap-2 text-xs font-bold uppercase tracking-[0.2em] text-bone">
-            친구
+    <aside className="hidden w-64 shrink-0 flex-col border-l border-black/60 bg-void/50 2xl:flex">
+      <div className="flex flex-1 flex-col overflow-hidden p-5">
+        <div className="flex items-center justify-between">
+          <h3 className="stencil flex items-center gap-2 text-[9px] text-grime">
+            동료
             <MockBadge />
           </h3>
           <div className="flex gap-2 text-ash">
-            <button
-              type="button"
-              aria-label="친구 추가 (목업)"
-              disabled
-              className="cursor-default"
-            >
-              <UserPlusIcon className="h-4 w-4" />
+            <button type="button" aria-label="친구 추가 (목업)" disabled className="cursor-default">
+              <UserPlusIcon className="h-3.5 w-3.5" />
             </button>
-            <button
-              type="button"
-              aria-label="친구 검색 (목업)"
-              disabled
-              className="cursor-default"
-            >
-              <SearchIcon className="h-4 w-4" />
+            <button type="button" aria-label="친구 검색 (목업)" disabled className="cursor-default">
+              <SearchIcon className="h-3.5 w-3.5" />
             </button>
           </div>
         </div>
 
-        <ul className="flex-1 space-y-4 overflow-y-auto pr-1">
+        <ul className="mt-4 flex-1 space-y-3 overflow-y-auto pr-1">
           {friends.map((friend) => {
             const style = friendStyle[friend.state];
             return (
               <li
                 key={friend.name}
-                className={`flex items-center gap-3 ${
-                  friend.state === "오프라인" ? "opacity-50" : ""
-                }`}
+                className={`flex items-center gap-3 ${friend.state === "오프라인" ? "opacity-40" : ""}`}
               >
                 <div className="relative">
-                  <Avatar name={friend.name} className="h-10 w-10 ring-1 ring-bone/15" />
+                  <Avatar name={friend.name} className="h-8 w-8" />
                   <span
-                    className={`absolute bottom-0 right-0 h-2.5 w-2.5 rounded-full border-2 border-ink ${style.dot}`}
+                    className={`absolute -bottom-0.5 -right-0.5 h-2 w-2 rounded-full ${style.dot}`}
                   />
                 </div>
                 <div className="min-w-0 flex-1">
-                  <p className="truncate text-sm font-bold text-bone">
-                    {friend.name}
-                  </p>
+                  <p className="truncate text-[12px] text-bone">{friend.name}</p>
                   <p className={`text-[10px] ${style.text}`}>
                     {friend.state}
-                    {friend.detail ? ` (${friend.detail})` : ""}
+                    {friend.detail ? ` · ${friend.detail}` : ""}
                   </p>
                 </div>
               </li>
@@ -831,38 +774,33 @@ function SocialSidebar() {
         </ul>
       </div>
 
-      <div className="flex h-72 flex-col border-t border-bone/10 bg-black/25 p-4">
-        <div className="mb-4 flex items-center justify-between">
-          <span className="flex items-center gap-2 text-[10px] font-bold uppercase tracking-widest text-grime">
-            Global Chat
+      <div className="flex h-64 flex-col border-t border-black/60 p-4">
+        <div className="flex items-center justify-between">
+          <span className="stencil flex items-center gap-2 text-[9px] text-grime">
+            전체 채팅
             <MockBadge />
           </span>
-          <button
-            type="button"
-            aria-label="채팅 확대 (목업)"
-            disabled
-            className="cursor-default text-ash"
-          >
+          <button type="button" aria-label="채팅 확대 (목업)" disabled className="cursor-default text-ash">
             <ExpandIcon className="h-3 w-3" />
           </button>
         </div>
 
-        <div className="mb-4 flex-1 space-y-3 overflow-y-auto pr-1">
+        <div className="mt-3 flex-1 space-y-2.5 overflow-y-auto pr-1">
           {chat.map((line, i) => (
             <p key={i} className="text-[11px] leading-relaxed text-dust">
-              <span className={`font-bold ${line.tone}`}>{line.user}:</span>{" "}
+              <span className={`font-semibold ${line.tone}`}>{line.user}</span>{" "}
               {line.message}
             </p>
           ))}
         </div>
 
-        <div className="relative">
+        <div className="relative mt-3">
           <input
             type="text"
             disabled
-            placeholder="아직 보낼 수 없습니다"
+            placeholder="아직 보낼 수 없다"
             aria-label="전체 채팅 (목업)"
-            className="inset w-full cursor-default rounded-lg py-2 pl-3 pr-9 text-xs text-bone placeholder:text-ash"
+            className="cut w-full cursor-default py-2 pl-3 pr-9 text-[11px] text-bone placeholder:text-ash"
           />
           <button
             type="button"
@@ -870,7 +808,7 @@ function SocialSidebar() {
             disabled
             className="absolute right-2 top-1/2 -translate-y-1/2 cursor-default text-ash"
           >
-            <SendIcon className="h-3.5 w-3.5" />
+            <SendIcon className="h-3 w-3" />
           </button>
         </div>
       </div>
@@ -878,25 +816,24 @@ function SocialSidebar() {
   );
 }
 
-/* ─────────────────────────────── 푸터 ─────────────────────────────── */
+/* ─────────────────────────────── 바닥글 ─────────────────────────────── */
 
 function Footer() {
   return (
-    <footer className="flex h-10 shrink-0 items-center justify-between border-t border-bone/10 bg-ink/60 px-6 text-[10px] font-medium backdrop-blur-md">
-      <div className="flex items-center gap-4 text-grime">
+    <footer className="rib flex h-9 shrink-0 items-center justify-between border-t border-black/70 px-6 text-[10px]">
+      <div className="flex items-center gap-4 text-ash">
         <MockBadge />
-        <span>
-          동시 접속자: <span className="text-bone">1,204명</span>
-        </span>
-        <span>
-          서버 상태: <span className="text-door">쾌적</span>
+        <span className="readout">1,204 online</span>
+        <span className="flex items-center gap-1.5">
+          <span className="h-1 w-1 rounded-full bg-tung shadow-[0_0_6px_1px] shadow-tung/60" />
+          정상
         </span>
       </div>
-      <div className="flex gap-4 text-grime">
-        <Link href="/intro" className="transition-colors hover:text-bone">
-          역할 설명
+      <div className="flex gap-4 text-ash">
+        <Link href="/intro" className="transition-colors hover:text-tung">
+          배역 설명
         </Link>
-        <Link href="/" className="transition-colors hover:text-bone">
+        <Link href="/" className="transition-colors hover:text-tung">
           작업 보드
         </Link>
       </div>
@@ -912,8 +849,8 @@ function Footer() {
  */
 function MockBadge() {
   return (
-    <span className="rounded bg-bone/5 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-widest text-ash ring-1 ring-bone/10">
-      Mock
+    <span className="stencil rounded-[1px] bg-bone/5 px-1.5 py-0.5 text-[8px] text-ash">
+      mock
     </span>
   );
 }
@@ -926,7 +863,7 @@ function Avatar({ name, className = "" }: { name: string; className?: string }) 
   const initial = name.trim().charAt(0).toUpperCase();
   return (
     <span
-      className={`flex items-center justify-center rounded-full bg-seam text-xs font-bold text-bone ${className}`}
+      className={`case flex items-center justify-center text-[11px] font-bold text-dust ${className}`}
       aria-hidden
     >
       {initial}

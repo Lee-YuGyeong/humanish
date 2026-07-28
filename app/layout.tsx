@@ -28,10 +28,20 @@ export default function RootLayout({
         className={`${geistSans.variable} ${geistMono.variable} antialiased`}
       >
         {/*
-          지하 라운지 조명 — 모든 화면 뒤에 한 장 깔린다 (app/globals.css의 .room-backdrop).
+          창고 — 모든 화면 뒤에 깔리는 공간 (app/globals.css의 .room).
+
+          벽은 rotateY, 바닥은 rotateX로 **실제 원근 변환**을 받는다. 그래서 골강판 골과
+          슬래브 눈금이 소실점을 향해 저절로 좁아진다 — 평면에 그린 격자와 다른 점이다.
+          JS는 한 줄도 쓰지 않는다.
+
           /bg-3d 의 진짜 Three.js 씬은 자기 캔버스로 이걸 덮는다. 그 폴더는 건드리지 않는다.
         */}
-        <div aria-hidden className="room-backdrop" />
+        <div aria-hidden className="room">
+          <div className="room-wall room-wall-l" />
+          <div className="room-wall room-wall-r" />
+          <div className="room-floor" />
+          <div className="room-screen" />
+        </div>
         {children}
       </body>
     </html>
