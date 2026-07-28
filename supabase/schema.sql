@@ -80,6 +80,27 @@ alter table players add column if not exists token text not null
 alter table players drop constraint if exists players_seat_check;
 alter table players add constraint players_seat_check check (seat between 1 and 8);
 
+-- ★ (room_id, seat) 유니크를 **지연 가능**으로 바꾼다 (SPEC §15-3-결정).
+--
+--   시작할 때 전원의 자리를 한 순열로 다시 배정하는데(shuffle_seats), 유니크가 즉시
+--   검사되면 update 도중 두 사람이 잠깐 같은 자리를 갖는 순간에 걸려 죽는다.
+--   "빈 자리에 잠깐 피신시킨다"는 방법도 못 쓴다 — 정원이 다 찼으면 빈 번호가 없고,
+--   범위 밖(음수)으로 밀면 players_seat_check 에 걸린다. 실제로 그렇게 한 번 깨졌다.
+--
+--   initially immediate 라 평소 동작은 그대로다(진짜 중복은 즉시 거절).
+--   shuffle_seats 만 자기 트랜잭션에서 deferred 로 바꿔 쓴다.
+--   nickname 도 같이 미룬다. 닉네임은 '익명' || seat 이라 자리와 한 몸이라서,
+--   seat 만 미루면 이번엔 (room_id, nickname) 쪽에서 똑같이 깨진다.
+alter table players drop constraint if exists players_room_id_seat_key;
+alter table players drop constraint if exists players_room_seat_key;
+alter table players add constraint players_room_seat_key
+  unique (room_id, seat) deferrable initially immediate;
+
+alter table players drop constraint if exists players_room_id_nickname_key;
+alter table players drop constraint if exists players_room_nickname_key;
+alter table players add constraint players_room_nickname_key
+  unique (room_id, nickname) deferrable initially immediate;
+
 -- 절대 클라이언트에 노출되지 않는다 (SPEC §7.2 — 정책을 만들지 않는다)
 create table if not exists player_roles (
   player_id uuid primary key references players(id) on delete cascade,
