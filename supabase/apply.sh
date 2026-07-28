@@ -93,12 +93,17 @@ echo "  ✓ 접속됨 (Postgres $(psql "$DB_URL" -tAqc 'show server_version'))"
 if [ "$MODE" != check ]; then
   if [ "$MODE" = apply ]; then
     echo ""
-    read -r -p "이 DB에 schema · policies · seed · advance_phase를 적용한다. 계속? [y/N] " ans
+    read -r -p "이 DB에 schema · policies · seed · functions 전부를 적용한다. 계속? [y/N] " ans
     [ "$ans" = y ] || [ "$ans" = Y ] || { echo "취소했다."; exit 1; }
   fi
 
+  # ★ functions/ 아래를 하나라도 빠뜨리면 화면은 멀쩡한데 기능만 죽는다.
+  #   room.sql · chat.sql이 원래 이 목록에 없었고, 그래서 방 만들기 · 입장 · 채팅이
+  #   배포 DB에서만 500으로 죽는 상태였다. test.sh는 여섯 개를 전부 올리므로
+  #   로컬 검증만 초록색이었다. 새 SQL 파일을 만들면 여기에도 반드시 더한다.
   echo ""
-  for f in schema.sql policies.sql seed.sql functions/advance_phase.sql; do
+  for f in schema.sql policies.sql seed.sql \
+           functions/advance_phase.sql functions/room.sql functions/chat.sql; do
     printf '  %-32s' "$f"
     if out="$(psql "$DB_URL" -v ON_ERROR_STOP=1 -q -f "$ROOT/supabase/$f" 2>&1)"; then
       echo "✓"
@@ -134,6 +139,25 @@ check "advance_phase가 있다" "1" \
   "$(q "select count(*) from pg_proc where proname='advance_phase';")"
 check "anon은 advance_phase를 못 부른다 (I9)" "f" \
   "$(q "select has_function_privilege('anon','advance_phase(uuid,int,uuid)','execute');")"
+
+# ★ 시그니처까지 본다. 이름만 세면 옛 create_room(text)가 남아 있어도 통과한다.
+#   정원이 방마다 달라지면서 create_room(text) → create_room(text,int)로 바뀌었다
+#   (SPEC §17.6). 옛 함수만 있는 DB에서는 방 만들기가 PGRST202로 죽는데
+#   화면에는 그냥 "방 생성 실패"만 뜬다.
+check "create_room(text,int)이 있다 (§17.6)" "1" \
+  "$(q "select count(*) from pg_proc where proname='create_room' and pg_get_function_identity_arguments(oid)='text, integer';")"
+check "옛 create_room(text)이 남아 있지 않다" "0" \
+  "$(q "select count(*) from pg_proc where proname='create_room' and pg_get_function_identity_arguments(oid)='text';")"
+check "room_capacity(uuid)가 있다 (방마다 정원)" "1" \
+  "$(q "select count(*) from pg_proc where proname='room_capacity' and pg_get_function_identity_arguments(oid)='uuid';")"
+check "join_room · fill_with_bots · send_message가 있다" "3" \
+  "$(q "select count(*) from pg_proc where proname in ('join_room','fill_with_bots','send_message');")"
+check "anon은 create_room을 못 부른다 (I9)" "f" \
+  "$(q "select has_function_privilege('anon','create_room(text,int)','execute');")"
+check "anon은 send_message를 못 부른다 (I9)" "f" \
+  "$(q "select has_function_privilege('anon','send_message(uuid,uuid,text,int)','execute');")"
+check "rooms에 capacity 컬럼이 있다 (§17.6)" "1" \
+  "$(q "select count(*) from information_schema.columns where table_name='rooms' and column_name='capacity';")"
 check "anon은 players를 못 읽는다 (I1)" "f" \
   "$(q "select has_table_privilege('anon','players','select');")"
 check "anon은 public_players를 읽는다" "t" \
