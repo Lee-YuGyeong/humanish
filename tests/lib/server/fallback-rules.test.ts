@@ -14,8 +14,7 @@
  * └────────────────────────────────────────────────────────────────────────┘
  */
 import { describe, expect, it } from 'vitest';
-import { fallbackAssignRoles } from '@/app/api/room/start/route';
-import { SCORE_RULE, fallbackCalcScores } from '@/app/api/reveal/route';
+import { SCORE_RULE, fallbackAssignRoles, fallbackCalcScores } from '@/lib/server/fallback-rules';
 import { assignRoles, calcScores, mostSuspectedHuman } from '@/lib/game/rules';
 import type { Role } from '@/lib/game/types';
 
@@ -138,8 +137,9 @@ describe('lib/game/rules.ts는 아직 B의 것이다 (경보용)', () => {
   /**
    * ★ 이 describe가 실패하면 축하할 일이다 — B가 구현했다는 뜻이다.
    *   그때 할 일:
-   *     1. app/api/room/start/route.ts의 fallbackAssignRoles와 resolveRoles의 catch 삭제
-   *     2. app/api/reveal/route.ts의 fallbackCalcScores와 resolveScores의 catch 삭제
+   *     1. lib/server/fallback-rules.ts 를 통째로 지운다
+   *     2. app/api/room/start/route.ts 의 resolveRoles, app/api/reveal/route.ts 의
+   *        resolveScores — try/catch를 지우고 진짜 함수를 직접 부른다
    *     3. 이 파일의 폴백 테스트를 lib/game/rules 쪽으로 옮긴다
    *   폴백을 남겨두면 진짜 규칙이 던질 때 조용히 임시 규칙으로 돌아간다.
    */
