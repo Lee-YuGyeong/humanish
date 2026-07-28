@@ -97,7 +97,7 @@ export async function POST(req: Request): Promise<Response> {
 
     const { data: after, error: afterErr } = await db
       .from('rooms')
-      .select('id, code, phase, phase_seq, phase_ends_at, round, host_id, roster_seq')
+      .select('id, code, capacity, phase, phase_seq, phase_ends_at, round, host_id, roster_seq')
       .eq('id', roomId)
       .single();
     if (afterErr) throw new ApiError(500, `방 조회 실패: ${afterErr.message}`);
