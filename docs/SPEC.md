@@ -746,8 +746,13 @@ select cron.schedule(
 ```bash
 npx tsc --noEmit    # 타입
 npm run lint
+npm test            # 순수 함수 · 화면 조각 (vitest). tests/ 아래에 소스 구조 그대로 둔다
 npm run build       # 최종. 이게 통과해야 끝난 것
 ```
+
+`npm test`가 맡는 것은 **DB를 모르는 것들**이다 — 전환표·지속시간·조기종료표(§5.1, §5.3),
+임시 채점 규칙, 좌석 그리드의 정원 처리(§17.6). DB 동작을 목으로 흉내 내면 로컬만
+초록불이 되므로 그쪽은 아래 `test.sh`가 진짜 Postgres에 물어본다.
 
 **DB 쪽은 `./supabase/test.sh`가 돌린다.** 일회용 로컬 Postgres를 띄워 `supabase/`의 SQL을 전부 올리고 아래 §14.2 · §14.3 · §14.4를 검사한 뒤 지운다. Supabase 프로젝트도 인터넷도 필요 없다. 스키마나 전환 함수를 고쳤으면 이걸로 끝낸다.
 

@@ -40,7 +40,7 @@ export const SCORE_RULE = [
   'AI — 표를 하나도 안 받으면 +3',
 ];
 
-function fallbackCalcScores(
+export function fallbackCalcScores(
   votes: { voterId: string; targetId: string }[],
   roles: Record<string, Role>,
 ): Record<string, number> {

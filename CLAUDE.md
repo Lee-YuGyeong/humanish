@@ -13,7 +13,15 @@ npm run dev            # 개발 서버
 npm run build          # 프로덕션 빌드 (타입 검사 포함)
 npx tsc --noEmit       # 타입만 빠르게 검사
 npm run lint
+npm test               # 순수 함수 · 화면 조각 (vitest, tests/ 아래)
+./supabase/test.sh     # 스키마 · RLS · 상태머신 (일회용 로컬 Postgres)
+./supabase/e2e.sh      # 라우트 왕복 (개발 서버 + 실제 Supabase가 필요하다)
 ```
+
+**DB가 하는 일은 목으로 흉내 내지 않는다.** `npm test`는 DB를 모르고, DB 동작은
+`supabase/test.sh`가 진짜 Postgres에 물어본다. 이 저장소는 목 때문이 아니라
+**검사 목록이 두 군데로 갈려서** 두 번 데였다 — 새 스키마 검사는 반드시
+`supabase/checks.sh`에 넣는다. 거기 하나만 고치면 로컬과 배포가 같이 걸린다.
 
 ## 절대 어기면 안 되는 것
 
