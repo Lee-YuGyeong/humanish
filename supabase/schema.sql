@@ -19,6 +19,11 @@ create extension if not exists pgcrypto;
 create table if not exists rooms (
   id            uuid primary key default gen_random_uuid(),
   code          text unique not null,
+  -- 방 정원. 만들 때 3~8에서 고른다 (SPEC §17.6). players.seat 제약(1~8)과 짝이다.
+  -- 하한 3: 정원 2면 사람 1 + 봇 1이라 스파이가 배정되지 않는다 (SPEC §8).
+  -- 상한 8: 좌석 그리드가 8칸 기준이다. 기술적 한계가 아니다.
+  -- 만든 뒤에는 바뀌지 않는다. 좌석·역할이 이미 이 수를 전제로 배정돼 있다.
+  capacity      int  not null default 5 check (capacity between 3 and 8),
   phase         text not null default 'lobby'
                 check (phase in ('lobby','question','target','chat','vote','reveal','replay')),
   -- 전환마다 +1. 중복 전환을 막는 낙관적 잠금 키다 (I6). 라운드 번호가 아니다.
@@ -36,6 +41,14 @@ create table if not exists rooms (
 -- 이미 옛 rooms가 있는 DB를 위한 보정
 alter table rooms add column if not exists roster_seq int not null default 0;
 
+-- 정원은 나중에 들어왔다. create table if not exists는 이미 있는 테이블의 컬럼도 제약도
+-- 고치지 않으므로(파일 상단 참고) 컬럼과 제약을 따로 붙인다.
+-- drop constraint를 먼저 하는 이유: 이 파일을 다시 돌릴 때 같은 이름이 이미 있으면
+-- add constraint가 42710으로 죽는다. if not exists 형태가 제약에는 없다.
+alter table rooms add column if not exists capacity int not null default 5;
+alter table rooms drop constraint if exists rooms_capacity_check;
+alter table rooms add constraint rooms_capacity_check check (capacity between 3 and 8);
+
 ------------------------------------------------------------------------------
 -- players
 ------------------------------------------------------------------------------
@@ -44,7 +57,9 @@ create table if not exists players (
   room_id    uuid not null references rooms(id) on delete cascade,
   nickname   text not null,
   mask_id    text not null,
-  seat       int  not null check (seat between 1 and 5),
+  -- 1 ~ rooms.capacity. 제약은 방마다 다를 수 없으므로 상한만 정원 최댓값인 8로 잡는다.
+  -- 방별 상한은 pick_free_seat()이 room_capacity(room_id)로 지킨다 (SPEC §17.6).
+  seat       int  not null check (seat between 1 and 8),
   -- ★ 클라이언트에 절대 내려가지 않는다 (I1). public_players 뷰를 거친다.
   is_bot     boolean not null default false,
   connected  boolean not null default true,
@@ -59,6 +74,11 @@ create table if not exists players (
 
 alter table players add column if not exists token text not null
   default encode(gen_random_bytes(32), 'hex');
+
+-- 좌석 상한을 5에서 8로 넓혔다. 인라인 check의 자동 이름은 <테이블>_<컬럼>_check라
+-- players_seat_check다. 옛 DB에는 1~5짜리가 남아 있으므로 갈아끼운다.
+alter table players drop constraint if exists players_seat_check;
+alter table players add constraint players_seat_check check (seat between 1 and 8);
 
 -- 절대 클라이언트에 노출되지 않는다 (SPEC §7.2 — 정책을 만들지 않는다)
 create table if not exists player_roles (

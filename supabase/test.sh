@@ -237,7 +237,7 @@ for t in rooms questions answers messages votes; do
   check "anon은 $t 에 쓰기 권한이 없다" "f" \
     "$(q "select has_table_privilege('anon','$t','insert') or has_table_privilege('anon','$t','update') or has_table_privilege('anon','$t','delete');")"
 done
-for fn in "advance_phase(uuid,int,uuid)" "advance_expired_rooms(int)" "on_enter_phase(uuid,text,int,timestamptz)" "pick_bot_line(text)" "cleanup_stale_rooms(interval)" "bot_reply(uuid,int)" "send_message(uuid,uuid,text,int)" "create_room(text)" "join_room(text)" "fill_with_bots(uuid)" "server_now()"; do
+for fn in "advance_phase(uuid,int,uuid)" "advance_expired_rooms(int)" "on_enter_phase(uuid,text,int,timestamptz)" "pick_bot_line(text)" "cleanup_stale_rooms(interval)" "bot_reply(uuid,int)" "send_message(uuid,uuid,text,int)" "create_room(text,int)" "join_room(text)" "fill_with_bots(uuid)" "server_now()" "default_room_capacity()" "room_capacity(uuid)" "pick_free_seat(uuid)"; do
   check "anon은 ${fn%%(*} 를 못 부른다" "f" "$(q "select has_function_privilege('anon','$fn','execute');")"
 done
 
@@ -253,6 +253,38 @@ check "공개된 답변은 보인다"            "t" "$(psql -tAq -c "set role a
 check "미공개 답변은 여전히 안 보인다"   "t" "$(psql -tAq -c "set role anon; select count(*) = 0 from answers where visible_at > now();")"
 psql -q -c "update rooms set phase='reveal' where id='$R';"
 check "reveal 이후 votes가 보인다"      "t" "$(psql -tAq -c "set role anon; select count(*) > 0 from votes;")"
+
+echo ""
+echo "── 정원 3~8 (SPEC §17.6) ──"
+# ★ 이 블록은 방을 새로 만든다. 위의 "rooms 조회 (코드로 방 찾기)"가 방 개수를 세므로
+#   반드시 그 뒤에 둔다. 코드는 4자 대문자이고 TSTA·TSTB와 겹치지 않아야 한다.
+check "default_room_capacity()는 5"     "5" "$(q "select default_room_capacity();")"
+
+CAPD="$(q "select room_id from create_room('CAPD');")"
+check "정원을 안 주면 5"                "5" "$(q "select capacity from rooms where id='$CAPD';")"
+
+CAPH="$(q "select room_id from create_room('CAPH', 8);")"
+check "정원 8로 만들면 capacity=8"      "8" "$(q "select capacity from rooms where id='$CAPH';")"
+check "room_capacity(방)는 그 방 정원"   "8" "$(q "select room_capacity('$CAPH');")"
+q "select fill_with_bots('$CAPH');" >/dev/null
+check "정원 8인 방은 8명까지 찬다"       "8" "$(q "select count(*) from players where room_id='$CAPH';")"
+check "정원 8인 방의 최대 seat은 8"      "8" "$(q "select max(seat) from players where room_id='$CAPH';")"
+
+CAPL="$(q "select room_id from create_room('CAPL', 3);")"
+q "select fill_with_bots('$CAPL');" >/dev/null
+check "정원 3인 방은 3명에서 멈춘다"     "3" "$(q "select count(*) from players where room_id='$CAPL';")"
+check "정원 3인 방에는 더 못 들어간다"   "denied" "$(denied_if "select * from join_room('CAPL');" '꽉 찼다')"
+
+# 체크 제약(23514)이 아니라 P0001로 튀어야 한다. 그래야 사용자에게 보여줄 문장이 된다.
+check "정원 2는 거절된다"               "denied" "$(denied_if "select * from create_room('CAPN', 2);" '정원은 3~8명이다')"
+check "정원 9는 거절된다"               "denied" "$(denied_if "select * from create_room('CAPX', 9);" '정원은 3~8명이다')"
+check "거절된 방은 남지 않는다"          "0" "$(q "select count(*) from rooms where code in ('CAPN','CAPX');")"
+
+# seat 상한은 정원의 최댓값인 8이다. 방별 상한은 pick_free_seat이 지킨다.
+check "seat 9는 제약에 걸린다"          "denied" \
+  "$(denied_if "insert into players (room_id,nickname,mask_id,seat) values ('$CAPL','익명9','m9',9);" 'players_seat_check')"
+check "capacity 9인 방은 만들 수 없다"   "denied" \
+  "$(denied_if "insert into rooms (code,capacity) values ('CAPZ',9);" 'rooms_capacity_check')"
 
 echo ""
 if [ "$FAIL" -eq 0 ]; then
