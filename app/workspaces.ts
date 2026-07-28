@@ -53,7 +53,7 @@ export const workspaces: Workspace[] = [
     href: "/admin",
     title: "방 · 페이즈 점검",
     owner: "A",
-    description: "상태머신 · DB 상태 확인용",
-    status: "비어 있음",
+    description: "방마다 페이즈 · phase_seq · 남은 시간 · 시계 어긋남",
+    status: "작업 중",
   },
 ];
