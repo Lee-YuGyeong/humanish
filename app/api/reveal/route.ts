@@ -18,7 +18,7 @@
 
 import { calcScores } from '@/lib/game/rules';
 import type { Role } from '@/lib/game/types';
-import { SCORE_RULE, fallbackCalcScores } from '@/lib/server/fallback-rules';
+import { SCORE_RULE, fallbackCalcScores, humanVotesReceived } from '@/lib/server/fallback-rules';
 import { getServiceClient } from '@/lib/server/supabase';
 import { ApiError, apiError, requirePlayer } from '@/lib/server/auth';
 
@@ -77,6 +77,11 @@ export async function GET(req: Request): Promise<Response> {
     const received: Record<string, number> = {};
     for (const v of votes) received[v.targetId] = (received[v.targetId] ?? 0) + 1;
 
+    // ★ 점수는 **사람 표만** 센다 (SCORE_RULE 참고). 그래서 받은 표 수를 두 가지로 준다 —
+    //   전체(votes_received)만 주면 결과 화면이 "3표 받았는데 왜 0점?"이 되고,
+    //   사람 표(human_votes_received)만 주면 봇이 몇 표 던졌는지가 안 보인다.
+    const humanReceived = humanVotesReceived(votes, roles);
+
     return Response.json({
       players: (players ?? []).map((p) => ({
         id: p.id,
@@ -85,6 +90,8 @@ export async function GET(req: Request): Promise<Response> {
         is_bot: p.is_bot, // ★ 여기서만 나간다. 위 두 검사를 통과한 뒤다
         role: roles[p.id] ?? null,
         votes_received: received[p.id] ?? 0,
+        /** 그중 사람이 던진 표. 점수는 이쪽만 본다 */
+        human_votes_received: humanReceived[p.id] ?? 0,
         score: scores[p.id] ?? 0,
       })),
       votes: (voteRows ?? []).map((v) => ({

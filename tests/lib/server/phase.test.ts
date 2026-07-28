@@ -96,12 +96,16 @@ describe('EARLY_EXIT — 조기 종료 조건 (I5, SPEC §5.3)', () => {
     expect(EARLY_EXIT.vote).toBe('all-humans');
   });
 
-  it('★ target은 human-target-only다 — 봇이 대상이면 조기 종료하지 않는다', () => {
-    // 이 저장소에서 제일 미끄러운 자리다. 봇이 대상이면 진입 즉시 답변이 생기므로
-    // (on_enter_phase, §5.3) 'all-humans'로 두면 30초짜리 페이즈가 0초에 끝나고,
-    // **그것만으로 대상이 봇임이 드러난다** (I1).
-    // I5의 문장("인원을 센다")으로는 안 걸리는 함정이라 여기서 못박는다.
-    expect(EARLY_EXIT.target).toBe('human-target-only');
+  it('★ target에는 조기 종료가 없다 — 대상이 누구든 30초를 채운다', () => {
+    // 이 저장소에서 제일 미끄러운 자리다. 여기가 'all-humans'면 봇이 대상일 때
+    // 페이즈가 0초에 끝나 대상이 봇임이 드러난다 (on_enter_phase가 즉시 답을 넣으므로).
+    //
+    // 그렇다고 'human-target-only'(대상이 사람일 때만 조기 종료)도 답이 아니다 —
+    // 그건 **누수의 방향만 뒤집는다.** 봇이면 항상 30초, 사람이면 즉시 종료가 되어
+    // "빨리 넘어갔다 = 대상은 사람"이 확정된다. 한때 실제로 그 상태였다.
+    //
+    // 대칭을 만드는 방법은 하나뿐이다: 양쪽 다 시간을 채운다 (I1, SPEC §5.3).
+    expect(EARLY_EXIT.target).toBe('none');
   });
 
   it('chat은 시간 만료로만 끝난다', () => {
@@ -118,6 +122,16 @@ describe('EARLY_EXIT — 조기 종료 조건 (I5, SPEC §5.3)', () => {
 
   it('모든 페이즈가 표에 있다', () => {
     expect(Object.keys(EARLY_EXIT).sort()).toEqual([...ALL_PHASES].sort());
+  });
+
+  it('조기 종료가 있는 페이즈는 question·vote 둘뿐이다', () => {
+    // 새 페이즈에 조기 종료를 붙일 때는 "봇만 만족시킬 수 있는 조건인가"를 먼저 묻는다.
+    // 봇은 진입 즉시 답변·투표가 생기므로, 그런 조건은 전부 봇을 드러낸다 (I1, I5).
+    const withExit = Object.entries(EARLY_EXIT)
+      .filter(([, v]) => v !== 'none')
+      .map(([p]) => p)
+      .sort();
+    expect(withExit).toEqual(['question', 'vote']);
   });
 
   it('시간이 없는 페이즈는 조기 종료도 없다', () => {

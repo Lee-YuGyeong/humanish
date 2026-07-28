@@ -63,8 +63,9 @@ create or replace function phase_duration(p_phase text)
 returns interval language sql immutable as $$
   select case p_phase
     when 'question' then interval '60 seconds'
-    -- 30초다. 60초면 나머지 넷이 멍하니 기다린다. 특히 대상이 봇이면 조기 종료가
-    -- 없어서(early_exit_met 참고) 매번 꽉 채운다. 답을 씹는 시간은 뒤의 chat이 맡는다.
+    -- 30초다. 60초면 나머지가 멍하니 기다린다. target에는 조기 종료가 없어서
+    -- (early_exit_met 참고) 대상이 누구든 매번 꽉 채운다 — 그래서 이 숫자가 곧
+    -- 죽은 시간이다. 답을 씹는 시간은 뒤의 chat이 맡는다.
     when 'target'   then interval '30 seconds'
     when 'chat'     then interval '120 seconds'
     when 'vote'     then interval '30 seconds'
@@ -87,7 +88,6 @@ declare
   v_humans int;
   v_done   int;
   v_qid    uuid;
-  v_target uuid;
 begin
   select count(*) into v_humans
     from players where room_id = p_room_id and not is_bot;
@@ -108,25 +108,6 @@ begin
      where a.question_id = v_qid and not p.is_bot;
     return v_done >= v_humans;
 
-  elsif p_phase = 'target' then
-    select q.target_id into v_target
-      from questions q
-     where q.room_id = p_room_id and q.kind = 'target'
-     order by q.round desc limit 1;
-    if v_target is null then return false; end if;
-
-    -- ★ 대상이 봇이면 조기 종료하지 않는다 (SPEC §5.3, §17).
-    --   봇은 진입 즉시 답변이 생기므로, 그대로 두면 60초짜리 페이즈가 0초에 끝나고
-    --   그것만으로 대상이 봇임이 드러난다. I5와 같은 함정인데 I5 문장으로는 안 걸린다.
-    if (select is_bot from players where id = v_target) then
-      return false;
-    end if;
-
-    return exists (
-      select 1 from answers a join questions q on q.id = a.question_id
-       where q.room_id = p_room_id and q.kind = 'target' and a.player_id = v_target
-    );
-
   elsif p_phase = 'vote' then
     select count(*) into v_done
       from votes v join players p on p.id = v.voter_id
@@ -134,7 +115,22 @@ begin
     return v_done >= v_humans;
   end if;
 
-  -- lobby / chat / reveal / replay — 조기 종료 없음 (chat은 시간 만료만, SPEC §5.1)
+  -- lobby / target / chat / reveal / replay — 조기 종료 없음 (SPEC §5.1, §5.3)
+  --
+  -- ┌─ ★ target에 조기 종료를 두지 않는 이유 ────────────────────────────────┐
+  -- │ 한때 "대상이 봇이면 조기 종료하지 않는다"였다. 봇은 진입 즉시 답변이    │
+  -- │ 생겨서 그대로 두면 페이즈가 0초에 끝나고, 그것만으로 대상이 봇임이      │
+  -- │ 드러나기 때문이다.                                                     │
+  -- │                                                                       │
+  -- │ 그런데 그 처방은 **누수의 방향만 뒤집었다.** 봇이 대상이면 항상 30초를  │
+  -- │ 채우고 사람이 대상이면 답하는 즉시 넘어가니, "빨리 넘어갔다"가 곧       │
+  -- │ "대상은 사람"이라는 확정 신호가 된다. SPEC §5.3이 스스로 적어둔 경고    │
+  -- │ ("봇일 때만 짧게 하면 그게 다시 신호가 된다")의 거울상이다.             │
+  -- │                                                                       │
+  -- │ 대칭을 만드는 방법은 하나뿐이다 — 양쪽 다 시간을 채운다.                │
+  -- │ 그 대가(죽은 시간)는 60초를 30초로 줄이면서 이미 치렀다.                │
+  -- │ lib/server/phase.ts의 EARLY_EXIT.target도 'none'이다. 한쪽만 고치지 않는다.│
+  -- └───────────────────────────────────────────────────────────────────────┘
   return false;
 end;
 $$;
@@ -142,6 +138,10 @@ $$;
 ------------------------------------------------------------------------------
 -- 문구 뽑기 — SPEC §17.2
 ------------------------------------------------------------------------------
+-- ★ 한 줄만 필요할 때 쓴다 (자유 채팅의 bot_reply). **질문을 가리지 않는다.**
+--   질문이 있는 페이즈(question · target)는 아래 on_enter_phase가 질문에 맞는 문구를
+--   서로 겹치지 않게 배정한다 — 이 함수를 봇마다 따로 부르면 안 된다. 그렇게 했다가
+--   두 가지가 한꺼번에 깨졌다: 답이 질문과 무관했고, 봇끼리 같은 말을 했다 (I1).
 create or replace function pick_bot_line(p_phase text)
 returns text
 language plpgsql
@@ -176,7 +176,14 @@ declare
   v_text   text;
   v_asker  uuid;
   v_target uuid;
+  v_line   text;
+  v_bots   int;
+  v_lines  int;
 begin
+  -- 이 방의 봇 수. 문구가 봇 수보다 적으면 답이 빈 봇이 생기므로 미리 센다.
+  select count(*) into v_bots
+    from players where room_id = p_room_id and is_bot;
+
   if p_phase = 'question' then
     -- 이 방에서 아직 안 나온 질문 하나
     select q.text into v_text
@@ -197,11 +204,55 @@ begin
 
     -- 봇 답변. visible_at을 페이즈 종료 시각으로 박아 **사람 답변과 같이 뜨게** 한다.
     -- 먼저 뜨면 그것만으로 봇이 드러난다 (I1). 사람 답변도 같은 시각을 쓴다.
-    insert into answers (question_id, room_id, player_id, text, visible_at)
-    select v_qid, p_room_id, p.id, pick_bot_line('question'), p_ends_at
-      from players p
-     where p.room_id = p_room_id and p.is_bot
-    on conflict (question_id, player_id) do nothing;
+    --
+    -- ┌─ ★ 질문에 맞는 문구를, 서로 겹치지 않게 ───────────────────────────┐
+    -- │ 옛 코드는 봇마다 pick_bot_line('question')을 따로 불렀다. 두 가지가  │
+    -- │ 깨져 있었다.                                                        │
+    -- │  1. 문구가 질문과 무관했다 — '배터리 몇 퍼센트야?'에 '어제랑 비슷했던│
+    -- │     것 같아'. 사람은 숫자를 대는데 봇만 딴소리를 하니 **첫 질문 한   │
+    -- │     번으로 봇이 전부 갈렸다** (I1).                                  │
+    -- │  2. 봇마다 독립적으로 뽑아서 겹쳤다 — 봇 6명이면 약 68% 확률로 두    │
+    -- │     봇이 토씨 하나 안 틀리고 같은 말을 했다. 그것만으로 둘 다 봇이다.│
+    -- │                                                                    │
+    -- │ 그래서 봇에 번호를 매기고 문구에도 번호를 매겨 1:1로 붙인다.         │
+    -- │ 이 질문에 달린 문구를 먼저 쓰고, 모자라면 질문을 가리지 않는 일반    │
+    -- │ 문구(question_text is null)로 뒤를 채운다.                           │
+    -- │                                                                    │
+    -- │ ★ CTE에 materialized를 박는 이유: 안 붙이면 플래너가 join 안쪽을     │
+    -- │   다시 훑을 수 있고, 그때 random()이 새로 굴러 번호가 어긋난다.      │
+    -- │   겹치지 않게 만든 의미가 통째로 사라진다.                           │
+    -- └────────────────────────────────────────────────────────────────────┘
+    if v_bots > 0 then
+      select count(*) into v_lines
+        from bot_line_pool
+       where phase = 'question'
+         and (question_text is null or question_text = v_text);
+
+      -- 모자라면 조용히 답이 빈 봇이 생긴다. 빈칸은 사람만 만들 수 있으므로 그 자리가
+      -- 그대로 드러난다 (I1). 조용히 새느니 전환이 실패하는 편이 낫다.
+      if v_lines < v_bots then
+        raise exception '봇 문구가 모자란다 (question, 문구 % < 봇 %) — supabase/seed.sql을 채울 것',
+          v_lines, v_bots;
+      end if;
+
+      with bots as materialized (
+        select p.id, row_number() over (order by random()) as rn
+          from players p
+         where p.room_id = p_room_id and p.is_bot
+      ), lines as materialized (
+        select text,
+               row_number() over (
+                 order by (question_text is null), random()   -- 특화 문구 먼저
+               ) as rn
+          from bot_line_pool
+         where phase = 'question'
+           and (question_text is null or question_text = v_text)
+      )
+      insert into answers (question_id, room_id, player_id, text, visible_at)
+      select v_qid, p_room_id, b.id, l.text, p_ends_at
+        from bots b join lines l on l.rn = b.rn
+      on conflict (question_id, player_id) do nothing;
+    end if;
 
   elsif p_phase = 'target' then
     -- 누가 누구에게 묻는지는 서버가 정한다. 봇도 지목 대상이 될 수 있다.
@@ -221,22 +272,58 @@ begin
     returning id into v_qid;
 
     if (select is_bot from players where id = v_target) then
+      -- 한 명만 답하므로 겹칠 일은 없다. 다만 **질문에는 맞아야 한다** —
+      -- 위 question 훅과 같은 이유다. 이 지목 질문에 달린 문구를 먼저 쓴다.
+      select l.text into v_line
+        from bot_line_pool l
+       where l.phase = 'target'
+         and (l.question_text is null or l.question_text = v_text)
+       order by (l.question_text is null), random()
+       limit 1;
+
+      if v_line is null then
+        raise exception 'bot_line_pool(target)이 비었다 — supabase/seed.sql을 적용할 것';
+      end if;
+
       insert into answers (question_id, room_id, player_id, text, visible_at)
-      values (v_qid, p_room_id, v_target, pick_bot_line('target'), p_ends_at)
+      values (v_qid, p_room_id, v_target, v_line, p_ends_at)
       on conflict do nothing;
     end if;
 
   elsif p_phase = 'vote' then
     -- 봇 투표. 자기 아닌 사람 중 하나.
-    insert into votes (room_id, voter_id, target_id, reason)
-    select p_room_id, b.id,
-           (select p2.id from players p2
-             where p2.room_id = p_room_id and p2.id <> b.id
-             order by random() limit 1),
-           pick_bot_line('vote')
-      from players b
-     where b.room_id = p_room_id and b.is_bot
-    on conflict (room_id, voter_id) do nothing;
+    --
+    -- ★ 이유도 봇끼리 겹치지 않게 배정한다. 옛 코드는 봇마다 pick_bot_line('vote')을
+    --   따로 불렀는데, 풀이 8개뿐이라 봇 6명이면 약 92% 확률로 두 봇이 똑같은 이유를
+    --   달았고 그게 reveal 화면에 나란히 떴다 (I1). 이유는 질문과 무관하므로
+    --   question_text is null인 줄만 쓴다.
+    if v_bots > 0 then
+      select count(*) into v_lines
+        from bot_line_pool where phase = 'vote' and question_text is null;
+
+      if v_lines < v_bots then
+        raise exception '봇 투표 이유가 모자란다 (문구 % < 봇 %) — supabase/seed.sql을 채울 것',
+          v_lines, v_bots;
+      end if;
+
+      with bots as materialized (
+        select p.id, row_number() over (order by random()) as rn
+          from players p
+         where p.room_id = p_room_id and p.is_bot
+      ), lines as materialized (
+        select text, row_number() over (order by random()) as rn
+          from bot_line_pool
+         where phase = 'vote' and question_text is null
+      )
+      insert into votes (room_id, voter_id, target_id, reason)
+      select p_room_id, b.id,
+             (select p2.id from players p2
+               where p2.room_id = p_room_id and p2.id <> b.id
+               order by random() limit 1),
+             l.text
+        from bots b join lines l on l.rn = b.rn
+      on conflict (room_id, voter_id) do nothing;
+    end if;
 
   -- chat   : 봇 쿨다운 초기화는 자유 채팅을 붙일 때 (SPEC §5.4, §13-6). 지금은 할 일 없음
   -- reveal : 점수는 /api/reveal이 calcScores로 계산한다 (SPEC §17.2)
@@ -303,6 +390,19 @@ begin
     if v_room.phase = 'lobby' then
       if p_actor_id is distinct from v_room.host_id then
         raise exception '방장만 게임을 시작할 수 있다';
+      end if;
+      -- ★ 사람이 둘 이상이어야 한다 (SPEC §8, §17.6).
+      --   혼자 시작하면 assignRoles가 스파이를 배정하지 않고(사람 2명 이상 조건),
+      --   남은 자리가 전부 봇이라 **아무나 찍어도 정답**이다. 게임의 절반(스파이)과
+      --   나머지 절반(추리)이 같이 죽는다. 정원 하한 3의 근거(§17.6)를 실제로
+      --   강제하는 자리다 — 여지만 만들고 강제하지 않으면 의미가 없다.
+      --
+      --   /api/room/start에도 같은 검사가 있다(MIN_HUMANS_TO_START). 두 겹인 이유는
+      --   그쪽이 먼저 걸러 봇을 채우기 전에 거절하기 위해서고, 여기는 그 라우트를
+      --   거치지 않는 경로를 막기 위해서다.
+      if (select count(*) from players
+           where room_id = p_room_id and not is_bot) < 2 then
+        raise exception '사람이 2명 이상이어야 시작할 수 있다' using errcode = 'P0001';
       end if;
       -- 역할 배정은 TS(assignRoles, SPEC §8)라 DB가 못 한다.
       -- /api/room/start가 봇을 채우고 역할을 넣은 뒤에 이 함수를 부른다.

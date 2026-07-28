@@ -110,12 +110,42 @@ psql -q -c "insert into player_roles (player_id, room_id, role)
 check "역할 미배정이면 시작 못 한다"   "denied" "$ROLE_GUARD"
 check "방장은 시작한다"               "t"      "$(q "select advance_phase('$R',0,'$P1');")"
 
+# ★ 사람이 혼자면 시작할 수 없다 (SPEC §8, §17.6).
+#   혼자 시작하면 assignRoles가 스파이를 배정하지 않고 남은 자리가 전부 봇이라
+#   **아무나 찍어도 정답**이다. 정원 하한 3의 근거를 실제로 강제하는 자리다 —
+#   여지만 만들고 강제하지 않으면 아무 의미가 없다.
+SOLO=55555555-5555-5555-5555-555555555555
+SOLO_P1=55555555-0000-0000-0000-000000000001
+psql -q -c "
+insert into rooms (id, code, capacity, host_id) values ('$SOLO','SOLO',5,'$SOLO_P1');
+insert into players (id, room_id, nickname, mask_id, seat, is_bot) values
+  ('$SOLO_P1','$SOLO','익명1','m1',1,false);
+insert into player_roles (player_id, room_id, role) values ('$SOLO_P1','$SOLO','citizen');"
+check "사람 혼자면 시작 못 한다"       "denied" \
+  "$(denied_if "select advance_phase('$SOLO',0,'$SOLO_P1');" '2명 이상')"
+psql -q -c "insert into players (id, room_id, nickname, mask_id, seat, is_bot) values
+  ('55555555-0000-0000-0000-000000000002','$SOLO','익명2','m2',2,false);"
+check "둘이 되면 시작된다"             "t" "$(q "select advance_phase('$SOLO',0,'$SOLO_P1');")"
+
 echo ""
 echo "── question 진입 훅 (SPEC §5.3, §17.2) ──"
 check "질문 1개 생성"                 "1" "$(q "select count(*) from questions where room_id='$R';")"
 check "봇 3명 답변 생성"              "3" "$(q "select count(*) from answers where room_id='$R';")"
 check "봇 답변은 페이즈 종료 시각에 공개" "t" \
   "$(q "select coalesce(bool_and(a.visible_at = r.phase_ends_at),false) from answers a join rooms r on r.id=a.room_id where r.id='$R';")"
+
+# ★ 봇끼리 같은 말을 하면 그것만으로 둘 다 봇이다 (I1). 옛 코드는 봇마다 따로 뽑아서
+#   봇 6명이면 약 68% 확률로 겹쳤다. 지금은 번호를 매겨 1:1로 붙인다.
+check "봇 답변이 서로 겹치지 않는다 (I1)" "t" \
+  "$(q "select count(distinct text) = count(*) from answers where room_id='$R';")"
+
+# ★ 그리고 질문에 맞아야 한다. 전부 일반 문구(question_text is null)로만 채워지면
+#   "질문에 안 맞는 답 = 봇"이라는 옛 증상이 그대로 돌아온다.
+check "봇 답변이 그 질문 전용 문구에서 나온다" "t" \
+  "$(q "select bool_or(exists (
+          select 1 from bot_line_pool bl join questions qq on qq.id = a.question_id
+           where bl.phase='question' and bl.question_text = qq.text and bl.text = a.text))
+        from answers a where a.room_id='$R';")"
 
 echo ""
 echo "── 조기 종료는 사람만 센다 (I5) ──"
@@ -138,7 +168,12 @@ check "phase_seq 증가폭은 정확히 1"   "1" "$(( $(q "select phase_seq from
 check "질문이 중복 생성되지 않았다"    "2" "$(q "select count(*) from questions where room_id='$R';")"
 
 echo ""
-echo "── target: 대상이 봇이면 조기 종료하지 않는다 (I1, SPEC §5.3) ──"
+echo "── target: 대상이 누구든 조기 종료하지 않는다 (I1, SPEC §5.3) ──"
+# ★ 여기가 이 저장소에서 제일 미끄러운 자리다.
+#   'all-humans'면 봇이 대상일 때 0초에 끝나 대상이 봇임이 드러난다.
+#   'human-target-only'(대상이 사람일 때만 조기 종료)도 답이 아니다 — 방향만 뒤집혀서
+#   "빨리 넘어갔다 = 대상은 사람"이 확정된다. 한때 실제로 그 상태였다.
+#   그래서 **양쪽 다 시간을 채운다.** 두 검사가 같이 f여야 대칭이 지켜진 것이다.
 psql -q -c "update rooms set phase_ends_at = now() - interval '1s' where id='$R';"
 q "select advance_expired_rooms();" >/dev/null
 check "target 페이즈 진입"            "target" "$(q "select phase from rooms where id='$R';")"
@@ -152,7 +187,7 @@ psql -q -c "update questions set target_id='$P2' where id='$TQ';
             delete from answers where question_id='$TQ';
             insert into answers (question_id,room_id,player_id,text,visible_at)
             values ('$TQ','$R','$P2','사람답', now()+interval '60s');"
-check "대상=사람, 답변 있으면 조기종료" "t" "$(q "select early_exit_met('$R','target',2);")"
+check "대상=사람이어도 조기종료 안 함"  "f" "$(q "select early_exit_met('$R','target',2);")"
 
 echo ""
 echo "── 나머지 페이즈 진행 ──"
@@ -162,6 +197,10 @@ for want in chat vote reveal; do
   check "→ $want" "$want" "$(q "select phase from rooms where id='$R';")"
 done
 check "봇 투표 3건 생성"              "3" "$(q "select count(*) from votes v join players p on p.id=v.voter_id where v.room_id='$R' and p.is_bot;")"
+# 이유가 겹치면 reveal 화면에 똑같은 문장이 나란히 뜬다. 옛 코드는 풀이 8개라
+# 봇 6명이면 약 92% 확률로 겹쳤다 (I1).
+check "봇 투표 이유가 서로 겹치지 않는다" "t" \
+  "$(q "select count(distinct v.reason) = count(*) from votes v join players p on p.id=v.voter_id where v.room_id='$R' and p.is_bot;")"
 check "replay에서는 더 안 간다"        "f" "$(q "select advance_phase('$R',(select phase_seq from rooms where id='$R'),'$P1');" >/dev/null; q "select advance_phase('$R',(select phase_seq from rooms where id='$R'),'$P1');")"
 
 echo ""

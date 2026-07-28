@@ -72,7 +72,24 @@ begin
     return null;   -- 전부 쿨다운 중이다. 조용히 넘어간다
   end if;
 
-  v_text := pick_bot_line('chat');
+  -- ★ 이 방에서 아직 안 나온 줄을 고른다. 풀에서 매번 무작위로 뽑으면 120초짜리
+  --   채팅에서 같은 말이 두세 번 나오고, **똑같은 문장을 반복하는 쪽이 봇**이라는
+  --   규칙이 새로 생긴다 (I1). 답변·투표 이유를 겹치지 않게 배정한 것과 같은 이유다.
+  select l.text into v_text
+    from bot_line_pool l
+   where l.phase = 'chat'
+     and not exists (
+       select 1 from messages m
+        where m.room_id = p_room_id and m.text = l.text
+     )
+   order by random()
+   limit 1;
+
+  -- 풀을 다 썼으면 어쩔 수 없이 재사용한다. 조용히 입을 다무는 것보다는 낫다 —
+  -- 침묵도 그 자체로 신호다.
+  if v_text is null then
+    v_text := pick_bot_line('chat');
+  end if;
 
   insert into messages (room_id, player_id, text, visible_at)
   values (p_room_id, v_bot, v_text, now() + typing_delay(v_text))

@@ -12,9 +12,9 @@ import type { Phase } from '@/lib/game/types';
 export const PHASE_DURATION_MS: Record<Phase, number | null> = {
   lobby: null,
   question: 60_000,
-  // 한 사람이 한 문장 쓰는 데 60초는 길다. 나머지 넷은 그동안 할 일이 없다.
-  // 특히 대상이 봇이면 조기 종료가 없어(§5.3) 매번 꽉 채운다 — 그게 죽은 시간이었다.
-  // 답을 뜯어보는 시간은 바로 뒤 chat 120초가 맡는다.
+  // 한 사람이 한 문장 쓰는 데 60초는 길다. 나머지는 그동안 할 일이 없다.
+  // target에는 조기 종료가 없어(아래 EARLY_EXIT) 대상이 누구든 매번 꽉 채운다 —
+  // 그래서 이 숫자가 곧 죽은 시간이다. 답을 뜯어보는 시간은 바로 뒤 chat 120초가 맡는다.
   target: 30_000,
   chat: 120_000,
   vote: 30_000,
@@ -25,15 +25,24 @@ export const PHASE_DURATION_MS: Record<Phase, number | null> = {
 /**
  * 조기 종료 조건. "사람 전원"은 is_bot = false만 센다 (SPEC §5.1, I5).
  *
- * `human-target-only`는 **대상이 사람일 때만** 조기 종료한다는 뜻이다.
- * 봇이 대상이면 진입 즉시 답변이 생기므로(SPEC §5.3), 조기 종료를 그대로 두면
- * 60초짜리 페이즈가 0초에 끝나 그것만으로 대상이 봇임이 드러난다 (SPEC §5.3, §17).
- * I5와 같은 함정인데 I5 문장("인원을 센다")으로는 안 걸린다.
+ * ┌─ target에는 조기 종료가 아예 없다 (SPEC §5.3) ─────────────────────────┐
+ * │ 한때 'human-target-only'였다 — 대상이 봇이면 조기 종료를 껐다. 봇은      │
+ * │ 진입 즉시 답변이 생겨서, 그대로 두면 페이즈가 0초에 끝나고 그것만으로   │
+ * │ 대상이 봇임이 드러나기 때문이다.                                        │
+ * │                                                                        │
+ * │ 그런데 그 처방은 **누수의 방향만 뒤집었다.** 봇이 대상이면 항상 30초를  │
+ * │ 꽉 채우고, 사람이 대상이면 답하는 즉시 넘어간다. 즉 "빨리 넘어갔다"가   │
+ * │ 곧 "대상은 사람"이라는 확정 신호다. §5.3이 스스로 적어둔 경고 —         │
+ * │ "봇일 때만 짧게 하면 그게 다시 신호가 된다" — 의 거울상이다.            │
+ * │                                                                        │
+ * │ 대칭을 만드는 방법은 하나뿐이다: 양쪽 다 시간을 채운다. 그 대가(죽은    │
+ * │ 시간)는 60초를 30초로 줄이면서 이미 치렀다.                             │
+ * └────────────────────────────────────────────────────────────────────────┘
  */
-export const EARLY_EXIT: Record<Phase, 'all-humans' | 'human-target-only' | 'none'> = {
+export const EARLY_EXIT: Record<Phase, 'all-humans' | 'none'> = {
   lobby: 'none',
   question: 'all-humans',
-  target: 'human-target-only',
+  target: 'none', // ★ 대상이 사람이든 봇이든 30초를 채운다. 위 상자 참고
   chat: 'none', // 시간 만료만
   vote: 'all-humans',
   reveal: 'none',
