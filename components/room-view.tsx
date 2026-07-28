@@ -7,9 +7,13 @@
  *   I9  쓰기는 전부 /api를 거친다. anon 키는 읽기 전용이다
  *   I10 모든 구독·쿼리에 방 필터를 건다. 채널 이름은 room:<room_id>
  *
- * 화면은 지하 라운지 팔레트를 쓴다 (app/globals.css). 배경은 app/layout.tsx가 깐
- * .room-backdrop이 맡으므로 여기서 배경색을 칠하지 않는다 — 칠하면 조명이 가려진다.
- * 색을 추가할 때는 씬(app/bg-3d/room-scene.tsx)에 있는 색인지 먼저 본다.
+ * 화면은 창고 시네마의 문법을 따른다 (app/globals.css).
+ *   .screen  영사막 — 질문·결과처럼 **모두가 보는 것**
+ *   .case    플라이트 케이스 — 좌석·규칙·조작판처럼 방에 놓인 물건
+ *   .cut     파인 면 — 입력칸·로그
+ *   .rib     골강판 — 머리말 같은 구조물
+ * 배경은 app/layout.tsx 의 .room 이 맡으므로 여기서 배경색을 칠하지 않는다.
+ * 색을 더할 때는 씬(app/bg-3d/room-scene.tsx)에 있는 색인지 먼저 본다.
  */
 'use client';
 
@@ -81,7 +85,7 @@ const PHASE_LABEL: Record<Phase, string> = {
   replay: '다시 하기',
 };
 
-/** 남은 시간이 이 값 이하면 카운트다운이 붉어진다. 표시용 임계값이다 (I2). */
+/** 남은 시간이 이 값 이하면 계기판이 붉어진다. 표시용 임계값이다 (I2). */
 const URGENT_SECONDS = 10;
 
 export function RoomView({ code }: { code: string }) {
@@ -314,15 +318,13 @@ export function RoomView({ code }: { code: string }) {
 
   if (error && !room) {
     return (
-      <main className="mx-auto flex min-h-screen max-w-2xl flex-col justify-center gap-4 px-6">
-        <p className="rounded-2xl border border-blood/30 bg-blood/10 p-5 text-sm font-medium text-blood">
-          {error}
-        </p>
+      <main className="mx-auto flex min-h-screen max-w-lg flex-col justify-center gap-5 px-6">
+        <p className="case border-signal/30 px-6 py-5 text-sm text-signal">{error}</p>
         <Link
           href="/main"
-          className="inline-flex items-center gap-2 text-sm font-bold text-grime transition-colors hover:text-bone"
+          className="stencil inline-flex items-center gap-2 text-[10px] text-grime transition-colors hover:text-tung"
         >
-          <ArrowLeftIcon className="h-4 w-4" />
+          <ArrowLeftIcon className="h-3.5 w-3.5" />
           로비로
         </Link>
       </main>
@@ -331,8 +333,8 @@ export function RoomView({ code }: { code: string }) {
 
   if (!room) {
     return (
-      <main className="flex min-h-screen items-center justify-center text-sm text-grime">
-        불러오는 중…
+      <main className="flex min-h-screen items-center justify-center">
+        <p className="stencil text-[10px] text-grime">loading…</p>
       </main>
     );
   }
@@ -341,55 +343,48 @@ export function RoomView({ code }: { code: string }) {
   const urgent = seconds != null && seconds <= URGENT_SECONDS;
 
   return (
-    <div className="flex min-h-screen flex-col text-bone">
-      <header className="sticky top-0 z-10 border-b border-bone/10 bg-ink/70 backdrop-blur-md">
-        <div className="mx-auto flex w-full max-w-3xl items-center justify-between gap-4 px-6 py-4">
-          <div className="flex min-w-0 items-center gap-3">
+    <div className="flex min-h-screen flex-col">
+      {/* 골강판 머리말 — 방 번호판과 계기판이 붙어 있다 */}
+      <header className="rib sticky top-0 z-10 border-b border-black/70 shadow-[0_1px_0_rgba(214,207,194,0.05)]">
+        <div className="mx-auto flex w-full max-w-3xl items-center justify-between gap-4 px-6 py-3">
+          <div className="flex min-w-0 items-center gap-4">
             <Link
               href="/main"
               aria-label="로비로"
-              className="shrink-0 text-grime transition-colors hover:text-bone"
+              className="shrink-0 text-ash transition-colors hover:text-tung"
             >
               <ArrowLeftIcon className="h-4 w-4" />
             </Link>
             <div className="min-w-0">
-              <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-grime">
-                Room
-              </p>
-              <h1 className="truncate font-mono text-lg font-black tracking-[0.25em] text-bone">
-                {room.code}
-              </h1>
+              <p className="stencil text-[8px] text-ash">room</p>
+              <h1 className="readout truncate text-xl tracking-[0.3em] text-linen">{room.code}</h1>
             </div>
           </div>
 
           <div className="flex shrink-0 items-center gap-3">
-            <span className="rounded-full border border-bone/10 bg-bone/5 px-3 py-1.5 text-xs font-bold text-bone">
+            <span className="stencil text-[9px] text-tung/70">
               {PHASE_LABEL[room.phase]}
               {room.phase === 'question' && (
-                <span className="ml-1.5 font-mono text-grime tabular-nums">
-                  {room.round}/2
-                </span>
+                <span className="readout ml-2 text-ash">{room.round}/2</span>
               )}
             </span>
             {seconds != null && (
-              <span
+              // 장비에 박힌 LED 계기판. 마지막 10초는 벽 비상등처럼 붉게 탄다
+              <output
                 className={[
-                  'min-w-14 rounded-full px-3 py-1.5 text-center font-mono text-sm font-black tabular-nums transition-colors',
-                  // 마지막 10초는 벽 비상등처럼 붉어진다
-                  urgent
-                    ? 'bg-blood/15 text-blood shadow-[0_0_20px_-6px_rgba(255,43,29,0.9)]'
-                    : 'bg-seam text-bone',
+                  'cut readout min-w-16 px-3 py-1.5 text-center text-lg',
+                  urgent ? 'lit-signal' : 'lit-tung',
                 ].join(' ')}
                 aria-live="polite"
               >
-                {seconds}초
-              </span>
+                {seconds}
+              </output>
             )}
           </div>
         </div>
       </header>
 
-      <main className="mx-auto flex w-full max-w-3xl flex-1 flex-col gap-5 px-6 py-6">
+      <main className="mx-auto flex w-full max-w-3xl flex-1 flex-col gap-4 px-6 py-6">
         {room.phase === 'lobby' && (
           <LobbyHero code={room.code} capacity={room.capacity} seated={players.length} />
         )}
@@ -398,9 +393,12 @@ export function RoomView({ code }: { code: string }) {
 
         {/* 내가 스파이라는 건 나만 본다. 남의 역할은 reveal까지 아무 데도 오지 않는다 (I1) */}
         {me?.role === 'spy' && room.phase !== 'reveal' && room.phase !== 'replay' && (
-          <p className="flex items-center gap-2 rounded-2xl border border-lamp/30 bg-lamp/10 px-4 py-3 text-sm font-bold text-lamp">
-            <SpyIcon className="h-4 w-4 shrink-0" />
-            너는 스파이다 — 기계인 척해서 표를 끌어와라. 이건 너에게만 보인다.
+          <p className="case riveted flex items-center gap-3 border-signal/25 px-5 py-3.5">
+            <SpyIcon className="h-4 w-4 shrink-0 text-signal" />
+            <span className="text-[13px] leading-relaxed text-bone">
+              <span className="stencil mr-2 text-[9px] text-signal">너는 스파이다</span>
+              기계인 척해서 표를 끌어와라. 이건 너에게만 보인다.
+            </span>
           </p>
         )}
 
@@ -417,14 +415,12 @@ export function RoomView({ code }: { code: string }) {
         />
 
         {error && (
-          <p className="rounded-2xl border border-blood/30 bg-blood/10 p-4 text-sm font-medium text-blood">
-            {error}
-          </p>
+          <p className="case border-signal/30 px-5 py-4 text-[13px] text-signal">{error}</p>
         )}
 
-        <p className="mt-auto flex items-center gap-2 pt-2 text-[11px] text-grime">
-          <InfoIcon className="h-3.5 w-3.5 shrink-0" />
-          타이머는 표시용이다. 페이즈 전환은 서버가 정한다 (SPEC I2).
+        <p className="mt-auto flex items-center gap-2 pt-3 text-[10px] text-ash">
+          <InfoIcon className="h-3 w-3 shrink-0" />
+          계기판은 표시용이다. 페이즈 전환은 서버가 정한다 (SPEC I2).
         </p>
       </main>
     </div>
@@ -468,33 +464,39 @@ function LobbyHero({
   };
 
   return (
-    <section className="panel rounded-2xl p-6 text-center">
-      <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-grime">
-        방 코드
-      </p>
-      {/* 안쪽 벽 스크린에 코드가 걸린 것처럼 은은하게 빛난다 */}
-      <p className="mt-2 font-mono text-5xl font-black tracking-[0.3em] text-bone drop-shadow-[0_0_24px_rgba(201,138,90,0.45)]">
-        {code}
-      </p>
-      <p className="mt-3 text-sm text-grime">
-        친구에게 이 코드를 알려주면 들어온다.
-      </p>
+    // 영사막에 방 코드가 떠 있다 — 들어올 사람이 봐야 하는 정보라 가장 밝은 면에 건다
+    <section className="screen overflow-hidden px-8 py-10 text-center">
+      <div
+        aria-hidden
+        className="pointer-events-none absolute inset-0"
+        style={{
+          backgroundImage:
+            'radial-gradient(50% 70% at 50% -20%, rgba(255,227,189,.11), transparent 70%)',
+        }}
+      />
+      <div className="relative">
+        <p className="stencil text-[9px] text-ash">이 코드로 들어온다</p>
+        <p className="readout mt-3 text-[clamp(2.75rem,13vw,4.5rem)] leading-none tracking-[0.22em] text-linen drop-shadow-[0_0_30px_rgba(255,217,172,0.35)]">
+          {code}
+        </p>
 
-      <div className="mt-5 flex flex-wrap items-center justify-center gap-3">
-        <button
-          type="button"
-          onClick={() => void copy()}
-          className="inline-flex items-center gap-2 rounded-xl border border-bone/10 bg-bone/5 px-4 py-2.5 text-xs font-bold text-bone transition-colors hover:border-lamp/40 hover:text-lamp"
-        >
-          {copied ? <CheckIcon className="h-3.5 w-3.5 text-door" /> : null}
-          {copied ? '복사됨' : '코드 복사'}
-        </button>
-        <span className="inset inline-flex items-center gap-2 rounded-xl px-4 py-2.5 text-xs font-bold text-dust">
-          <UserPlusIcon className="h-3.5 w-3.5 text-lamp" />
-          <span className="font-mono tabular-nums text-bone">
-            {seated} / {capacity}
+        <div className="mt-7 flex flex-wrap items-center justify-center gap-2">
+          <button
+            type="button"
+            onClick={() => void copy()}
+            className="case case-live stencil inline-flex items-center gap-2 px-5 py-2.5 text-[9px] text-dust"
+          >
+            {copied ? <CheckIcon className="h-3 w-3 text-tung" /> : null}
+            {copied ? '복사됨' : '코드 복사'}
+          </button>
+          <span className="cut inline-flex items-center gap-2 px-4 py-2.5">
+            <UserPlusIcon className="h-3 w-3 text-ash" />
+            <span className="readout text-[13px] text-bone">
+              {seated}
+              <span className="text-ash">/{capacity}</span>
+            </span>
           </span>
-        </span>
+        </div>
       </div>
     </section>
   );
@@ -530,12 +532,12 @@ function Panel({
   if (!me?.player) {
     return (
       <Box>
-        <p className="text-sm font-bold text-bone">이 방의 참가자가 아니다.</p>
+        <p className="text-sm text-bone">이 방의 참가자가 아니다.</p>
         <Link
           href="/main"
-          className="inline-flex items-center gap-2 text-sm font-bold text-lamp transition-colors hover:text-bone"
+          className="stencil inline-flex items-center gap-2 text-[10px] text-tung transition-colors hover:text-flare"
         >
-          <ArrowLeftIcon className="h-4 w-4" />
+          <ArrowLeftIcon className="h-3.5 w-3.5" />
           코드로 다시 입장하기
         </Link>
       </Box>
@@ -547,24 +549,24 @@ function Panel({
       <>
         <Box>
           <Label>방 규칙</Label>
-          <ul className="flex flex-col gap-2">
+          <ul className="flex flex-col gap-px">
             {/*
               ★ 봇이 몇 명인지 절대 쓰지 않는다 (I1). 정원과 사람 수의 차이를 화면이
                 계산해 주면 그게 곧 봇 수다. "몇 자리인지는 공개되지 않는다"가 정답이다.
             */}
             <RuleRow
-              icon={<UserPlusIcon className="h-4 w-4" />}
+              icon={<UserPlusIcon className="h-3.5 w-3.5" />}
               label="정원"
-              value={`${room.capacity}명`}
+              value={`${room.capacity}자리`}
             />
             <RuleRow
-              icon={<SpyIcon className="h-4 w-4" />}
+              icon={<SpyIcon className="h-3.5 w-3.5" />}
               label="스파이"
               value="사람 중 1명. 사람이 2명 이상일 때만 생긴다"
               accent
             />
             <RuleRow
-              icon={<CheckIcon className="h-4 w-4" />}
+              icon={<CheckIcon className="h-3.5 w-3.5" />}
               label="시민"
               value="스파이가 아닌 나머지 사람 전원"
             />
@@ -574,36 +576,35 @@ function Panel({
               공개하지 않는다고 못박았으므로 중립적인 InfoIcon을 쓴다.
             */}
             <RuleRow
-              icon={<InfoIcon className="h-4 w-4" />}
+              icon={<InfoIcon className="h-3.5 w-3.5" />}
               label="빈자리"
               value="시작할 때 채워진다. 몇 자리인지는 공개되지 않는다"
             />
           </ul>
         </Box>
 
-        <Box>
-          {me.is_host ? (
-            <>
-              <p className="flex items-center gap-2 text-xs font-bold text-grime">
-                <CrownIcon className="h-4 w-4 text-lamp" />
-                방장이다. 사람이 다 모이지 않아도 시작할 수 있다.
-              </p>
-              <button
-                type="button"
-                disabled={busy}
-                onClick={() => void post('/api/room/start', { room_id: room.id })}
-                className="w-full rounded-xl bg-blood px-6 py-3.5 text-sm font-black uppercase tracking-[0.2em] text-white shadow-[0_0_30px_-8px_rgba(255,43,29,0.9)] transition-colors hover:bg-blood/85 disabled:cursor-default disabled:opacity-50"
-              >
-                {busy ? '시작하는 중…' : '게임 시작'}
-              </button>
-            </>
-          ) : (
-            <p className="flex items-center justify-center gap-2 py-2 text-sm text-grime">
-              <span className="h-2 w-2 animate-pulse rounded-full bg-blood" />
-              방장이 시작하기를 기다리는 중…
+        {me.is_host ? (
+          <div className="case riveted px-6 py-5">
+            <p className="flex items-center gap-2 text-[11px] text-grime">
+              <CrownIcon className="h-3.5 w-3.5 text-tung" />
+              방장이다. 사람이 다 모이지 않아도 시작할 수 있다.
             </p>
-          )}
-        </Box>
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() => void post('/api/room/start', { room_id: room.id })}
+              className="stencil mt-4 flex w-full items-center justify-center gap-3 bg-signal/12 py-4 text-[11px] text-flare shadow-[inset_0_0_0_1px_rgba(255,51,32,0.45)] transition-all hover:bg-signal/20 hover:shadow-[inset_0_0_0_1px_rgba(255,51,32,0.7),0_0_30px_-8px_rgba(255,51,32,0.9)] disabled:cursor-default disabled:opacity-40"
+            >
+              <span className="h-1.5 w-1.5 rounded-full bg-signal shadow-[0_0_9px_2px] shadow-signal/70" />
+              {busy ? '시작하는 중…' : '게임 시작'}
+            </button>
+          </div>
+        ) : (
+          <p className="case flex items-center justify-center gap-2.5 py-5 text-[12px] text-grime">
+            <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-tung shadow-[0_0_9px_2px] shadow-tung/60" />
+            방장이 시작하기를 기다리는 중…
+          </p>
+        )}
       </>
     );
   }
@@ -614,20 +615,35 @@ function Panel({
     const canAnswer = !me.answered && (!isTargetPhase || iAmTarget);
 
     return (
-      <Box>
-        <Label>{isTargetPhase ? '지목 질문' : '공통 질문'}</Label>
-        <p className="text-lg font-bold leading-snug tracking-tight text-bone">
-          {question?.text ?? '질문을 기다리는 중…'}
-        </p>
-        {isTargetPhase && question?.target_id && (
-          <p className="text-sm font-bold text-lamp">
-            → {nameOf(question.target_id)}에게
-          </p>
-        )}
+      <>
+        {/* 질문은 영사막에 뜬다 — 모두가 같은 것을 본다 */}
+        <section className="screen overflow-hidden px-7 py-8">
+          <div
+            aria-hidden
+            className="pointer-events-none absolute inset-0"
+            style={{
+              backgroundImage:
+                'radial-gradient(55% 70% at 50% -20%, rgba(255,227,189,.10), transparent 70%)',
+            }}
+          />
+          <div className="relative">
+            <p className="stencil text-[9px] text-ash">
+              {isTargetPhase ? '지목 질문' : '공통 질문'}
+            </p>
+            <p className="mt-4 text-[22px] font-bold leading-snug tracking-tight text-linen">
+              {question?.text ?? '질문을 기다리는 중…'}
+            </p>
+            {isTargetPhase && question?.target_id && (
+              <p className="stencil mt-4 text-[10px] text-signal">
+                → {nameOf(question.target_id)}에게
+              </p>
+            )}
+          </div>
+        </section>
 
         {canAnswer ? (
           <form
-            className="flex gap-2"
+            className="flex gap-1.5"
             onSubmit={(e) => {
               e.preventDefault();
               void post('/api/answer', { room_id: room.id, text }).then((ok) => ok && setText(''));
@@ -645,7 +661,7 @@ function Panel({
             </button>
           </form>
         ) : (
-          <p className="inset rounded-xl px-4 py-3 text-sm text-grime">
+          <p className="cut px-5 py-3.5 text-[12px] text-grime">
             {me.answered
               ? '제출했다. 시간이 끝나면 전부 공개된다.'
               : '지목받은 사람이 답하는 중…'}
@@ -653,29 +669,25 @@ function Panel({
         )}
 
         {answers.length > 0 && (
-          <ul className="flex flex-col gap-2 border-t border-bone/10 pt-4">
+          <Box>
             {/*
               지금 질문의 답이 아니라 직전 질문의 답일 수 있다 — 답은 페이즈가
               끝나야 열리기 때문이다. 어느 질문의 답인지 밝히지 않으면 화면이
               엉뚱한 대화를 하는 것처럼 보인다.
             */}
-            {answerOf != null && answerOf.id !== question?.id && (
-              <li className="text-[11px] text-grime">
-                <span className="font-bold uppercase tracking-[0.2em]">지난 질문</span>{' '}
-                {answerOf.text}
-              </li>
+            {answerOf != null && answerOf.id !== question?.id ? (
+              <Label>지난 질문 · {answerOf.text}</Label>
+            ) : (
+              <Label>공개된 답</Label>
             )}
-            {answers.map((a) => (
-              <li key={a.id} className="inset rounded-xl px-4 py-3">
-                <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-lamp/70">
-                  {nameOf(a.player_id)}
-                </p>
-                <p className="mt-1 text-sm leading-relaxed text-bone">{a.text}</p>
-              </li>
-            ))}
-          </ul>
+            <ul className="flex flex-col gap-px">
+              {answers.map((a) => (
+                <AnswerRowItem key={a.id} who={nameOf(a.player_id)} text={a.text} />
+              ))}
+            </ul>
+          </Box>
         )}
-      </Box>
+      </>
     );
   }
 
@@ -689,18 +701,10 @@ function Panel({
         */}
         {answers.length > 0 && (
           <Box>
-            <Label>지난 답변</Label>
-            {answerOf && (
-              <p className="text-sm font-bold text-bone">{answerOf.text}</p>
-            )}
-            <ul className="flex flex-col gap-2">
+            <Label>지난 답변{answerOf ? ` · ${answerOf.text}` : ''}</Label>
+            <ul className="flex flex-col gap-px">
               {answers.map((a) => (
-                <li key={a.id} className="inset rounded-xl px-4 py-3">
-                  <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-lamp/70">
-                    {nameOf(a.player_id)}
-                  </p>
-                  <p className="mt-1 text-sm leading-relaxed text-bone">{a.text}</p>
-                </li>
+                <AnswerRowItem key={a.id} who={nameOf(a.player_id)} text={a.text} />
               ))}
             </ul>
           </Box>
@@ -714,22 +718,24 @@ function Panel({
     return (
       <Box>
         <Label>투표</Label>
-        <p className="text-lg font-bold tracking-tight text-bone">누가 AI인가?</p>
-        <PlayerGrid
-          players={players}
-          capacity={room.capacity}
-          meId={me.player.id}
-          selectable={!me.voted}
-          selectedId={target}
-          onSelect={setTarget}
-        />
+        <p className="engraved text-2xl font-black">누가 기계인가?</p>
+        <div className="mt-2">
+          <PlayerGrid
+            players={players}
+            capacity={room.capacity}
+            meId={me.player.id}
+            selectable={!me.voted}
+            selectedId={target}
+            onSelect={setTarget}
+          />
+        </div>
         {me.voted ? (
-          <p className="inset rounded-xl px-4 py-3 text-sm text-grime">
+          <p className="cut px-5 py-3.5 text-[12px] text-grime">
             투표했다. 결과는 전원이 마치면 공개된다.
           </p>
         ) : (
           <form
-            className="flex gap-2"
+            className="flex gap-1.5"
             onSubmit={(e) => {
               e.preventDefault();
               void post('/api/vote', { room_id: room.id, target_id: target, reason });
@@ -742,8 +748,8 @@ function Panel({
               placeholder="이유 (선택)"
               className={INPUT}
             />
-            <button type="submit" disabled={!target} className={PRIMARY_BUTTON}>
-              투표
+            <button type="submit" disabled={!target} className={DANGER_BUTTON}>
+              지목
             </button>
           </form>
         )}
@@ -808,29 +814,25 @@ function ChatPanel({
   return (
     <Box>
       <Label>자유 채팅</Label>
-      <p className="text-sm text-grime">
-        누가 AI 같은지 얘기해본다. 시간이 지나면 투표로 넘어간다.
+      <p className="text-[12px] text-grime">
+        누가 기계 같은지 얘기해본다. 시간이 지나면 투표로 넘어간다.
       </p>
 
-      <ul className="inset flex max-h-72 flex-col gap-3 overflow-y-auto rounded-xl p-4">
+      <ul className="cut flex max-h-72 flex-col gap-2.5 overflow-y-auto p-4">
         {messages.length === 0 && (
-          <li className="py-6 text-center text-sm text-grime">
-            아직 아무도 말하지 않았다.
-          </li>
+          <li className="py-6 text-center text-[12px] text-ash">아직 아무도 말하지 않았다.</li>
         )}
         {messages.map((m) => {
           const mine = m.player_id === meId;
           return (
             <li key={m.id} className={mine ? 'flex flex-col items-end' : 'flex flex-col items-start'}>
-              <span className="mb-1 px-1 text-[10px] font-bold uppercase tracking-[0.15em] text-grime">
-                {nameOf(m.player_id)}
-              </span>
+              <span className="stencil mb-1 px-0.5 text-[8px] text-ash">{nameOf(m.player_id)}</span>
               <span
                 className={[
-                  'max-w-[80%] rounded-2xl px-3.5 py-2 text-sm leading-relaxed',
+                  'max-w-[80%] px-3.5 py-2 text-[13px] leading-relaxed',
                   mine
-                    ? 'rounded-br-sm bg-blood text-white'
-                    : 'rounded-bl-sm border border-bone/10 bg-slab text-bone',
+                    ? 'bg-tung/15 text-flare shadow-[inset_0_0_0_1px_rgba(255,217,172,0.28)]'
+                    : 'bg-steel text-bone shadow-[inset_0_1px_0_rgba(214,207,194,0.07)]',
                 ].join(' ')}
               >
                 {m.text}
@@ -842,7 +844,7 @@ function ChatPanel({
       </ul>
 
       <form
-        className="flex gap-2"
+        className="flex gap-1.5"
         onSubmit={(e) => {
           e.preventDefault();
           const t = text.trim();
@@ -858,13 +860,8 @@ function ChatPanel({
           placeholder="말한다"
           className={INPUT}
         />
-        <button
-          type="submit"
-          disabled={!text.trim()}
-          aria-label="보내기"
-          className={PRIMARY_BUTTON}
-        >
-          <SendIcon className="h-4 w-4" />
+        <button type="submit" disabled={!text.trim()} aria-label="보내기" className={PRIMARY_BUTTON}>
+          <SendIcon className="h-3.5 w-3.5" />
         </button>
       </form>
     </Box>
@@ -873,19 +870,17 @@ function ChatPanel({
 
 /** 역할 배지 모양. role이 null이면 시민으로 본다 (원래 표시 규칙 그대로다). */
 const ROLE_BADGE = {
-  ai: { label: 'AI', tone: 'border-ember/40 bg-ember/15 text-ember', Icon: ChipIcon },
-  spy: { label: '스파이', tone: 'border-lamp/40 bg-lamp/15 text-lamp', Icon: SpyIcon },
-  citizen: { label: '시민', tone: 'border-bone/10 bg-bone/5 text-dust', Icon: CheckIcon },
+  ai: { label: 'AI', tone: 'text-bounce', Icon: ChipIcon },
+  spy: { label: '스파이', tone: 'text-signal', Icon: SpyIcon },
+  citizen: { label: '시민', tone: 'text-grime', Icon: CheckIcon },
 } as const;
 
 function RoleBadge({ role }: { role: Role | null }) {
   const badge = role === 'ai' ? ROLE_BADGE.ai : role === 'spy' ? ROLE_BADGE.spy : ROLE_BADGE.citizen;
   const Icon = badge.Icon;
   return (
-    <span
-      className={`inline-flex shrink-0 items-center gap-1.5 rounded-lg border px-2 py-1 text-[11px] font-bold ${badge.tone}`}
-    >
-      <Icon className="h-3.5 w-3.5" />
+    <span className={`stencil inline-flex shrink-0 items-center gap-1.5 text-[9px] ${badge.tone}`}>
+      <Icon className="h-3 w-3" />
       {badge.label}
     </span>
   );
@@ -915,14 +910,14 @@ function RevealPanel({
   if (failed) {
     return (
       <Box>
-        <p className="text-sm font-medium text-blood">{failed}</p>
+        <p className="text-[13px] text-signal">{failed}</p>
       </Box>
     );
   }
   if (!data) {
     return (
       <Box>
-        <p className="py-6 text-center text-sm text-grime">집계하는 중…</p>
+        <p className="stencil py-6 text-center text-[10px] text-grime">집계하는 중…</p>
       </Box>
     );
   }
@@ -933,52 +928,63 @@ function RevealPanel({
 
   const verdict =
     myVote == null
-      ? { text: '투표하지 않았다', sub: '다음 판에는 한 명을 골라보자', tone: 'border-bone/10 bg-bone/5 text-dust' }
+      ? { text: '기권', sub: '다음 판에는 한 명을 골라보자', tone: 'text-dust' }
       : iWasRight
-        ? { text: '맞혔다', sub: 'AI를 골랐다', tone: 'border-door/40 bg-door/10 text-door' }
-        : { text: '틀렸다', sub: '사람을 골랐다', tone: 'border-blood/40 bg-blood/10 text-blood' };
+        ? { text: '맞혔다', sub: '기계를 골랐다', tone: 'lit-tung' }
+        : { text: '틀렸다', sub: '사람을 골랐다', tone: 'lit-signal' };
 
   return (
     <>
-      <section className={`rounded-2xl border p-6 text-center ${verdict.tone}`}>
-        <p className="text-[10px] font-bold uppercase tracking-[0.2em] opacity-60">결과</p>
-        <p className="mt-2 text-4xl font-black tracking-tight">{verdict.text}</p>
-        <p className="mt-1 text-sm opacity-80">{verdict.sub}</p>
+      {/* 판정은 영사막에 뜬다 */}
+      <section className="screen overflow-hidden px-8 py-10 text-center">
+        <div
+          aria-hidden
+          className="pointer-events-none absolute inset-0"
+          style={{
+            backgroundImage:
+              'radial-gradient(55% 75% at 50% -20%, rgba(255,227,189,.12), transparent 70%)',
+          }}
+        />
+        <div className="relative">
+          <p className="stencil text-[9px] text-ash">결과</p>
+          <p className={`engraved mt-3 text-6xl font-black ${verdict.tone}`}>{verdict.text}</p>
+          <p className="mt-2 text-[13px] text-grime">{verdict.sub}</p>
+        </div>
       </section>
 
       <Box>
         <Label>순위</Label>
-        <ol className="flex flex-col gap-2">
+        <ol className="flex flex-col gap-px">
           {ranked.map((p, i) => {
             const isMe = p.id === me.player?.id;
             return (
               <li
                 key={p.id}
                 className={[
-                  'flex items-center gap-3 rounded-xl border p-3',
-                  isMe ? 'border-blood/40 bg-blood/10' : 'border-bone/10 bg-black/25',
+                  'flex items-center gap-3.5 px-4 py-3',
+                  isMe ? 'bg-tung/8 shadow-[inset_0_0_0_1px_rgba(255,217,172,0.25)]' : 'cut',
                 ].join(' ')}
               >
-                <span className="w-5 shrink-0 text-center font-mono text-sm font-black tabular-nums text-ash">
+                <span className="readout w-4 shrink-0 text-center text-[11px] text-ash">
                   {i + 1}
                 </span>
                 <span
-                  className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-seam font-mono text-xs font-bold tabular-nums text-bone"
+                  className="readout flex h-8 w-8 shrink-0 items-center justify-center rounded-[2px] bg-black/45 text-[12px] text-dust"
                   aria-hidden
                 >
                   {p.seat}
                 </span>
                 <span className="min-w-0 flex-1">
-                  <span className="block truncate text-sm font-bold text-bone">
+                  <span className="block truncate text-[13px] font-semibold text-bone">
                     {p.nickname}
-                    {isMe && <span className="ml-1.5 text-[11px] text-blood">나</span>}
+                    {isMe && <span className="stencil ml-2 text-[8px] text-tung">나</span>}
                   </span>
-                  <span className="block text-[10px] font-bold uppercase tracking-[0.15em] text-grime">
+                  <span className="readout block text-[10px] text-ash">
                     받은 표 {p.votes_received}
                   </span>
                 </span>
                 <RoleBadge role={p.role} />
-                <span className="w-14 shrink-0 text-right font-mono text-lg font-black tabular-nums text-bone">
+                <span className="readout w-12 shrink-0 text-right text-lg text-linen">
                   {p.score}
                 </span>
               </li>
@@ -990,22 +996,18 @@ function RevealPanel({
       <Box>
         <Label>누가 누구를 찍었나</Label>
         {data.votes.length === 0 ? (
-          <p className="text-sm text-grime">투표가 없다.</p>
+          <p className="text-[12px] text-grime">투표가 없다.</p>
         ) : (
-          <ul className="flex flex-col gap-2">
+          <ul className="flex flex-col gap-px">
             {data.votes.map((v) => (
               <li
                 key={v.voter_id}
-                className="inset flex flex-wrap items-baseline gap-x-2 gap-y-1 rounded-xl px-4 py-2.5 text-sm"
+                className="cut flex flex-wrap items-baseline gap-x-2 gap-y-1 px-4 py-2.5 text-[13px]"
               >
-                <span className="font-bold text-bone">{nameOf(v.voter_id)}</span>
+                <span className="font-semibold text-bone">{nameOf(v.voter_id)}</span>
                 <span className="text-ash">→</span>
-                <span className="font-bold text-bone">{nameOf(v.target_id)}</span>
-                <span
-                  className={
-                    v.correct ? 'font-bold text-door' : 'font-bold text-ash'
-                  }
-                >
+                <span className="font-semibold text-bone">{nameOf(v.target_id)}</span>
+                <span className={v.correct ? 'text-tung' : 'text-ash'}>
                   {v.correct ? '○' : '✕'}
                 </span>
                 {v.reason && <span className="text-grime">· {v.reason}</span>}
@@ -1014,7 +1016,7 @@ function RevealPanel({
           </ul>
         )}
 
-        <p className="border-t border-bone/10 pt-4 text-[11px] leading-relaxed text-grime">
+        <p className="border-t border-bone/5 pt-4 text-[11px] leading-relaxed text-ash">
           채점: {data.rule.join(' · ')}
           <br />이 규칙은 SPEC에 없다. 정하면 app/api/reveal/route.ts와 lib/game/rules.ts를
           고친다.
@@ -1022,9 +1024,9 @@ function RevealPanel({
 
         <Link
           href="/main"
-          className="inline-flex items-center gap-2 text-sm font-bold text-lamp transition-colors hover:text-bone"
+          className="stencil inline-flex items-center gap-2 text-[10px] text-tung transition-colors hover:text-flare"
         >
-          <ArrowLeftIcon className="h-4 w-4" />
+          <ArrowLeftIcon className="h-3.5 w-3.5" />
           로비로
         </Link>
       </Box>
@@ -1035,14 +1037,27 @@ function RevealPanel({
 /* ─────────────────────────────── 공통 조각 ─────────────────────────────── */
 
 const INPUT =
-  'inset min-w-0 flex-1 rounded-xl px-4 py-3 text-sm text-bone transition-colors placeholder:text-grime focus:border-lamp/50 focus:outline-none';
+  'cut min-w-0 flex-1 px-4 py-3 text-[13px] text-bone transition-colors placeholder:text-ash focus:border-tung/40 focus:outline-none';
 
+/** 평상시 조작 — 텅스텐 조명이 든 금속 버튼 */
 const PRIMARY_BUTTON =
-  'shrink-0 rounded-xl bg-blood px-5 py-3 text-sm font-bold text-white transition-colors hover:bg-blood/85 disabled:cursor-not-allowed disabled:bg-seam disabled:text-ash';
+  'case case-live stencil shrink-0 px-6 py-3 text-[10px] text-flare disabled:cursor-not-allowed disabled:text-ash disabled:opacity-40';
+
+/** 되돌릴 수 없는 조작(지목) — 비상등 색 */
+const DANGER_BUTTON =
+  'stencil shrink-0 bg-signal/12 px-7 py-3 text-[10px] text-flare shadow-[inset_0_0_0_1px_rgba(255,51,32,0.5)] transition-all hover:bg-signal/20 hover:shadow-[inset_0_0_0_1px_rgba(255,51,32,0.8),0_0_26px_-8px_rgba(255,51,32,0.9)] disabled:cursor-not-allowed disabled:opacity-30 disabled:shadow-[inset_0_0_0_1px_rgba(255,51,32,0.2)]';
 
 function Label({ children }: { children: React.ReactNode }) {
+  return <p className="stencil text-[9px] text-grime">{children}</p>;
+}
+
+/** 공개된 답 한 줄. 케이스에 붙은 라벨처럼 이름과 내용이 층으로 나뉜다 */
+function AnswerRowItem({ who, text }: { who: string; text: string }) {
   return (
-    <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-grime">{children}</p>
+    <li className="cut px-4 py-3">
+      <p className="stencil text-[8px] text-tung/60">{who}</p>
+      <p className="mt-1.5 text-[13px] leading-relaxed text-bone">{text}</p>
+    </li>
   );
 }
 
@@ -1058,29 +1073,16 @@ function RuleRow({
   accent?: boolean;
 }) {
   return (
-    <li className="inset flex items-center gap-3 rounded-xl px-3 py-2.5">
-      <span
-        className={[
-          'flex h-8 w-8 shrink-0 items-center justify-center rounded-lg',
-          accent ? 'bg-lamp/15 text-lamp' : 'bg-bone/5 text-grime',
-        ].join(' ')}
-      >
-        {icon}
-      </span>
+    <li className="cut flex items-center gap-3.5 px-4 py-3">
+      <span className={`shrink-0 ${accent ? 'text-signal' : 'text-ash'}`}>{icon}</span>
       <span className="min-w-0 flex-1">
-        <span className="block text-[10px] font-bold uppercase tracking-[0.2em] text-grime">
-          {label}
-        </span>
-        <span className="block text-sm font-medium text-bone">{value}</span>
+        <span className="stencil block text-[8px] text-ash">{label}</span>
+        <span className="mt-0.5 block text-[13px] text-bone">{value}</span>
       </span>
     </li>
   );
 }
 
 function Box({ children }: { children: React.ReactNode }) {
-  return (
-    <section className="panel flex flex-col gap-3 rounded-2xl p-5">
-      {children}
-    </section>
-  );
+  return <section className="case flex flex-col gap-3 px-6 py-5">{children}</section>;
 }

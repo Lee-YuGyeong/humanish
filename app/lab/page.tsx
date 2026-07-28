@@ -8,21 +8,17 @@ import Link from "next/link";
 
 export default function LabPage() {
   return (
-    <main className="min-h-screen text-bone">
-      <div className="mx-auto max-w-2xl px-6 py-16">
-        <Link
-          href="/"
-          className="text-xs text-grime transition-colors hover:text-bone"
-        >
-          ← 작업 보드
+    <main className="min-h-screen">
+      <div className="mx-auto max-w-2xl px-6 py-20">
+        <Link href="/" className="stencil text-[10px] text-grime transition-colors hover:text-tung">
+          ← manifest
         </Link>
 
-        <h1 className="mt-8 text-2xl font-bold tracking-tight">
-          규칙 · 에이전트 실험실
-        </h1>
+        <h1 className="engraved mt-6 text-3xl font-black">규칙 · 에이전트 실험실</h1>
 
-        <p className="mt-6 rounded-lg border border-dashed border-bone/15 p-4 text-sm text-dust">
-          TODO(B): lib/game 규칙 함수 확인 · 봇 응답 미리보기
+        <p className="cut mt-8 px-5 py-4 text-sm leading-relaxed text-grime">
+          <span className="stencil mr-2 text-[10px] text-ash">todo · b</span>
+          lib/game 규칙 함수 확인 · 봇 응답 미리보기
         </p>
       </div>
     </main>

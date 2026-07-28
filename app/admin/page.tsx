@@ -43,15 +43,18 @@ const PHASE_LABEL: Record<AdminRoom["phase"], string> = {
   replay: "재시작",
 };
 
-/** 색은 지하 라운지 팔레트에서 고른다 (app/globals.css). */
+/**
+ * 페이즈 색. 창고 팔레트에서만 고른다 (app/globals.css).
+ * 진행 중인 페이즈일수록 조명이 세지고, 투표에서 비상등이 켜진다.
+ */
 const PHASE_STYLE: Record<AdminRoom["phase"], string> = {
-  lobby: "border-bone/10 bg-bone/5 text-dust",
-  question: "border-ember/40 bg-ember/15 text-ember",
-  target: "border-ember/40 bg-ember/15 text-ember",
-  chat: "border-lamp/30 bg-lamp/10 text-lamp",
-  vote: "border-blood/40 bg-blood/15 text-blood",
-  reveal: "border-door/40 bg-door/10 text-door",
-  replay: "border-bone/10 bg-bone/5 text-grime",
+  lobby: "text-ash",
+  question: "text-bounce",
+  target: "text-bounce",
+  chat: "text-tung",
+  vote: "lit-signal",
+  reveal: "lit-tung",
+  replay: "text-grime",
 };
 
 function formatRemaining(ms: number): string {
@@ -123,29 +126,29 @@ export default function AdminPage() {
       <div className="mx-auto max-w-5xl px-6 py-16">
         <Link
           href="/"
-          className="text-xs text-grime transition-colors hover:text-bone"
+          className="stencil text-[10px] text-grime transition-colors hover:text-tung"
         >
-          ← 작업 보드
+          ← manifest
         </Link>
 
         <header className="mt-8 flex flex-wrap items-end justify-between gap-4">
           <div>
-            <p className="font-mono text-xs tracking-[0.3em] text-blood/70">ADMIN</p>
-            <h1 className="mt-2 text-2xl font-bold tracking-tight">방 · 페이즈 점검</h1>
+            <p className="stencil text-[10px] text-signal/70">admin</p>
+            <h1 className="engraved mt-2 text-3xl font-black">방 · 페이즈 점검</h1>
           </div>
 
           <div className="flex items-center gap-2">
             <button
               type="button"
               onClick={() => setLive((v) => !v)}
-              className="rounded-lg border border-bone/10 px-3 py-1.5 text-xs text-dust transition-colors hover:border-lamp/40 hover:text-lamp"
+              className="case case-live stencil px-3.5 py-2 text-[9px] text-dust"
             >
               {live ? `자동 새로고침 켜짐 (${POLL_MS / 1000}초)` : "자동 새로고침 꺼짐"}
             </button>
             <button
               type="button"
               onClick={() => void load()}
-              className="rounded-lg border border-bone/10 px-3 py-1.5 text-xs text-dust transition-colors hover:border-lamp/40 hover:text-lamp"
+              className="case case-live stencil px-3.5 py-2 text-[9px] text-dust"
             >
               지금 새로고침
             </button>
@@ -168,13 +171,13 @@ export default function AdminPage() {
         )}
 
         {error && (
-          <p className="mt-6 rounded-lg border border-blood/30 bg-blood/10 p-4 text-sm text-blood">
+          <p className="mt-6 rounded-lg border border-signal/30 bg-signal/10 p-4 text-sm text-signal">
             불러오지 못했다 — {error}
           </p>
         )}
 
         {stuck.length > 0 && (
-          <p className="mt-6 rounded-lg border border-blood/40 bg-blood/10 p-4 text-sm text-blood shadow-[0_0_30px_-12px_rgba(255,43,29,0.9)]">
+          <p className="mt-6 rounded-lg border border-signal/40 bg-signal/10 p-4 text-sm text-signal shadow-[0_0_30px_-12px_rgba(255,51,32,0.9)]">
             <span className="font-semibold">
               만료했는데 안 넘어간 방이 {stuck.length}개 있다
             </span>{" "}
@@ -188,16 +191,16 @@ export default function AdminPage() {
         <div className="mt-6 overflow-x-auto">
           <table className="w-full min-w-[720px] border-collapse text-sm">
             <thead>
-              <tr className="border-b border-bone/15 text-left text-xs text-grime">
-                <th className="py-2 pr-3 font-medium">코드</th>
-                <th className="py-2 pr-3 font-medium">페이즈</th>
-                <th className="py-2 pr-3 font-medium">라운드</th>
-                <th className="py-2 pr-3 font-medium">남은 시간</th>
-                <th className="py-2 pr-3 font-medium">좌석</th>
-                <th className="py-2 pr-3 font-medium">역할</th>
-                <th className="py-2 pr-3 font-medium">phase_seq</th>
-                <th className="py-2 pr-3 font-medium">roster_seq</th>
-                <th className="py-2 font-medium">만든 시각</th>
+              <tr className="border-b border-bone/10 text-left">
+                <th className="stencil py-2 pr-3 text-[8px] text-ash">코드</th>
+                <th className="stencil py-2 pr-3 text-[8px] text-ash">페이즈</th>
+                <th className="stencil py-2 pr-3 text-[8px] text-ash">라운드</th>
+                <th className="stencil py-2 pr-3 text-[8px] text-ash">남은 시간</th>
+                <th className="stencil py-2 pr-3 text-[8px] text-ash">좌석</th>
+                <th className="stencil py-2 pr-3 text-[8px] text-ash">역할</th>
+                <th className="stencil py-2 pr-3 text-[8px] text-ash">phase_seq</th>
+                <th className="stencil py-2 pr-3 text-[8px] text-ash">roster_seq</th>
+                <th className="stencil py-2 text-[8px] text-ash">만든 시각</th>
               </tr>
             </thead>
             <tbody>
@@ -207,11 +210,9 @@ export default function AdminPage() {
 
                 return (
                   <tr key={r.id} className="border-b border-bone/5 align-middle">
-                    <td className="py-2.5 pr-3 font-mono font-semibold">{r.code}</td>
+                    <td className="readout py-2.5 pr-3 text-sm tracking-[0.2em] text-linen">{r.code}</td>
                     <td className="py-2.5 pr-3">
-                      <span
-                        className={`rounded-full border px-2 py-0.5 text-[11px] ${PHASE_STYLE[r.phase]}`}
-                      >
+                      <span className={`stencil text-[9px] ${PHASE_STYLE[r.phase]}`}>
                         {PHASE_LABEL[r.phase]}
                       </span>
                     </td>
@@ -219,25 +220,25 @@ export default function AdminPage() {
                       {r.round === 0 ? "—" : r.round}
                     </td>
                     <td
-                      className={`py-2.5 pr-3 font-mono ${
-                        overdue ? "font-semibold text-blood" : "text-dust"
+                      className={`readout py-2.5 pr-3 ${
+                        overdue ? "font-semibold text-signal" : "text-dust"
                       }`}
                     >
                       {left === null ? "조작 대기" : formatRemaining(left)}
                     </td>
-                    <td className="py-2.5 pr-3 font-mono text-dust">
+                    <td className="readout py-2.5 pr-3 text-dust">
                       {r.seated} / {r.capacity}
                     </td>
                     <td className="py-2.5 pr-3">
                       {r.roles_assigned ? (
-                        <span className="text-door">배정됨</span>
+                        <span className="stencil text-[9px] text-tung">배정됨</span>
                       ) : (
                         <span className="text-ash">—</span>
                       )}
                     </td>
-                    <td className="py-2.5 pr-3 font-mono text-grime">{r.phase_seq}</td>
-                    <td className="py-2.5 pr-3 font-mono text-grime">{r.roster_seq}</td>
-                    <td className="py-2.5 font-mono text-xs text-ash">
+                    <td className="readout py-2.5 pr-3 text-grime">{r.phase_seq}</td>
+                    <td className="readout py-2.5 pr-3 text-grime">{r.roster_seq}</td>
+                    <td className="readout py-2.5 text-[11px] text-ash">
                       {formatClock(r.created_at)}
                     </td>
                   </tr>
@@ -249,7 +250,7 @@ export default function AdminPage() {
           {snap && rooms.length === 0 && (
             <p className="rounded-lg border border-dashed border-bone/15 p-6 text-center text-sm text-grime">
               방이 없다.{" "}
-              <Link href="/main" className="text-lamp underline">
+              <Link href="/main" className="text-tung underline">
                 메인 로비
               </Link>
               에서 하나 만든다.
@@ -291,13 +292,13 @@ function Stat({
   return (
     <div
       className={`rounded-lg p-3 ${
-        tone === "warn" ? "border border-lamp/40 bg-lamp/10" : "panel"
+        tone === "warn" ? "border border-tung/40 bg-tung/10" : "case"
       }`}
     >
-      <dt className="text-[11px] text-grime">{label}</dt>
+      <dt className="stencil text-[8px] text-ash">{label}</dt>
       <dd
-        className={`mt-1 text-sm ${mono ? "font-mono" : ""} ${
-          tone === "warn" ? "text-lamp" : "text-bone"
+        className={`mt-1.5 text-base ${mono ? "readout" : ""} ${
+          tone === "warn" ? "text-tung" : "text-bone"
         }`}
       >
         {value}

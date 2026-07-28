@@ -47,8 +47,8 @@ export const AnimatedTestimonials = ({
   const isActive = (index: number) => index === active;
 
   return (
-    <div className="mx-auto max-w-sm px-4 py-10 font-sans antialiased md:max-w-4xl md:px-8 lg:px-12">
-      <div className="relative grid grid-cols-1 gap-12 md:grid-cols-2">
+    <div className="mt-4 font-sans antialiased">
+      <div className="relative grid grid-cols-1 gap-10 md:grid-cols-[minmax(0,22rem)_1fr]">
         <div>
           <div className="relative h-80 w-full">
             <AnimatePresence>
@@ -80,7 +80,7 @@ export const AnimatedTestimonials = ({
                     rotate: ROTATIONS[index % ROTATIONS.length],
                   }}
                   transition={{ duration: 0.4, ease: "easeInOut" }}
-                  className="absolute inset-0 origin-bottom"
+                  className="case absolute inset-0 origin-bottom overflow-hidden p-1.5"
                 >
                   <Image
                     src={testimonial.src}
@@ -88,7 +88,7 @@ export const AnimatedTestimonials = ({
                     width={500}
                     height={500}
                     draggable={false}
-                    className="h-full w-full rounded-3xl object-cover object-center"
+                    className="h-full w-full rounded-sm object-cover object-center opacity-95"
                   />
                 </motion.div>
               ))}
@@ -104,13 +104,13 @@ export const AnimatedTestimonials = ({
             exit={{ y: -20, opacity: 0 }}
             transition={{ duration: 0.2, ease: "easeInOut" }}
           >
-            <h3 className="text-2xl font-bold text-bone">
+            <h3 className="engraved text-3xl font-black">
               {testimonials[active].name}
             </h3>
-            <p className="text-sm text-lamp/70">
+            <p className="mt-2 text-[13px] leading-relaxed text-tung/70">
               {testimonials[active].designation}
             </p>
-            <motion.p className="mt-8 text-lg leading-relaxed text-dust">
+            <motion.p className="mt-7 text-[15px] leading-[1.8] text-dust">
               {testimonials[active].quote.split(" ").map((word, index) => (
                 <motion.span
                   key={index}
@@ -134,17 +134,17 @@ export const AnimatedTestimonials = ({
               type="button"
               onClick={handlePrev}
               aria-label="이전 카드"
-              className="group/button flex h-7 w-7 items-center justify-center rounded-full border border-bone/15 bg-bone/5 transition-colors hover:border-lamp/40 hover:bg-lamp/10"
+              className="case case-live group/button flex h-9 w-9 items-center justify-center"
             >
-              <Arrow className="h-5 w-5 text-dust transition-transform duration-300 group-hover/button:rotate-12" />
+              <Arrow className="h-4 w-4 text-grime transition-all duration-300 group-hover/button:-translate-x-0.5 group-hover/button:text-tung" />
             </button>
             <button
               type="button"
               onClick={handleNext}
               aria-label="다음 카드"
-              className="group/button flex h-7 w-7 items-center justify-center rounded-full border border-bone/15 bg-bone/5 transition-colors hover:border-lamp/40 hover:bg-lamp/10"
+              className="case case-live group/button flex h-9 w-9 items-center justify-center"
             >
-              <Arrow className="h-5 w-5 rotate-180 text-dust transition-transform duration-300 group-hover/button:-rotate-12" />
+              <Arrow className="h-4 w-4 rotate-180 text-grime transition-all duration-300 group-hover/button:translate-x-0.5 group-hover/button:text-tung" />
             </button>
           </div>
         </div>

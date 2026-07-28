@@ -10,11 +10,11 @@
  *
  * 이미지는 public/roles/*.svg 자리표시자다. 실제 아트로 교체하면 된다.
  *
- * 진입 화면이라 여기만 방 사진(public/textures/room-bg.png)을 실제로 깐다. 나머지 화면은
- * app/layout.tsx 의 .room-backdrop(CSS 조명)으로 같은 무드를 낸다 — 2MB를 매 화면 지고
- * 다닐 이유가 없다.
+ * ★ 옛 씬의 레퍼런스 사진(public/textures/room-bg.png)을 더 이상 깔지 않는다.
+ *   씬이 지하 라운지에서 창고 시네마로 바뀌었으므로 그 사진은 다른 방이다.
+ *   대신 제목을 영사막 위에 띄운다 — 방에서 유일하게 밝은 면이 스크린이라
+ *   타이틀 카드가 거기 걸리는 게 이 공간의 문법이다.
  */
-import Image from "next/image";
 import Link from "next/link";
 import {
   AnimatedTestimonials,
@@ -64,88 +64,118 @@ const roles: Testimonial[] = [
  * 시민 수도 마찬가지다 — "정원 − 시민 수 − 1"로 봇 수가 새어나간다.
  */
 const composition = [
-  { label: "정원", value: "3 ~ 8명", tone: "text-bone" },
-  { label: "진짜 AI", value: "? 명", tone: "text-lamp" },
-  { label: "스파이", value: "사람 중 1명", tone: "text-blood" },
-  { label: "시민", value: "나머지 사람 전원", tone: "text-door" },
+  { label: "SEATS", value: "3–8", note: "방마다 정한다", tone: "text-bone" },
+  { label: "MACHINES", value: "?", note: "아무도 모른다", tone: "lit-tung" },
+  { label: "SPY", value: "1", note: "사람 중 한 명", tone: "lit-signal" },
+  { label: "CITIZENS", value: "나머지", note: "진짜를 찾는 쪽", tone: "text-dust" },
+];
+
+/** 한 판의 흐름. 진행 순서가 곧 시간축이라 가로 눈금으로 읽힌다 (SPEC §5.1) */
+const flow = [
+  { name: "공통 질문", sec: "60초 ×2" },
+  { name: "지목 질문", sec: "30초" },
+  { name: "자유 채팅", sec: "120초" },
+  { name: "투표", sec: "30초" },
+  { name: "공개", sec: "—" },
 ];
 
 export default function IntroPage() {
   return (
-    <main className="relative isolate min-h-screen text-bone">
-      {/* 레퍼런스 방 사진. 글자가 읽히도록 깊게 눌러 깐다 */}
-      <div aria-hidden className="pointer-events-none absolute inset-x-0 top-0 -z-10 h-[80vh]">
-        <Image
-          src="/textures/room-bg.png"
-          alt=""
-          fill
-          priority
-          sizes="100vw"
-          className="object-cover object-center opacity-45"
-        />
-        {/* 아래로 갈수록 방이 어둠에 잠긴다 — 사진과 CSS 조명의 이음매를 지운다 */}
-        <div className="absolute inset-0 bg-gradient-to-b from-ink/70 via-ink/80 to-ink" />
-      </div>
-
-      <div className="mx-auto max-w-5xl px-6 py-16">
+    <main className="min-h-screen">
+      <div className="mx-auto max-w-5xl px-6 pb-24 pt-10">
         {/* 개발용 링크다. 실제 진입 화면이라 눈에 덜 띄게 둔다 */}
-        <Link
-          href="/"
-          className="text-[11px] text-ash transition-colors hover:text-dust"
-        >
-          ← 작업 보드
+        <Link href="/" className="stencil text-[10px] text-ash transition-colors hover:text-tung">
+          ← manifest
         </Link>
 
-        <header className="mt-8 space-y-4">
-          <p className="font-mono text-xs tracking-[0.3em] text-blood/80">
-            SEATS 3-8 · SPY 1 · MACHINES ?
-          </p>
-          <h1 className="text-5xl font-bold tracking-tight drop-shadow-[0_2px_20px_rgba(0,0,0,0.9)] md:text-7xl">
-            기계인 척
-          </h1>
-          {/*
-            ★ "빈자리를 AI가 채운다"고 쓰지 않는다 (I1, SPEC §0).
-              그 한 문장이면 대기실의 `정원 − 사람 수`가 곧 봇 수가 되고,
-              빈 좌석 번호가 곧 봇의 자리가 된다. is_bot을 한 바이트도 안 흘려도
-              결과는 같다. 이 방에 기계가 몇인지 모른다는 것까지만 말한다.
-          */}
-          <p className="max-w-xl text-lg leading-relaxed text-dust">
-            셋에서 여덟, 자리 수는 방을 만들 때 정한다.
-            <br />
-            그중 몇이 기계인지는 아무도 모른다. 여럿일 수도, 아예 없을 수도 있다.
-            <br />
-            그리고 사람 중 한 명은 AI인 척해야 한다.
-          </p>
-        </header>
+        {/* ── 영사막에 걸린 타이틀 카드 ────────────────────────────────── */}
+        <section className="screen mt-6 overflow-hidden px-8 py-14 sm:px-14 sm:py-20">
+          {/* 위에서 때리는 스포트 세 갈래. 씬의 Spot ×3과 같은 자리다 */}
+          <div
+            aria-hidden
+            className="pointer-events-none absolute inset-0"
+            style={{
+              backgroundImage:
+                "radial-gradient(38% 60% at 22% -10%, rgba(255,227,189,.09), transparent 70%)," +
+                "radial-gradient(38% 60% at 50% -14%, rgba(255,227,189,.11), transparent 70%)," +
+                "radial-gradient(38% 60% at 78% -10%, rgba(255,227,189,.09), transparent 70%)",
+            }}
+          />
 
-        <ul className="mt-10 flex flex-wrap gap-3">
+          <div className="relative">
+            <p className="stencil text-[10px] text-signal/80">now showing</p>
+
+            <h1 className="engraved mt-5 text-[clamp(3rem,11vw,7.5rem)] font-black leading-[0.85]">
+              기계인 척
+            </h1>
+
+            {/*
+              ★ "빈자리를 AI가 채운다"고 쓰지 않는다 (I1, SPEC §0).
+                그 한 문장이면 대기실의 `정원 − 사람 수`가 곧 봇 수가 되고,
+                빈 좌석 번호가 곧 봇의 자리가 된다. is_bot을 한 바이트도 안 흘려도
+                결과는 같다. 이 방에 기계가 몇인지 모른다는 것까지만 말한다.
+            */}
+            <p className="mt-8 max-w-lg text-[17px] leading-[1.75] text-dust">
+              셋에서 여덟. 자리 수는 방을 만들 때 정한다.
+              <br />
+              그중 몇이 기계인지는{" "}
+              <span className="text-bone">아무도 모른다.</span> 여럿일 수도, 아예 없을 수도 있다.
+              <br />
+              그리고 사람 중 한 명은{" "}
+              <span className="lit-signal font-semibold">AI인 척해야 한다.</span>
+            </p>
+
+            <div className="mt-12 flex flex-wrap items-center gap-x-8 gap-y-4">
+              <Link
+                href="/main"
+                className="case case-live group inline-flex items-center gap-4 px-9 py-4"
+              >
+                <span className="stencil text-xs text-flare">입장</span>
+                <span
+                  aria-hidden
+                  className="h-1.5 w-1.5 rounded-full bg-signal shadow-[0_0_10px_2px] shadow-signal/70 transition-transform group-hover:scale-125"
+                />
+              </Link>
+              <p className="max-w-xs text-xs leading-relaxed text-grime">
+                {/* 봇을 언제 채우는지는 아직 미결정이다 (SPEC §15-3). 시점을 문구로 못 박지 않는다 */}
+                역할은 시작할 때 무작위로 배정된다. 아무도 남의 역할을 모른다.
+              </p>
+            </div>
+          </div>
+        </section>
+
+        {/* ── 구성 — 케이스에 붙은 물품표 ──────────────────────────────── */}
+        <ul className="mt-px grid grid-cols-2 gap-px sm:grid-cols-4">
           {composition.map((c) => (
-            <li
-              key={c.label}
-              className="panel rounded-full px-4 py-2 text-sm"
-            >
-              <span className={`font-semibold ${c.tone}`}>{c.label}</span>
-              <span className="ml-2 text-dust">{c.value}</span>
+            <li key={c.label} className="case px-5 py-4">
+              <p className="stencil text-[9px] text-ash">{c.label}</p>
+              <p className={`readout mt-2 text-2xl ${c.tone}`}>{c.value}</p>
+              <p className="mt-1 text-[11px] text-grime">{c.note}</p>
             </li>
           ))}
         </ul>
 
-        <section className="mt-6 border-t border-bone/10 pt-6">
+        {/* ── 진행 순서 — 시간축 ───────────────────────────────────────── */}
+        <div className="mt-16">
+          <p className="stencil text-[10px] text-grime">한 판의 흐름</p>
+          <ol className="mt-4 flex flex-wrap items-stretch gap-px">
+            {flow.map((f, i) => (
+              <li key={f.name} className="case flex min-w-32 flex-1 items-center gap-3 px-4 py-3">
+                <span className="readout text-[11px] text-ash">{i + 1}</span>
+                <span>
+                  <span className="block text-[13px] font-semibold text-bone">{f.name}</span>
+                  <span className="readout block text-[10px] text-tung/60">{f.sec}</span>
+                </span>
+              </li>
+            ))}
+          </ol>
+        </div>
+
+        {/* ── 역할 ─────────────────────────────────────────────────────── */}
+        <section className="mt-16">
+          <p className="stencil text-[10px] text-grime">배역</p>
           <AnimatedTestimonials testimonials={roles} autoplay />
         </section>
-
-        <div className="mt-10 flex flex-wrap items-center gap-4">
-          <Link
-            href="/main"
-            className="rounded-full bg-blood px-6 py-3 text-sm font-semibold text-white shadow-[0_0_28px_-6px_rgba(255,43,29,0.7)] transition-colors hover:bg-blood/85"
-          >
-            게임 시작하기
-          </Link>
-          <span className="text-xs text-grime">
-            {/* 봇을 언제 채우는지는 아직 미결정이다 (SPEC §15-3). 시점을 문구로 못 박지 않는다 */}
-            역할은 게임이 시작될 때 무작위로 배정된다. 아무도 남의 역할을 모른다.
-          </span>
-        </div>
       </div>
     </main>
   );
