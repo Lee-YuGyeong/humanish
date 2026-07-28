@@ -57,9 +57,13 @@ export default function Home() {
                     </span>
                   </span>
 
+                  {/*
+                    ws.owner(담당자 이름)는 화면에 찍지 않는다. 폴더 소유권을 정하는
+                    팀 내부 값이지 게임 화면에 나올 정보가 아니다. 값 자체는
+                    app/workspaces.ts 에 그대로 있고 CLAUDE.md 의 소유권 표가 참조한다.
+                  */}
                   <span className="hidden shrink-0 text-right sm:block">
                     <span className="block font-mono text-[11px] text-ash">{ws.href}</span>
-                    <span className="stencil mt-1 block text-[9px] text-grime">{ws.owner}</span>
                   </span>
 
                   <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${s.dot}`} aria-hidden />
