@@ -1,0 +1,32 @@
+# 3D 월드 멀티플레이 워커. 소유: A
+#
+# 로컬:  npm run world:dev     (저장소 루트에서)
+# 배포:  npm run world:deploy
+#
+# 비밀은 여기에 적지 않는다:
+#   로컬  → worker/.dev.vars 에 WORLD_SHARED_SECRET=... (커밋 금지. README 참고)
+#   배포  → npx wrangler secret put WORLD_SHARED_SECRET
+
+name = "humanish-world"
+main = "src/index.ts"
+compatibility_date = "2025-09-01"
+
+[observability]
+enabled = true
+
+# 방 하나 = 인스턴스 하나. idFromName(room_id)로 찾는다.
+[[durable_objects.bindings]]
+name = "ROOM_DO"
+class_name = "RoomDO"
+
+# SQLite 백엔드 DO. 무료 플랜에서는 이 형태만 만들 수 있다.
+# ★ tag를 바꾸거나 지우지 않는다. 마이그레이션 이력이라 되돌릴 수 없다.
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["RoomDO"]
+
+[vars]
+# 워커가 좌석 명단을 물어볼 Next 오리진 (app/api/internal/world-room).
+# 배포 시에는 Vercel 주소로 바꾼다. localhost가 아니라 127.0.0.1을 쓴다 —
+# wrangler dev의 컨테이너에서 localhost는 자기 자신을 가리킬 수 있다.
+NEXT_ORIGIN = "http://127.0.0.1:3000"

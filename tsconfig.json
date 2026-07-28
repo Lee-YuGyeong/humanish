@@ -23,5 +23,8 @@
     }
   },
   "include": ["next-env.d.ts", "**/*.ts", "**/*.tsx", ".next/types/**/*.ts"],
-  "exclude": ["node_modules"]
+  // worker/ 는 Cloudflare 런타임이라 DOM이 아니라 @cloudflare/workers-types 를 쓴다.
+  // 여기 섞으면 DurableObjectState 같은 타입이 없다고 빌드가 깨진다.
+  // 검사는 worker/tsconfig.json 이 따로 한다 (cd worker && npm run typecheck).
+  "exclude": ["node_modules", "worker"]
 }

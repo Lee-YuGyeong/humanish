@@ -47,6 +47,7 @@ npm test               # 순수 함수 · 화면 조각 (vitest, tests/ 아래)
 | `lib/server/`, `supabase/`, `app/api/` | **A** — 방 · 페이즈 상태머신 · DB |
 | `lib/game/`, `lib/agent/` | **B** — 규칙(순수 함수) · 에이전트 |
 | `app/`(api 제외), `components/`, `mock/` | **C** — 화면 |
+| `lib/mp/`, `worker/`, `tools/verify-world.mjs` | **A** — 3D 월드 멀티플레이 (프로토콜 · Durable Object) |
 | `lib/game/types.ts` | 공동. 고치면 팀 채널에 공지 |
 
 이 저장소에서 작업하는 세션은 **A 영역**을 맡는다. B·C 영역 파일이 필요하면 스텁만 두고 사용자에게 알린다.
@@ -61,6 +62,7 @@ npm test               # 순수 함수 · 화면 조각 (vitest, tests/ 아래)
 | `/main` | `app/main/` | C — 방 만들기 · 입장 |
 | `/room/[code]` | `app/room/` | C — 게임 화면 |
 | `/lab` | `app/lab/` | B — 규칙 · 봇 응답 확인 |
+| `/world` | `app/world/` | 원상 — 3D 멀티플레이 (`docs/MULTIPLAYER.md`) |
 | `/admin` | `app/admin/` | A — 방 · 페이즈 점검 |
 | 목록 자체 | `app/workspaces.ts` | 공동. **한 줄씩만** 고친다 |
 
@@ -85,5 +87,6 @@ npm test               # 순수 함수 · 화면 조각 (vitest, tests/ 아래)
 - **막히면 추측하지 말고 SPEC §15(미결정 사항)를 확인한다.** 거기 있는 항목은 사용자에게 물어볼 것.
 - 코드를 고쳤으면 `npm run build`로 끝낸다. 타입 에러를 남기지 않는다.
 - `supabase/` 아래를 고쳤으면 `./supabase/test.sh`로 끝낸다. 일회용 로컬 Postgres에서 SPEC §14를 검사한다.
+- **3D 월드는 `lib/mp/`부터 본다** (`docs/MULTIPLAYER.md`). 프로토콜 · 상수 · 월드 경계가 거기 하나뿐이고 클라이언트와 워커가 **같이 읽는다** — 한쪽에 복붙하면 그 순간 갈린다. `worker/` 를 고쳤으면 `npm run world:typecheck` 와 `npm run world:verify`(소켓 2개 왕복)로 끝낸다. 타입체크는 멀티플레이가 동작한다는 증거가 못 된다.
 - 시각은 전부 ISO 문자열로 주고받는다.
 - 파일명 kebab-case, 컴포넌트 PascalCase.

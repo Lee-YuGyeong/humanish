@@ -8,7 +8,12 @@
     "start": "next start",
     "lint": "eslint",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "world:dev": "npm --prefix worker run dev",
+    "world:deploy": "npm --prefix worker run deploy",
+    "world:typecheck": "npm --prefix worker run typecheck",
+    "world:smoke": "node tools/verify-worker.mjs",
+    "world:verify": "node tools/verify-world.mjs"
   },
   "dependencies": {
     "@react-three/drei": "^10.7.7",

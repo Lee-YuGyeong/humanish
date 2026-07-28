@@ -1,0 +1,18 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2022"],
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "types": ["@cloudflare/workers-types"],
+    "strict": true,
+    "noEmit": true,
+    "skipLibCheck": true,
+    "isolatedModules": true,
+    "esModuleInterop": true,
+    "forceConsistentCasingInFileNames": true
+  },
+  // src 밖의 lib/mp/* 도 검사한다. 계약을 공유하므로 한쪽만 깨지면 안 된다.
+  "include": ["src/**/*.ts", "../lib/mp/**/*.ts"],
+  "exclude": ["node_modules"]
+}

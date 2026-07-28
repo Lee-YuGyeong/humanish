@@ -40,6 +40,10 @@ dev.vars
 secrets.json
 secrets.yaml
 
+# 월드 워커 (worker/). .dev.vars 는 위 "로컬 비밀"에서 이미 걸린다
+/worker/node_modules
+/worker/.wrangler
+
 # vercel
 .vercel
 

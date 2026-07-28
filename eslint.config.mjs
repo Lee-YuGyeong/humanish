@@ -18,6 +18,9 @@ const eslintConfig = [
       "out/**",
       "build/**",
       "next-env.d.ts",
+      // 워커는 Next가 아니라 Cloudflare 런타임이다. 자체 tsconfig로 검사한다
+      // (worker/ 에서 npm run typecheck).
+      "worker/**",
     ],
   },
   {
