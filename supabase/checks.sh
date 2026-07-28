@@ -51,6 +51,23 @@ schema_checks() {
   check "rooms에 capacity 컬럼이 있다 (§17.6)" "1" \
     "$(q "select count(*) from information_schema.columns where table_name='rooms' and column_name='capacity';")"
 
+  # ★ 함수만 있고 제약이 옛날이면 검사는 전부 초록인데 방 시작만 죽는다.
+  #   shuffle_seats(§15-3-결정)는 전원의 자리를 한 순열로 다시 배정하므로 update 도중
+  #   두 사람이 잠깐 같은 자리를 갖는 순간이 **반드시** 생긴다. 유니크가 즉시 검사면
+  #   거기서 걸려 죽는다. 시그니처 검사는 함수의 존재만 보므로 이걸 못 잡는다 —
+  #   이 파일 맨 위에 적힌 "한쪽만 아는 사실"이 생기는 바로 그 자리다.
+  #
+  #   이름으로 비교하는 이유: 지연 가능이어야 하는 것은 seat·nickname **둘뿐**이다.
+  #   token 유니크까지 지연되면 중복 토큰이 트랜잭션 끝까지 살아남는다.
+  check "seat·nickname 유니크가 지연 가능하다 (§15-3-결정)" \
+    "players_room_nickname_key,players_room_seat_key" \
+    "$(q "select coalesce(string_agg(conname, ',' order by conname), '') from pg_constraint where conrelid='players'::regclass and contype='u' and condeferrable;")"
+
+  # initially immediate 라야 평소에는 진짜 중복이 그 자리에서 거절된다.
+  # deferred 로 바꾸는 것은 shuffle_seats가 자기 트랜잭션 안에서만 한다.
+  check "평소에는 즉시 검사다 (initially immediate)" "f" \
+    "$(q "select coalesce(bool_or(condeferred), false) from pg_constraint where conrelid='players'::regclass and contype='u';")"
+
   # publication에 갓 추가한 직후에는 Realtime이 몇 분간 이벤트를 안 보낼 수 있다.
   # 구독은 SUBSCRIBED로 뜨는데 이벤트만 안 오므로 코드를 의심하게 된다. 실제로 그랬다.
   # 화면이 안 갱신되면 이 표시를 먼저 떠올릴 것 — 조금 기다렸다 다시 해본다.
