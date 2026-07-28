@@ -14,7 +14,12 @@
  * └────────────────────────────────────────────────────────────────────────┘
  */
 import { describe, expect, it } from 'vitest';
-import { SCORE_RULE, fallbackAssignRoles, fallbackCalcScores } from '@/lib/server/fallback-rules';
+import {
+  SCORE_RULE,
+  fallbackAssignRoles,
+  fallbackCalcScores,
+  humanVotesReceived,
+} from '@/lib/server/fallback-rules';
 import { assignRoles, calcScores, mostSuspectedHuman } from '@/lib/game/rules';
 import type { Role } from '@/lib/game/types';
 
@@ -98,21 +103,51 @@ describe('fallbackCalcScores — 화면에 뜨는 채점 규칙', () => {
     expect(s.A).toBe(0);
   });
 
-  it('스파이는 받은 표 하나당 +2', () => {
-    const s = fallbackCalcScores(
+  it('스파이는 사람 표를 한 장이라도 받으면 +4 (표 수에 비례하지 않는다)', () => {
+    const one = fallbackCalcScores([{ voterId: 'A', targetId: 'S' }], roles);
+    const two = fallbackCalcScores(
       [
         { voterId: 'A', targetId: 'S' },
         { voterId: 'B', targetId: 'S' },
       ],
       roles,
     );
-    expect(s.S).toBe(4);
+    expect(one.S).toBe(4);
+    // ★ 비례하면 스파이 상한이 정원에 딸려 올라간다. 옛 규칙(표당 +2)은 정원 8인 방에서
+    //   최대 14점이라 시민 상한(2점)의 7배였다. 그래서 상한을 고정으로 바꿨다.
+    expect(two.S).toBe(4);
   });
 
-  it('AI는 표를 하나도 안 받으면 +3, 한 장이라도 받으면 0', () => {
+  it('AI는 사람 표를 하나도 안 받으면 +3, 한 장이라도 받으면 0', () => {
     const s = fallbackCalcScores([{ voterId: 'A', targetId: 'X' }], roles);
     expect(s.X).toBe(0); // 들켰다
     expect(s.Y).toBe(3); // 안 들켰다
+  });
+
+  it('★ 봇이 던진 표는 점수에 넣지 않는다 (SPEC §8.1)', () => {
+    // 봇은 자기 아닌 아무나 무작위로 찍는다 (on_enter_phase의 vote 훅).
+    // 그 표를 세면 정원이 커질수록 결과가 실력이 아니라 주사위가 된다 —
+    // 정원 8인 방에 사람이 둘이면 8표 중 6표가 무작위다.
+    const botsOnly = [
+      { voterId: 'X', targetId: 'S' }, // 봇이 스파이를 찍었다
+      { voterId: 'Y', targetId: 'S' },
+    ];
+    const s = fallbackCalcScores(botsOnly, roles);
+    expect(s.S).toBe(0); // 봇 표만으로는 스파이가 점수를 못 얻는다
+    expect(s.X).toBe(3); // 사람 표를 안 받았으므로 숨은 것이다
+    expect(s.Y).toBe(3);
+  });
+
+  it('봇이 AI를 찍어도 그 봇에게 점수가 가지 않는다', () => {
+    const s = fallbackCalcScores([{ voterId: 'X', targetId: 'Y' }], roles);
+    expect(s.X).toBe(3); // 자기가 표를 안 받았으니 +3. 맞힌 보상은 없다
+    expect(s.Y).toBe(3); // 봇 표는 안 세므로 Y도 여전히 숨은 것이다
+  });
+
+  it('역할을 모르는 투표자는 사람으로 치지 않는다', () => {
+    // roles에 없는 id가 섞이면 "봇 표를 뺀다"가 조용히 새는 자리다.
+    const s = fallbackCalcScores([{ voterId: '유령', targetId: 'S' }], roles);
+    expect(s.S).toBe(0);
   });
 
   it('투표가 없어도 모든 참가자가 점수표에 있다', () => {
@@ -123,13 +158,27 @@ describe('fallbackCalcScores — 화면에 뜨는 채점 규칙', () => {
     expect(s).toEqual({ A: 0, B: 0, S: 0, X: 3, Y: 3 });
   });
 
+  it('humanVotesReceived는 사람 표만 센다 (결과 화면이 이걸 같이 띄운다)', () => {
+    const got = humanVotesReceived(
+      [
+        { voterId: 'A', targetId: 'X' }, // 사람
+        { voterId: 'Y', targetId: 'X' }, // 봇
+      ],
+      roles,
+    );
+    expect(got.X).toBe(1);
+    expect(got.S).toBe(0);
+  });
+
   it('SCORE_RULE 문구가 실제 계산과 어긋나지 않는다', () => {
     // 이 문구는 결과 화면에 그대로 뜬다. 계산을 고치고 문구를 안 고치면
     // 화면이 거짓말을 하게 된다.
-    expect(SCORE_RULE).toHaveLength(3);
+    expect(SCORE_RULE).toHaveLength(4);
     expect(SCORE_RULE[0]).toContain('+2');
-    expect(SCORE_RULE[1]).toContain('+2');
+    expect(SCORE_RULE[1]).toContain('+4');
     expect(SCORE_RULE[2]).toContain('+3');
+    // 봇 표를 뺀다는 것은 규칙의 절반이다. 화면에 안 적으면 아무도 모른다.
+    expect(SCORE_RULE[3]).toContain('봇');
   });
 });
 

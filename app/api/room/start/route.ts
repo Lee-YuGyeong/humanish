@@ -16,7 +16,7 @@ import { assignRoles } from '@/lib/game/rules';
 import { fallbackAssignRoles } from '@/lib/server/fallback-rules';
 import type { Role } from '@/lib/game/types';
 import { advancePhase } from '@/lib/server/phase';
-import { fillWithBots, shuffleSeats } from '@/lib/server/room';
+import { MIN_HUMANS_TO_START, fillWithBots, shuffleSeats } from '@/lib/server/room';
 import { getServiceClient } from '@/lib/server/supabase';
 import { ApiError, apiError, readJson, requirePlayer } from '@/lib/server/auth';
 
@@ -55,6 +55,23 @@ export async function POST(req: Request): Promise<Response> {
 
     if (room.host_id !== me.id) throw new ApiError(403, '방장만 시작할 수 있다');
     if (room.phase !== 'lobby') throw new ApiError(409, '이미 시작된 방이다');
+
+    // 0. 사람이 둘 이상인가 (SPEC §8, §17.6).
+    //
+    //    ★ fillWithBots **앞**이어야 한다. 뒤에 두면 거절하기 전에 봇이 이미 앉아버리고,
+    //      그 방은 lobby인데 정원이 찬 이상한 상태로 남는다.
+    //
+    //    혼자 시작하면 스파이가 배정되지 않고(사람 2명 이상 조건) 나머지가 전부 봇이라
+    //    아무나 찍어도 정답이다. 게임의 절반(스파이)과 나머지 절반(추리)이 같이 죽는다.
+    const { count: humans, error: humansErr } = await db
+      .from('players')
+      .select('id', { count: 'exact', head: true })
+      .eq('room_id', roomId)
+      .eq('is_bot', false);
+    if (humansErr) throw new ApiError(500, `참가자 수 조회 실패: ${humansErr.message}`);
+    if ((humans ?? 0) < MIN_HUMANS_TO_START) {
+      throw new ApiError(409, `사람이 ${MIN_HUMANS_TO_START}명 이상이어야 시작할 수 있다`);
+    }
 
     // 1. 빈 자리를 봇으로.
     await fillWithBots(roomId);

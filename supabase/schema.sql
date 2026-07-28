@@ -179,12 +179,31 @@ create table if not exists question_pool (
   unique (kind, text)
 );
 
+-- ★ question_text — 이 문구가 **어느 질문에 대한 답인가** (SPEC §17.2).
+--
+--   null이면 질문을 가리지 않는 일반 문구다. 특화 문구가 봇 수보다 모자랄 때 뒤를 채운다.
+--
+--   컬럼을 따로 둔 이유: 예전에는 phase만 보고 뽑아서 '지금 휴대폰 배터리 몇 퍼센트야?'에
+--   '어제랑 비슷했던 것 같아'가 나왔다. 사람은 숫자를 대는데 봇만 딴소리를 하니
+--   **첫 질문 한 번으로 봇이 전부 갈렸다** (I1). 문구 품질이 아니라 짝맞춤의 문제다.
 create table if not exists bot_line_pool (
-  id    uuid primary key default gen_random_uuid(),
-  phase text not null check (phase in ('question','target','chat','vote')),
-  text  text not null,
-  unique (phase, text)
+  id            uuid primary key default gen_random_uuid(),
+  phase         text not null check (phase in ('question','target','chat','vote')),
+  question_text text,
+  text          text not null
 );
+
+alter table bot_line_pool add column if not exists question_text text;
+
+-- 옛 unique (phase, text)는 같은 문구를 두 질문에 못 쓰게 막는다 ('음 글쎄'는 여러 질문에
+-- 어울린다). 표현식 유니크 인덱스로 바꾼다 — null끼리도 같은 것으로 취급해야 하므로
+-- coalesce로 빈 문자열을 씌운다 (unique 제약은 null을 서로 다른 값으로 본다).
+alter table bot_line_pool drop constraint if exists bot_line_pool_phase_text_key;
+create unique index if not exists bot_line_pool_uniq
+  on bot_line_pool (phase, coalesce(question_text, ''), text);
+
+-- 질문 텍스트로 문구를 찾는다. 질문 풀이 커지면 이게 없으면 매 전환마다 풀스캔이다.
+create index if not exists bot_line_pool_lookup_idx on bot_line_pool (phase, question_text);
 
 ------------------------------------------------------------------------------
 -- 인덱스

@@ -79,6 +79,35 @@ schema_checks() {
   check "질문 풀이 차 있다" "t" "$(q "select count(*) > 0 from question_pool;")"
   check "봇 문구 풀이 차 있다" "t" "$(q "select count(*) > 0 from bot_line_pool;")"
 
+  # ★ 봇 답변이 질문과 짝이 맞는가 (SPEC §17.2).
+  #
+  #   예전에는 phase만 보고 뽑아서 '배터리 몇 퍼센트야?'에 '어제랑 비슷했던 것 같아'가
+  #   나왔다. 사람은 숫자를 대는데 봇만 딴소리를 하니 **첫 질문 한 번으로 봇이 전부
+  #   갈렸다** (I1). 컬럼만 있고 내용이 안 채워지면 증상이 똑같이 돌아온다.
+  check "bot_line_pool에 question_text 컬럼이 있다 (§17.2)" "1" \
+    "$(q "select count(*) from information_schema.columns where table_name='bot_line_pool' and column_name='question_text';")"
+
+  check "질문마다 전용 봇 문구가 하나 이상 있다" "0" \
+    "$(q "select count(*) from question_pool qp
+           where not exists (select 1 from bot_line_pool bl where bl.question_text = qp.text);")"
+
+  # 봇 최대치 = 정원 상한 8 − 시작 최소 인원 2 = 6.
+  # 문구(전용 + 일반)가 이보다 적으면 답이 빈 봇이 생기고, 빈칸은 사람만 만들 수 있으므로
+  # 그 자리가 그대로 드러난다 (I1). on_enter_phase가 그때 예외를 던져 전환이 통째로 죽는다.
+  check "질문마다 쓸 수 있는 문구가 6개 이상이다" "0" \
+    "$(q "select count(*) from question_pool qp
+           where (select count(*) from bot_line_pool bl
+                   where bl.phase = case qp.kind when 'common' then 'question' else 'target' end
+                     and (bl.question_text is null or bl.question_text = qp.text)) < 6;")"
+
+  check "투표 이유가 6개 이상이다" "t" \
+    "$(q "select count(*) >= 6 from bot_line_pool where phase='vote' and question_text is null;")"
+
+  # 같은 문구를 여러 질문에 붙일 수 있어야 한다('음 글쎄'는 어디에나 어울린다).
+  # 옛 unique (phase, text)가 남아 있으면 seed가 조용히 절반만 들어간다.
+  check "옛 unique (phase, text)가 남아 있지 않다" "0" \
+    "$(q "select count(*) from pg_constraint where conname = 'bot_line_pool_phase_text_key';")"
+
   echo ""
   echo "── 함수 시그니처 (SPEC §17.6) ──"
   # ★ 이름이 아니라 **시그니처**로 본다. 이름만 세면 옛 create_room(text)가 남아 있어도

@@ -39,18 +39,64 @@ export function fallbackAssignRoles(isBotBySeat: boolean[], seed: number): Role[
 }
 
 /**
- * ★ 이 채점 규칙은 SPEC에 없다. §8은 시그니처만 정했고 방식이 정해진 적이 없어서,
- *   게임이 끝나는 느낌이 나도록 A가 임의로 골랐다. 바꿀 거면 아래 계산과 이 문구를
- *   **같이** 고친다 — 이 배열이 결과 화면에 그대로 뜬다.
+ * ★ 이 채점 규칙은 SPEC §8에 시그니처만 있고 방식이 비어 있던 자리를 채운 것이다.
+ *   바꿀 거면 아래 계산과 이 문구를 **같이** 고친다 — 이 배열이 결과 화면에 그대로 뜬다.
  *
- *   알려진 결함은 SPEC §8.1이다: 봇 표가 무작위라 점수가 실력보다 운에 좌우된다.
- *   특히 스파이 점수가 통째로 운이다. 규칙을 확정할 때 같이 정해야 한다.
+ * ┌─ 봇 표를 세지 않는다 (SPEC §8.1 두 선택지 중 후자) ─────────────────────┐
+ * │ 봇은 자기 아닌 아무나 무작위로 찍는다 (on_enter_phase의 vote 훅).       │
+ * │ 그 표를 점수에 넣으면 **정원이 커질수록 결과가 주사위가 된다** —        │
+ * │ 정원 8인 방에 사람이 둘이면 8표 중 6표가 무작위다.                      │
+ * │                                                                        │
+ * │ 특히 옛 규칙("스파이는 받은 표 하나당 +2")은 그 주사위를 그대로 점수로  │
+ * │ 바꿔서, 스파이 상한이 시민 상한의 7배(14점 대 2점)였다. 잘해서가 아니라 │
+ * │ 봇이 우연히 찍어줘서 이기는 판이 나온다.                                │
+ * │                                                                        │
+ * │ 사람 표만 세면 운이 사라진다. 대가는 사람이 적은 방에서 점수가 잘 안    │
+ * │ 움직이는 것인데, §8.1이 예고한 그대로다. 봇에게 근거 있는 투표를        │
+ * │ 시키는 쪽(LLM)은 §17.5에서 AI를 얹을 때 다시 본다.                     │
+ * └────────────────────────────────────────────────────────────────────────┘
  */
 export const SCORE_RULE = [
-  '시민 — AI에게 투표했으면 +2',
-  '스파이 — 자신이 받은 표 하나당 +2',
-  'AI — 표를 하나도 안 받으면 +3',
+  '시민 — 진짜 AI에게 투표했으면 +2',
+  '스파이 — 사람 표를 한 장이라도 받으면 +4',
+  'AI — 사람 표를 한 장도 안 받으면 +3',
+  '봇이 던진 표는 세지 않는다 — 무작위라서 실력이 아니다',
 ];
+
+/** 스파이가 사람 표를 한 장이라도 받았을 때의 점수. 표 수에 비례하지 않는다. */
+const SPY_EXPOSED_SCORE = 4;
+/** AI가 사람 표를 한 장도 안 받았을 때의 점수. */
+const AI_HIDDEN_SCORE = 3;
+/** 시민이 진짜 AI를 맞혔을 때의 점수. */
+const CITIZEN_HIT_SCORE = 2;
+
+/**
+ * 사람이 던진 표인가. 역할을 모르는 id(집계에서 빠진 플레이어)는 **사람으로 치지 않는다** —
+ * 모르는 표를 사람 표로 세면 봇 표를 뺀 의미가 조용히 사라진다.
+ */
+function isHumanVoter(voterId: string, roles: Record<string, Role>): boolean {
+  const role = roles[voterId];
+  return role === 'citizen' || role === 'spy';
+}
+
+/**
+ * 각자가 **사람에게서** 받은 표 수. 결과 화면이 "3표 받았는데 왜 0점?"이 되지 않도록
+ * reveal 라우트가 이 값을 함께 내려보낸다.
+ *
+ * ★ B가 lib/game/rules.ts를 구현해 이 파일을 지울 때, 이 함수를 쓰는 쪽
+ *   (app/api/reveal/route.ts)도 같이 옮겨야 한다.
+ */
+export function humanVotesReceived(
+  votes: { voterId: string; targetId: string }[],
+  roles: Record<string, Role>,
+): Record<string, number> {
+  const received: Record<string, number> = {};
+  for (const id of Object.keys(roles)) received[id] = 0;
+  for (const v of votes) {
+    if (isHumanVoter(v.voterId, roles)) received[v.targetId] = (received[v.targetId] ?? 0) + 1;
+  }
+  return received;
+}
 
 export function fallbackCalcScores(
   votes: { voterId: string; targetId: string }[],
@@ -59,15 +105,17 @@ export function fallbackCalcScores(
   const score: Record<string, number> = {};
   for (const id of Object.keys(roles)) score[id] = 0;
 
-  const received: Record<string, number> = {};
-  for (const v of votes) received[v.targetId] = (received[v.targetId] ?? 0) + 1;
+  const received = humanVotesReceived(votes, roles);
 
   for (const v of votes) {
-    if (roles[v.voterId] === 'citizen' && roles[v.targetId] === 'ai') score[v.voterId] += 2;
+    if (!isHumanVoter(v.voterId, roles)) continue;
+    if (roles[v.voterId] === 'citizen' && roles[v.targetId] === 'ai') {
+      score[v.voterId] += CITIZEN_HIT_SCORE;
+    }
   }
   for (const [id, role] of Object.entries(roles)) {
-    if (role === 'spy') score[id] += (received[id] ?? 0) * 2;
-    if (role === 'ai' && (received[id] ?? 0) === 0) score[id] += 3;
+    if (role === 'spy' && (received[id] ?? 0) > 0) score[id] += SPY_EXPOSED_SCORE;
+    if (role === 'ai' && (received[id] ?? 0) === 0) score[id] += AI_HIDDEN_SCORE;
   }
   return score;
 }

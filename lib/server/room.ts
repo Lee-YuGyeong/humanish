@@ -23,6 +23,19 @@ export const MAX_ROOM_CAPACITY = 8;
 /** 아무것도 고르지 않았을 때의 정원. SQL의 default_room_capacity()와 같은 값이다. */
 export const DEFAULT_ROOM_CAPACITY = 5;
 
+/**
+ * 시작에 필요한 최소 인원(사람만). 정원 하한 3의 근거를 **실제로 강제하는** 값이다.
+ *
+ * ★ 이게 없으면 방장 혼자서도 시작 버튼이 눌린다. 그 판은 게임이 아니다 —
+ *   사람이 1명이면 assignRoles가 스파이를 배정하지 않고(SPEC §8), 남은 자리가 전부
+ *   봇이라 **아무나 찍어도 정답**이다. 정원 하한을 3으로 잡은 이유(§17.6)가
+ *   "사람 2명이 들어올 여지"였는데, 여지만 만들고 강제하지 않으면 아무 의미가 없다.
+ *
+ *   advance_phase의 lobby 분기에도 같은 검사가 있다. 이 라우트를 우회할 수 없게
+ *   두 겹으로 둔 것이다 (supabase/functions/advance_phase.sql).
+ */
+export const MIN_HUMANS_TO_START = 2;
+
 /** 4자 대문자 코드. I·O·0·1처럼 헷갈리는 글자는 뺀다. */
 const CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ';
 
