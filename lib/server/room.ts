@@ -154,9 +154,11 @@ export async function joinRoom(code: string): Promise<JoinResult> {
  * 자리는 무작위로 고른다 — 순서대로 채우면 봇이 늘 뒷자리에 몰려 seat만 보고 골라낼 수
  * 있다 (SPEC §17.4). created_at도 같은 이유로 public_players 뷰에서 뺐다 (§7.2).
  *
- * **채우는 "시점"은 아직 미결정이다 (SPEC §15-3).** 지금은 시작 버튼을 누른 순간이라,
- * lobby 인원이 2명이었다가 5명이 되는 걸로 봇이 3명임을 알 수 있다. lobby에서 미리
- * 채우려면 사람이 들어올 때 봇 자리를 넘겨받는 처리가 더 필요하다.
+ * **채우는 "시점"은 여전히 시작 버튼이다 (SPEC §15-3).** lobby에서 미리 채우려면
+ * 사람이 들어올 때 봇 자리를 넘겨받는 처리가 더 필요해서 열어뒀다.
+ *
+ * 그래서 **바로 뒤에 shuffleSeats가 붙는다.** 채우기만 하면 로비를 지켜본 사람이
+ * "남은 자리 = 봇"을 그대로 안다. 둘은 한 쌍으로 움직인다 (§15-3-결정).
  *
  * @returns 채운 봇 수 (서버 전용)
  */
@@ -164,6 +166,38 @@ export async function fillWithBots(roomId: string): Promise<number> {
   const { data, error } = await getServiceClient().rpc('fill_with_bots', { p_room_id: roomId });
   if (error) throw new ApiError(500, `봇 채우기 실패: ${error.message}`);
   return typeof data === 'number' ? data : 0;
+}
+
+/**
+ * 전원의 자리·닉네임·가면을 무작위 순열로 다시 배정한다 (SPEC §15-3-결정).
+ *
+ * 대기실에서 본 정체가 게임까지 이어지는 것을 끊는다. **fillWithBots 바로 뒤,
+ * 역할 배정 앞에서 부른다** — 순서가 어긋나면 효과가 없거나 역할이 엉킨다.
+ * 이유는 supabase/functions/room.sql 의 shuffle_seats 주석에 있다.
+ *
+ * @returns 다시 배정한 인원 수 (서버 전용)
+ */
+export async function shuffleSeats(roomId: string): Promise<number> {
+  const { data, error } = await getServiceClient().rpc('shuffle_seats', { p_room_id: roomId });
+  if (error) throw new ApiError(500, `자리 재배치 실패: ${error.message}`);
+  return typeof data === 'number' ? data : 0;
+}
+
+/**
+ * 그 방의 봇 **총 수**. 0일 수 있다 — 사람이 정원을 다 채운 방이다.
+ *
+ * ★ 이 값은 공개해도 된다 (SPEC §15-3-결정). 자리와 묶이지 않은 집계라 누구도
+ *   특정하지 못한다. **자리별 정보를 곁들이지 않는다** — seat 목록이나 "봇이 앉은
+ *   자리"를 함께 내보내는 순간 §15-3이 허용한 범위를 넘어 I1 위반이 된다.
+ */
+export async function countBots(roomId: string): Promise<number> {
+  const { count, error } = await getServiceClient()
+    .from('players')
+    .select('id', { count: 'exact', head: true })
+    .eq('room_id', roomId)
+    .eq('is_bot', true);
+  if (error) throw new ApiError(500, `봇 수 조회 실패: ${error.message}`);
+  return count ?? 0;
 }
 
 /**

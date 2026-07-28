@@ -172,6 +172,71 @@ end;
 $$;
 
 ------------------------------------------------------------------------------
+-- 좌석 재배치 — SPEC §15-3-결정
+------------------------------------------------------------------------------
+-- ★ 대기실에서 본 정체가 게임까지 이어지는 것을 끊는다.
+--
+--   자리는 이미 무작위로 준다(pick_free_seat). 그런데 그것만으로는 부족하다 —
+--   로비에 앉아 있던 사람은 **누가 언제 들어왔는지를 눈으로 봤다.** 익명4 → 익명1이
+--   차례로 들어오는 걸 봤다면, 시작 후 남은 자리가 곧 봇이다. 자리를 무작위로 준 것과
+--   무관하게 답이 통째로 새어나간다.
+--
+--   그래서 시작하는 순간 **전원(사람+봇)에게 자리·닉네임·가면을 한 번의 무작위 순열로
+--   다시 배정한다.** 그러면 로비에서 기억한 이름이 게임 속 누구인지 붙일 수 없다.
+--   봇 수를 공개하기로 한 것(§15-3)이 의미를 가지려면 이게 있어야 한다 —
+--   수는 제약이어야지 답이면 안 된다.
+--
+--   닉네임은 '익명' || seat 이라 자리와 한 몸이다. 순열 하나로 셋이 같이 움직인다.
+--
+-- ☐ 남는 구멍: players.id 는 그대로다. public_players 가 id를 내려주므로(투표 대상
+--   지정에 필요하다) 로비에서 devtools로 id를 적어둔 사람은 여전히 따라갈 수 있다.
+--   막으려면 시작 시점에 행을 새로 발급해야 하는데, 토큰이 httpOnly 쿠키라 그 순간
+--   접속해 있지 않은 사람에게 새 쿠키를 줄 수 없다. 지금 구조로는 불가능하다.
+--
+-- 반환값은 바꾼 인원 수. 서버만 본다.
+create or replace function shuffle_seats(p_room_id uuid)
+returns int
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+declare
+  v_n int;
+begin
+  perform 1 from rooms where id = p_room_id for update;
+
+  -- ★ (room_id, seat) 유니크를 이 트랜잭션 동안만 미룬다. 순열 도중에는 두 사람이
+  --   잠깐 같은 자리를 갖는 순간이 반드시 생긴다. 커밋 시점에만 검사하면 된다.
+  --   범위 밖 값으로 피신시키는 방법은 못 쓴다 — players_seat_check 에 걸린다.
+  --   nickname 은 '익명' || seat 이라 자리와 한 몸이다. 둘을 같이 미룬다.
+  set constraints players_room_seat_key, players_room_nickname_key deferred;
+
+  with shuffled as (
+    select
+      p.id,
+      row_number() over (order by random()) as new_seat
+    from players p
+    where p.room_id = p_room_id
+  )
+  update players p
+     set seat     = s.new_seat,
+         nickname = '익명' || s.new_seat,
+         mask_id  = 'mask-' || lpad(s.new_seat::text, 2, '0')
+    from shuffled s
+   where p.id = s.id;
+
+  get diagnostics v_n = row_count;
+
+  -- 명단 신호(roster_seq)는 **직접 올리지 않는다.** players 트리거가 행마다 이미 올린다
+  -- (schema.sql). 여기서 또 올리면 한 번 섞을 때 인원 수 + 1 만큼 뛴다 — 값이 틀린 건
+  -- 아니지만 "무엇이 몇 번 바뀌었나"를 읽을 수 없게 된다. 클라이언트는 값이 변했는지만
+  -- 보므로(§17.3) 트리거 하나로 충분하다.
+
+  return v_n;
+end;
+$$;
+
+------------------------------------------------------------------------------
 -- 권한 — I9
 ------------------------------------------------------------------------------
 -- Supabase는 새 함수에 anon execute를 자동으로 깔아준다. security definer라
@@ -186,7 +251,9 @@ revoke all on function pick_free_seat(uuid)       from public, anon, authenticat
 revoke all on function create_room(text, int)     from public, anon, authenticated;
 revoke all on function join_room(text)            from public, anon, authenticated;
 revoke all on function fill_with_bots(uuid)       from public, anon, authenticated;
+revoke all on function shuffle_seats(uuid)        from public, anon, authenticated;
 
 grant execute on function create_room(text, int)  to service_role;
 grant execute on function join_room(text)         to service_role;
 grant execute on function fill_with_bots(uuid)    to service_role;
+grant execute on function shuffle_seats(uuid)     to service_role;

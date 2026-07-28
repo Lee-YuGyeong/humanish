@@ -43,6 +43,11 @@ interface Me {
    * 배정 전(lobby)에는 null. 스파이가 자기가 스파이인 줄 알아야 게임이 성립한다 (SPEC §0).
    */
   role: Role | null;
+  /**
+   * 그 방의 봇 총 수. 0일 수 있다 — 사람이 정원을 다 채운 방이다 (SPEC §15-3-결정).
+   * ★ **몇인지**만 온다. 어느 자리인지는 끝까지 오지 않는다 (I1).
+   */
+  bot_count: number;
 }
 
 interface AnswerRow {
@@ -389,6 +394,13 @@ export function RoomView({ code }: { code: string }) {
           <LobbyHero code={room.code} capacity={room.capacity} seated={players.length} />
         )}
 
+        {/*
+          이 방의 기계 수. SPEC §15-3에서 "몇인지는 공개하고 어느 자리인지는 숨긴다"로
+          정했다. lobby 에는 아직 봇이 없어서 띄우지 않는다 — 0이 뜨면 거짓말이 된다.
+          시작 순간 전원의 자리가 다시 섞이므로(§15-3-결정) 이 수는 제약이지 답이 아니다.
+        */}
+        {room.phase !== 'lobby' && me != null && <MachineCount n={me.bot_count} />}
+
         <PlayerGrid players={players} capacity={room.capacity} meId={me?.player?.id} />
 
         {/* 내가 스파이라는 건 나만 본다. 남의 역할은 reveal까지 아무 데도 오지 않는다 (I1) */}
@@ -575,10 +587,20 @@ function Panel({
               그림으로 말해버린다. SPEC §0은 빈자리를 봇이 채운다는 사실 자체를
               공개하지 않는다고 못박았으므로 중립적인 InfoIcon을 쓴다.
             */}
+            {/*
+              §15-3 이전에는 "몇 자리인지는 공개되지 않는다"였다. 이제 수는 공개한다.
+              숨기는 것은 **어느 자리인가** 하나뿐이고, 그건 시작 때 전원을 다시
+              섞어서 지킨다. 문구가 실제 동작과 어긋나면 그게 제일 나쁘다.
+            */}
             <RuleRow
               icon={<InfoIcon className="h-3.5 w-3.5" />}
               label="빈자리"
-              value="시작할 때 채워진다. 몇 자리인지는 공개되지 않는다"
+              value="시작할 때 기계가 채운다. 몇 대인지는 시작하면 알려준다"
+            />
+            <RuleRow
+              icon={<ChipIcon className="h-3.5 w-3.5" />}
+              label="숨는 것"
+              value="어느 자리가 기계인지. 시작할 때 모두의 자리가 다시 섞인다"
             />
           </ul>
         </Box>
@@ -865,6 +887,25 @@ function ChatPanel({
         </button>
       </form>
     </Box>
+  );
+}
+
+/**
+ * 이 방의 기계 수 (SPEC §15-3-결정).
+ *
+ * ★ 0을 특별 취급한다. "0대"는 **사람만 있는 방**이라는 뜻이고, 그 가능성이 살아
+ *   있어야 긴장이 유지된다. 숫자만 띄우고 넘어가면 0이 오류처럼 보인다.
+ */
+function MachineCount({ n }: { n: number }) {
+  return (
+    <div className="case flex items-center gap-4 px-5 py-3">
+      <ChipIcon className="h-4 w-4 shrink-0 text-bounce" />
+      <p className="stencil text-[9px] text-ash">이 방의 기계</p>
+      <p className="readout text-xl text-bounce">{n}</p>
+      <p className="ml-auto text-[11px] text-grime">
+        {n === 0 ? '전부 사람이다' : '어느 자리인지는 끝까지 알려주지 않는다'}
+      </p>
+    </div>
   );
 }
 

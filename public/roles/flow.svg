@@ -1,19 +1,52 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="800" height="800" viewBox="0 0 800 800">
+  <!--
+    배역 카드 자리표시자. 창고 팔레트만 쓴다 (app/globals.css).
+
+    ★ 인원 수를 적지 않는다. 옛 버전에는 "AI 1명 / 스파이 3명 / 인간 4명"이 찍혀 있었는데
+      셋 다 틀렸고(스파이는 언제나 1명), 무엇보다 **봇이 몇인지는 공개되지 않는다** (I1).
+      정원도 방마다 3~8로 다르다 (SPEC §17.6). 인트로 본문이 지키는 규칙을 그림이
+      깨고 있었다. 실제 아트로 교체할 때도 숫자를 적지 않는다.
+  -->
   <defs>
-    <linearGradient id="g" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0%" stop-color="#111827"/>
-      <stop offset="100%" stop-color="#374151"/>
+    <linearGradient id="plate" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#16120e"/>
+      <stop offset="100%" stop-color="#0b0907"/>
     </linearGradient>
-    <pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse">
-      <path d="M40 0H0V40" fill="none" stroke="#e5e7eb" stroke-opacity="0.10" stroke-width="1"/>
+    <!-- 골강판 세로 골 -->
+    <pattern id="rib" width="26" height="26" patternUnits="userSpaceOnUse">
+      <rect width="26" height="26" fill="none"/>
+      <rect x="0" y="0" width="1" height="26" fill="#9c8b71" fill-opacity="0.05"/>
+      <rect x="12" y="0" width="2" height="26" fill="#000000" fill-opacity="0.25"/>
     </pattern>
+    <!-- 위에서 떨어지는 조명 -->
+    <radialGradient id="spot" cx="0.5" cy="-0.08" r="0.85">
+      <stop offset="0%" stop-color="#9c8b71" stop-opacity="0.20"/>
+      <stop offset="100%" stop-color="#9c8b71" stop-opacity="0"/>
+    </radialGradient>
   </defs>
-  <rect width="800" height="800" fill="url(#g)"/>
-  <rect width="800" height="800" fill="url(#grid)"/>
-  <circle cx="400" cy="360" r="180" fill="none" stroke="#e5e7eb" stroke-opacity="0.35" stroke-width="2"/>
-  <circle cx="400" cy="360" r="240" fill="none" stroke="#e5e7eb" stroke-opacity="0.15" stroke-width="2"/>
-  <text x="400" y="410" text-anchor="middle" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="150" font-weight="700" fill="#e5e7eb" fill-opacity="0.9">→</text>
-  <text x="400" y="620" text-anchor="middle" font-family="system-ui, -apple-system, 'Apple SD Gothic Neo', sans-serif" font-size="56" font-weight="700" fill="#ffffff">한 판의 흐름</text>
-  
-  <text x="400" y="748" text-anchor="middle" font-family="ui-monospace, monospace" font-size="20" fill="#ffffff" fill-opacity="0.35">PLACEHOLDER — 이미지 교체</text>
+
+  <rect width="800" height="800" fill="url(#plate)"/>
+  <rect width="800" height="800" fill="url(#rib)"/>
+  <rect width="800" height="800" fill="url(#spot)"/>
+
+  <!-- 케이스 모서리 쇠 + 리벳 -->
+  <rect x="26" y="26" width="748" height="748" fill="none" stroke="#d6cfc2" stroke-opacity="0.10" stroke-width="2"/>
+  <g fill="#d6cfc2" fill-opacity="0.16">
+    <circle cx="52" cy="52" r="6"/><circle cx="748" cy="52" r="6"/>
+    <circle cx="52" cy="748" r="6"/><circle cx="748" cy="748" r="6"/>
+  </g>
+
+  <!-- 스텐실 글리프 -->
+  <text x="400" y="430" text-anchor="middle"
+        font-family="'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, monospace"
+        font-size="230" font-weight="600" fill="#9c8b71" fill-opacity="0.92">→</text>
+
+  <!-- 아래턱: 라틴 라벨 -->
+  <rect x="26" y="620" width="748" height="2" fill="#d6cfc2" fill-opacity="0.08"/>
+  <text x="400" y="690" text-anchor="middle"
+        font-family="'IBM Plex Mono', ui-monospace, monospace"
+        font-size="34" font-weight="600" letter-spacing="10" fill="#d6cfc2" fill-opacity="0.72">SEQUENCE</text>
+  <text x="400" y="734" text-anchor="middle"
+        font-family="'IBM Plex Mono', ui-monospace, monospace"
+        font-size="17" letter-spacing="5" fill="#4b453e">PLACEHOLDER</text>
 </svg>

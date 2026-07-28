@@ -79,6 +79,7 @@ schema_checks() {
     "create_room(text,int)" \
     "join_room(text)" \
     "fill_with_bots(uuid)" \
+    "shuffle_seats(uuid)" \
     "send_message(uuid,uuid,text,int)" \
     "room_capacity(uuid)" \
     "default_room_capacity()" \
@@ -115,6 +116,7 @@ schema_checks() {
     "create_room(text,int)" \
     "join_room(text)" \
     "fill_with_bots(uuid)" \
+    "shuffle_seats(uuid)" \
     "server_now()" \
     "default_room_capacity()" \
     "room_capacity(uuid)" \

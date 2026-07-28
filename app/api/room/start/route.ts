@@ -5,16 +5,18 @@
  *
  * 방장만 부를 수 있다. 순서가 중요하다.
  *   1. 빈 자리를 봇으로 채운다 (SPEC §17.4)
- *   2. 역할을 배정해 player_roles에 넣는다 — assignRoles는 TS라 DB가 못 부른다 (SPEC §8)
- *   3. advance_phase로 lobby → question
+ *   2. 전원의 자리·닉네임·가면을 다시 섞는다 (SPEC §15-3-결정)
+ *   3. 역할을 배정해 player_roles에 넣는다 — assignRoles는 TS라 DB가 못 부른다 (SPEC §8)
+ *   4. advance_phase로 lobby → question
  *
- * 3번은 player_roles가 없으면 거절한다. 그래서 이 라우트를 거치지 않고는 시작할 수 없다.
+ * 4번은 player_roles가 없으면 거절한다. 그래서 이 라우트를 거치지 않고는 시작할 수 없다.
  */
 
 import { assignRoles } from '@/lib/game/rules';
+import { fallbackAssignRoles } from '@/lib/server/fallback-rules';
 import type { Role } from '@/lib/game/types';
 import { advancePhase } from '@/lib/server/phase';
-import { fillWithBots } from '@/lib/server/room';
+import { fillWithBots, shuffleSeats } from '@/lib/server/room';
 import { getServiceClient } from '@/lib/server/supabase';
 import { ApiError, apiError, readJson, requirePlayer } from '@/lib/server/auth';
 
@@ -23,21 +25,10 @@ interface Body {
 }
 
 /**
- * TODO(B): lib/game/rules.ts의 assignRoles가 구현되면 이 함수와 아래 catch를 통째로 지운다.
- *
- * 규칙은 SPEC §8 그대로다. B를 기다리지 않고 게임을 돌리려고 임시로 둔다.
- * 여기 두는 이유: lib/game/은 B 소유라 A가 채우지 않는다 (I7).
+ * ★ 폴백은 lib/server/fallback-rules.ts 에 있다. 라우트 파일은 GET·POST 말고는
+ *   export할 수 없어서(Next 계약) 여기 두고 검사할 수가 없다.
+ *   B가 rules.ts를 구현하면 그 파일과 아래 catch를 같이 지운다.
  */
-export function fallbackAssignRoles(isBotBySeat: boolean[], seed: number): Role[] {
-  const humanIndexes = isBotBySeat.flatMap((isBot, i) => (isBot ? [] : [i]));
-  const spyIndex = humanIndexes.length >= 2 ? humanIndexes[seed % humanIndexes.length] : -1;
-
-  return isBotBySeat.map((isBot, i) => {
-    if (isBot) return 'ai';
-    return i === spyIndex ? 'spy' : 'citizen';
-  });
-}
-
 function resolveRoles(isBotBySeat: boolean[], seed: number): Role[] {
   try {
     return assignRoles(isBotBySeat, seed);
@@ -65,10 +56,20 @@ export async function POST(req: Request): Promise<Response> {
     if (room.host_id !== me.id) throw new ApiError(403, '방장만 시작할 수 있다');
     if (room.phase !== 'lobby') throw new ApiError(409, '이미 시작된 방이다');
 
-    // 1. 빈 자리를 봇으로. 몇 명 채웠는지는 응답에 싣지 않는다 (I1).
+    // 1. 빈 자리를 봇으로.
     await fillWithBots(roomId);
 
-    // 2. 역할 배정. seat 순서로 줄 세워 배열의 자리와 플레이어를 맞춘다.
+    // 2. 전원의 자리·닉네임·가면을 다시 섞는다 (SPEC §15-3-결정).
+    //
+    //    ★ 반드시 fillWithBots **뒤**, 아래 참가자 조회 **앞**이어야 한다.
+    //      뒤에 두면 역할이 옛 seat 기준으로 배정돼 사람과 역할이 어긋나고,
+    //      앞에 두면 봇이 아직 없어서 섞을 대상이 사람뿐이라 아무 효과가 없다.
+    //
+    //    이게 없으면 로비를 지켜본 사람이 "누가 언제 들어왔는지"를 그대로 들고
+    //    게임에 들어간다. 남은 자리가 곧 봇이라 봇 수 공개가 제약이 아니라 답이 된다.
+    await shuffleSeats(roomId);
+
+    // 3. 역할 배정. seat 순서로 줄 세워 배열의 자리와 플레이어를 맞춘다.
     const { data: players, error: playersErr } = await db
       .from('players')
       .select('id, seat, is_bot')
@@ -91,7 +92,7 @@ export async function POST(req: Request): Promise<Response> {
     );
     if (rolesErr) throw new ApiError(500, `역할 저장 실패: ${rolesErr.message}`);
 
-    // 3. lobby → question. 여기서 질문과 봇 답변이 만들어진다 (SPEC §5.3)
+    // 4. lobby → question. 여기서 질문과 봇 답변이 만들어진다 (SPEC §5.3)
     const advanced = await advancePhase(roomId, room.phase_seq, me.id);
     if (!advanced) throw new ApiError(409, '다른 사람이 먼저 시작했다');
 

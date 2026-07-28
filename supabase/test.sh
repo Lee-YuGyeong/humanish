@@ -165,6 +165,36 @@ check "봇 투표 3건 생성"              "3" "$(q "select count(*) from votes
 check "replay에서는 더 안 간다"        "f" "$(q "select advance_phase('$R',(select phase_seq from rooms where id='$R'),'$P1');" >/dev/null; q "select advance_phase('$R',(select phase_seq from rooms where id='$R'),'$P1');")"
 
 echo ""
+echo "── 시작 때 자리를 다시 섞는다 (SPEC §15-3-결정) ──"
+# 대기실에서 본 정체가 게임으로 이어지지 않아야 한다. 자리·닉네임·가면이 한 순열로 움직인다.
+SHUF_R=44444444-4444-4444-4444-444444444444
+psql -q -c "
+insert into rooms (id, code, capacity) values ('$SHUF_R','SHUF',8);
+insert into players (room_id, nickname, mask_id, seat, is_bot)
+select '$SHUF_R', '익명'||s, 'mask-'||lpad(s::text,2,'0'), s, s > 3
+  from generate_series(1,8) s;"
+BEFORE_SET="$(q "select string_agg(id::text, ',' order by id) from players where room_id='$SHUF_R';")"
+BEFORE_MAP="$(q "select string_agg(id::text||':'||seat, ',' order by id) from players where room_id='$SHUF_R';")"
+BEFORE_RS="$(q "select roster_seq from rooms where id='$SHUF_R';")"
+
+check "8명을 다시 배정한다"          "8" "$(q "select shuffle_seats('$SHUF_R');")"
+check "사람은 그대로 8명"            "8" "$(q "select count(*) from players where room_id='$SHUF_R';")"
+check "자리는 1~8이 정확히 한 번씩"   "t" \
+  "$(q "select array_agg(seat order by seat) = array(select generate_series(1,8)) from players where room_id='$SHUF_R';")"
+check "닉네임이 새 자리를 따라간다"    "t" \
+  "$(q "select coalesce(bool_and(nickname = '익명'||seat and mask_id = 'mask-'||lpad(seat::text,2,'0')),false) from players where room_id='$SHUF_R';")"
+check "플레이어 자체는 안 바뀐다"      "$BEFORE_SET" \
+  "$(q "select string_agg(id::text, ',' order by id) from players where room_id='$SHUF_R';")"
+# ★ 핵심: 자리 배치가 실제로 달라졌나. 8!이라 우연히 같을 확률은 1/40320이다.
+check "배치가 바뀌었다"              "changed" \
+  "$([ "$BEFORE_MAP" = "$(q "select string_agg(id::text||':'||seat, ',' order by id) from players where room_id='$SHUF_R';")" ] && echo same || echo changed)"
+# 얼마나 오르는지는 트리거 구현 나름이다(행마다 1). 클라이언트는 "변했나"만 본다.
+check "명단 신호가 올라간다 (§17.3)"  "up" \
+  "$([ "$(q "select roster_seq from rooms where id='$SHUF_R';")" -gt "$BEFORE_RS" ] && echo up || echo same)"
+# 봇 수는 섞어도 보존된다 — 공개하는 값이므로 흔들리면 안 된다 (§15-3-결정)
+check "봇 수는 그대로 5"             "5" "$(q "select count(*) from players where room_id='$SHUF_R' and is_bot;")"
+
+echo ""
 echo "── §17.3 명단 신호 ──"
 BEFORE="$(q "select roster_seq from rooms where id='$R';")"
 psql -q -c "update players set connected=false where id='$P2';"
@@ -247,7 +277,11 @@ echo "── 반대로 이건 보여야 정상 ──"
 psql -q -c "update answers set visible_at = now() - interval '1s'
              where room_id='$R' and player_id='$P1';"
 check "public_players (A방 5명)"       "5" "$(psql -tAq -c "set role anon; select count(*) from public_players where room_id='$R';")"
-check "rooms 조회 (코드로 방 찾기)"     "2" "$(psql -tAq -c "set role anon; select count(*) from rooms;")"
+# ★ 고정 숫자로 세지 않는다. 뒤에서 방을 하나라도 더 만들면 무관한 검사가 깨진다
+#   (실제로 §15-3 테스트를 넣다가 걸렸다). 여기서 볼 것은 "anon이 rooms를 읽는가"이지
+#   방이 몇 개인가가 아니다. service_role이 보는 수와 같으면 통과다.
+check "rooms 조회 (코드로 방 찾기)"     "$(q "select count(*) from rooms;")" \
+  "$(psql -tAq -c "set role anon; select count(*) from rooms;")"
 check "공개된 답변은 보인다"            "t" "$(psql -tAq -c "set role anon; select count(*) > 0 from answers where room_id='$R';")"
 check "미공개 답변은 여전히 안 보인다"   "t" "$(psql -tAq -c "set role anon; select count(*) = 0 from answers where visible_at > now();")"
 psql -q -c "update rooms set phase='reveal' where id='$R';"

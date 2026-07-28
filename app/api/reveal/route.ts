@@ -18,48 +18,17 @@
 
 import { calcScores } from '@/lib/game/rules';
 import type { Role } from '@/lib/game/types';
+import { SCORE_RULE, fallbackCalcScores } from '@/lib/server/fallback-rules';
 import { getServiceClient } from '@/lib/server/supabase';
 import { ApiError, apiError, requirePlayer } from '@/lib/server/auth';
 
 export const dynamic = 'force-dynamic';
 
 /**
- * TODO(B): lib/game/rules.ts의 calcScores가 구현되면 이 함수와 아래 catch를 지운다.
- *
- * ★ 이 규칙은 SPEC에 없다. 시그니처만 있고 채점 방식이 정해진 적이 없어서
- *   게임이 끝나는 느낌이 나도록 임시로 정한 것이다. 바꿀 거면 여기와
- *   SCORE_RULE 문구를 같이 고친다 — 화면에 그대로 뜬다.
- *
- *   시민  AI에게 투표했으면 +2   (AI를 찾는 게 목표)
- *   스파이 자신이 받은 표 × 2     (AI로 오해받는 게 목표)
- *   AI    표를 하나도 안 받으면 +3 (안 들키는 게 목표)
+ * ★ 폴백과 채점 문구(SCORE_RULE)는 lib/server/fallback-rules.ts 에 있다.
+ *   라우트 파일은 GET·POST 말고는 export할 수 없다 (Next 계약).
+ *   B가 rules.ts를 구현하면 그 파일과 아래 catch를 같이 지운다.
  */
-export const SCORE_RULE = [
-  '시민 — AI에게 투표했으면 +2',
-  '스파이 — 자신이 받은 표 하나당 +2',
-  'AI — 표를 하나도 안 받으면 +3',
-];
-
-export function fallbackCalcScores(
-  votes: { voterId: string; targetId: string }[],
-  roles: Record<string, Role>,
-): Record<string, number> {
-  const score: Record<string, number> = {};
-  for (const id of Object.keys(roles)) score[id] = 0;
-
-  const received: Record<string, number> = {};
-  for (const v of votes) received[v.targetId] = (received[v.targetId] ?? 0) + 1;
-
-  for (const v of votes) {
-    if (roles[v.voterId] === 'citizen' && roles[v.targetId] === 'ai') score[v.voterId] += 2;
-  }
-  for (const [id, role] of Object.entries(roles)) {
-    if (role === 'spy') score[id] += (received[id] ?? 0) * 2;
-    if (role === 'ai' && (received[id] ?? 0) === 0) score[id] += 3;
-  }
-  return score;
-}
-
 function resolveScores(
   votes: { voterId: string; targetId: string }[],
   roles: Record<string, Role>,

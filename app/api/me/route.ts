@@ -1,13 +1,20 @@
 /**
  * 나는 누구인가. 소유: A (SPEC §17.4)
  *
- * GET /api/me?room_id=...  →  { player, is_host, answered, voted, role }
+ * GET /api/me?room_id=...  →  { player, is_host, answered, voted, role, bot_count }
  *
  * 토큰 쿠키는 httpOnly라 브라우저 JS가 읽을 수 없다. 그래서 화면이 "내가 이 방의
  * 누구인지"를 알려면 서버에 물어봐야 한다. 새로고침해도 이 경로로 복구된다.
  *
- * ★ is_bot은 내려보내지 않는다 (I1). 내 것이라도 마찬가지다 — 응답을 보면
- *   자기가 봇인지 알 수 있어야 할 이유가 없고, 실수로 새면 되돌릴 수 없다.
+ * ★ is_bot은 **행 단위로는** 내려보내지 않는다 (I1). 내 것이라도 마찬가지다 —
+ *   응답을 보면 자기가 봇인지 알 수 있어야 할 이유가 없고, 실수로 새면 되돌릴 수 없다.
+ *
+ * ★ 대신 bot_count(그 방의 봇 **총 수**)는 내려보낸다. SPEC §15-3에서 "몇인지는
+ *   공개하고 어느 자리인지는 숨긴다"로 정했다. 이 값은 자리와 묶이지 않는 집계라
+ *   누구를 특정하지 못한다. 0일 수 있다 — 사람이 정원을 다 채운 방이다.
+ *
+ *   ※ 여기에 자리별 정보를 덧붙이지 않는다. seat 배열이나 "봇이 앉은 seat"을
+ *     더하는 순간 §15-3이 허용한 범위를 넘어 I1 위반이 된다.
  *
  * ★ role은 **쿠키로 되찾은 본인 것 하나만** 내려보낸다 (SPEC §0, §8).
  *   이게 없으면 스파이가 자기가 스파이인 줄 모른 채 한 판이 끝난다 —
@@ -20,6 +27,7 @@
  */
 
 import type { Role } from '@/lib/game/types';
+import { countBots } from '@/lib/server/room';
 import { getServiceClient } from '@/lib/server/supabase';
 import { ApiError, apiError, currentPlayer } from '@/lib/server/auth';
 
@@ -38,6 +46,7 @@ export async function GET(req: Request): Promise<Response> {
         answered: false,
         voted: false,
         role: null,
+        bot_count: await countBots(roomId),
       });
     }
 
@@ -95,6 +104,8 @@ export async function GET(req: Request): Promise<Response> {
       answered,
       voted: (voteCount ?? 0) > 0,
       role: (mine?.role as Role | undefined) ?? null,
+      // 그 방의 봇 총 수. 자리와 묶이지 않은 집계다 (SPEC §15-3-결정)
+      bot_count: await countBots(roomId),
     });
   } catch (e) {
     return apiError(e);
