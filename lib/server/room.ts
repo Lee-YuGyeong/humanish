@@ -10,8 +10,18 @@ import { getServiceClient } from '@/lib/server/supabase';
 import { ApiError } from '@/lib/server/auth';
 import type { PublicPlayer, Room } from '@/lib/game/types';
 
-/** 방 정원. supabase/functions/room.sql의 room_capacity(), players.seat 제약과 같아야 한다. */
-export const ROOM_CAPACITY = 5;
+/**
+ * 방 정원의 범위. supabase/functions/room.sql의 default_room_capacity()·room_capacity(),
+ * rooms.capacity check, players.seat check와 같아야 한다.
+ *
+ * 하한이 3인 이유: 사람이 2명 이상일 때만 스파이가 생기고(SPEC §8), 그보다 작으면
+ * 투표가 의미를 잃는다. 정원 2인 방은 봇 1 + 사람 1이라 고를 것이 하나뿐이다.
+ * 상한이 8인 이유: 좌석 화면이 8칸 기준으로 그려져 있다.
+ */
+export const MIN_ROOM_CAPACITY = 3;
+export const MAX_ROOM_CAPACITY = 8;
+/** 아무것도 고르지 않았을 때의 정원. SQL의 default_room_capacity()와 같은 값이다. */
+export const DEFAULT_ROOM_CAPACITY = 5;
 
 /** 4자 대문자 코드. I·O·0·1처럼 헷갈리는 글자는 뺀다. */
 const CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ';
@@ -45,10 +55,16 @@ export interface JoinResult {
 /** 코드 unique 위반 */
 const UNIQUE_VIOLATION = '23505';
 
+/**
+ * Room 하나를 통째로 읽는 컬럼 목록. 화면이 Room 타입으로 받는 곳은 전부 이걸 쓴다.
+ * 여기서 capacity를 빠뜨리면 room.capacity가 undefined가 되어 좌석 그리드가 0칸이 된다.
+ */
+const ROOM_COLUMNS = 'id, code, capacity, phase, phase_seq, phase_ends_at, round, host_id, roster_seq';
+
 async function fetchRoom(roomId: string): Promise<Room> {
   const { data, error } = await getServiceClient()
     .from('rooms')
-    .select('id, code, phase, phase_seq, phase_ends_at, round, host_id, roster_seq')
+    .select(ROOM_COLUMNS)
     .eq('id', roomId)
     .single();
 
@@ -74,18 +90,31 @@ function toResult(row: SeatRow, room: Room): JoinResult {
 /**
  * 방을 만들고 만든 사람을 방장으로 앉힌다.
  * 코드가 겹치면 다른 코드로 CODE_RETRY_LIMIT회까지 다시 시도한다 (SPEC §16.4, §14.4).
+ *
+ * @param capacity 3~8. 생략하면 SQL 쪽 기본값(DEFAULT_ROOM_CAPACITY)이 들어간다.
  */
-export async function createRoom(): Promise<JoinResult> {
+export async function createRoom(capacity?: number): Promise<JoinResult> {
   const db = getServiceClient();
+
+  // 범위는 rooms.capacity check로도 막히지만 그건 23514라 500으로 보인다.
+  // 사용자가 고른 값이 틀린 것이니 400으로 돌려준다.
+  if (capacity !== undefined) {
+    if (!Number.isInteger(capacity) || capacity < MIN_ROOM_CAPACITY || capacity > MAX_ROOM_CAPACITY) {
+      throw new ApiError(400, `정원은 ${MIN_ROOM_CAPACITY}~${MAX_ROOM_CAPACITY} 사이의 정수다`);
+    }
+  }
 
   for (let attempt = 1; attempt <= CODE_RETRY_LIMIT; attempt += 1) {
     const code = generateRoomCode();
-    const { data, error } = await db.rpc('create_room', { p_code: code });
+    // p_capacity가 null이면 SQL이 default_room_capacity()를 쓴다.
+    const { data, error } = await db.rpc('create_room', { p_code: code, p_capacity: capacity ?? null });
 
     if (!error) {
       const row = (data as SeatRow[])[0];
       return toResult(row, await fetchRoom(row.room_id));
     }
+    // SQL이 raise한 것은 사용자에게 그대로 보여줘도 되는 문장이다 (room.sql 참고)
+    if (error.code === 'P0001') throw new ApiError(400, error.message);
     // 코드가 겹쳤을 때만 다시 돈다. 다른 에러는 그대로 올린다.
     if (error.code !== UNIQUE_VIOLATION) {
       throw new ApiError(500, `방 생성 실패: ${error.message}`);
@@ -158,11 +187,79 @@ export async function findRoomByCode(code: string): Promise<Room> {
   const normalized = code.trim().toUpperCase();
   const { data, error } = await getServiceClient()
     .from('rooms')
-    .select('id, code, phase, phase_seq, phase_ends_at, round, host_id, roster_seq')
+    .select(ROOM_COLUMNS)
     .eq('code', normalized)
     .maybeSingle();
 
   if (error) throw new ApiError(500, `방 조회 실패: ${error.message}`);
   if (!data) throw new ApiError(404, `그런 방이 없다: ${normalized}`);
   return data as Room;
+}
+
+/** 대기 중인 방 목록의 한 줄. room_id는 넣지 않는다 — 입장은 code로 한다. */
+export interface OpenRoom {
+  code: string;
+  capacity: number;
+  /** 지금 앉아 있는 사람 수. lobby라 전부 사람이다 (아래 주석 참고). */
+  players: number;
+  created_at: string;
+}
+
+/** 목록에 한 번에 싣는 방 수. 더 오래된 방은 코드를 직접 입력해 들어간다. */
+const OPEN_ROOM_LIMIT = 50;
+
+/**
+ * 아직 시작하지 않은(lobby) 방 목록. 화면의 "방 골라 들어가기"가 쓴다.
+ *
+ * ★ 왜 서버를 거치나: players 테이블은 anon에게 revoke돼 있고(I1), public_players로
+ *   방 여러 개를 한꺼번에 세는 건 방 필터 없는 쿼리라 I10 위반이다. 그래서 service role
+ *   서버가 세어서 숫자만 내려보낸다.
+ *
+ * ★ 왜 lobby만: fill_with_bots는 시작 버튼에서 돈다(SPEC §17.4). lobby 단계의 참가자는
+ *   전부 사람이라 인원수로 봇을 유추할 수 없다. 시작한 방까지 목록에 올리면, 그 방의
+ *   사람 수를 알던 사람이 정원에서 빼서 봇 수를 계산할 수 있다 (I1).
+ *   시작한 방은 join_room이 어차피 거절하므로 목록에 있을 이유도 없다.
+ */
+export async function listOpenRooms(): Promise<OpenRoom[]> {
+  const db = getServiceClient();
+
+  const { data: rooms, error } = await db
+    .from('rooms')
+    .select('id, code, capacity, created_at')
+    .eq('phase', 'lobby')
+    .order('created_at', { ascending: false })
+    .limit(OPEN_ROOM_LIMIT);
+
+  if (error) throw new ApiError(500, `방 목록 조회 실패: ${error.message}`);
+  if (!rooms || rooms.length === 0) return [];
+
+  const ids = rooms.map((r) => r.id as string);
+  // 방마다 한 번씩 세면 왕복이 50번이다. 목록에 올린 방으로 범위를 좁혀 한 번에 읽고
+  // 메모리에서 센다. is_bot은 세는 조건으로만 쓰고 값은 밖으로 내보내지 않는다 (I1).
+  //
+  // ★ 사람만 센다. "lobby면 아직 봇이 없다"는 것만으로는 부족하다 —
+  //   /api/room/start는 fillWithBots를 먼저 커밋하고 몇 번의 왕복 뒤에
+  //   advance_phase를 부른다. 그 사이 방은 아직 lobby인데 봇은 이미 앉아 있어서,
+  //   3초 폴링이 하필 그 틈에 걸리면 카드가 '2 / 5'에서 '5 / 5'로 바뀌는 게 보이고
+  //   그 차이가 곧 봇 수다. 조건 하나로 그 창을 없앤다.
+  const { data: seats, error: seatErr } = await db
+    .from('players')
+    .select('room_id')
+    .eq('is_bot', false)
+    .in('room_id', ids);
+
+  if (seatErr) throw new ApiError(500, `참가자 수 조회 실패: ${seatErr.message}`);
+
+  const counts = new Map<string, number>();
+  for (const s of seats ?? []) {
+    const roomId = s.room_id as string;
+    counts.set(roomId, (counts.get(roomId) ?? 0) + 1);
+  }
+
+  return rooms.map((r) => ({
+    code: r.code as string,
+    capacity: r.capacity as number,
+    players: counts.get(r.id as string) ?? 0,
+    created_at: r.created_at as string,
+  }));
 }

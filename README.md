@@ -21,7 +21,13 @@ psql "$SUPABASE_DB_URL_DIRECT" -f supabase/schema.sql              # 테이블 �
 psql "$SUPABASE_DB_URL_DIRECT" -f supabase/policies.sql            # RLS
 psql "$SUPABASE_DB_URL_DIRECT" -f supabase/seed.sql                # 질문 · 봇 문구 풀
 psql "$SUPABASE_DB_URL_DIRECT" -f supabase/functions/advance_phase.sql  # 상태머신 · 워치독
+psql "$SUPABASE_DB_URL_DIRECT" -f supabase/functions/room.sql      # 방 생성 · 입장 · 봇 채우기
+psql "$SUPABASE_DB_URL_DIRECT" -f supabase/functions/chat.sql      # 자유 채팅 · 봇 반응
 ```
+
+**`functions/` 아래를 하나라도 빠뜨리면 화면은 멀쩡한데 그 기능만 500으로 죽는다.**
+`room.sql`이 없으면 방 만들기 · 입장이, `chat.sql`이 없으면 자유 채팅이 죽는다.
+`./supabase/apply.sh`가 이 목록을 그대로 돌리고 함수 존재까지 점검하므로 그쪽이 안전하다.
 
 전부 여러 번 돌려도 된다. `advance_phase.sql`은 pg_cron 워치독까지 등록한다 —
 "pg_cron 설정 실패" 경고가 뜨면 대시보드에서 확장을 켜고 다시 돌린다. **이게 없으면 방이 멈춘다** (SPEC §12.1).

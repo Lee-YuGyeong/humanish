@@ -93,12 +93,17 @@ echo "  ✓ 접속됨 (Postgres $(psql "$DB_URL" -tAqc 'show server_version'))"
 if [ "$MODE" != check ]; then
   if [ "$MODE" = apply ]; then
     echo ""
-    read -r -p "이 DB에 schema · policies · seed · advance_phase를 적용한다. 계속? [y/N] " ans
+    read -r -p "이 DB에 schema · policies · seed · functions 전부를 적용한다. 계속? [y/N] " ans
     [ "$ans" = y ] || [ "$ans" = Y ] || { echo "취소했다."; exit 1; }
   fi
 
+  # ★ functions/ 아래를 하나라도 빠뜨리면 화면은 멀쩡한데 기능만 죽는다.
+  #   room.sql · chat.sql이 원래 이 목록에 없었고, 그래서 방 만들기 · 입장 · 채팅이
+  #   배포 DB에서만 500으로 죽는 상태였다. test.sh는 여섯 개를 전부 올리므로
+  #   로컬 검증만 초록색이었다. 새 SQL 파일을 만들면 여기에도 반드시 더한다.
   echo ""
-  for f in schema.sql policies.sql seed.sql functions/advance_phase.sql; do
+  for f in schema.sql policies.sql seed.sql \
+           functions/advance_phase.sql functions/room.sql functions/chat.sql; do
     printf '  %-32s' "$f"
     if out="$(psql "$DB_URL" -v ON_ERROR_STOP=1 -q -f "$ROOT/supabase/$f" 2>&1)"; then
       echo "✓"
@@ -117,31 +122,17 @@ check() { if [ "$2" = "$3" ]; then printf '  ✓ %s\n' "$1"; else printf '  ✗ 
 echo ""
 echo "── 점검 ──"
 
-# ★ 뷰가 아예 없으면 "그 컬럼이 없다"도 참이 된다. 먼저 뷰의 존재부터 확인한다.
-#   안 그러면 스키마를 안 올린 DB에서 I1 검사가 통째로 가짜 통과한다.
-check "public_players 뷰가 있다" "1" \
-  "$(q "select count(*) from information_schema.views where table_name='public_players';")"
-check "public_players 컬럼이 정확히 6개다" "id,room_id,nickname,mask_id,seat,connected" \
-  "$(q "select string_agg(column_name, ',' order by ordinal_position) from information_schema.columns where table_name='public_players';")"
-check "rooms가 Realtime publication에 있다 (§6)" "1" \
-  "$(q "select count(*) from pg_publication_tables where pubname='supabase_realtime' and tablename='rooms';")"
-# publication에 갓 추가한 직후에는 Realtime이 몇 분간 이벤트를 안 보낼 수 있다.
-# 구독은 SUBSCRIBED로 뜨는데 이벤트만 안 오므로 코드를 의심하게 된다. 실제로 그랬다.
-# 화면이 안 갱신되면 이 표시를 먼저 떠올릴 것 — 조금 기다렸다 다시 해본다.
-check "질문 풀이 차 있다" "t" "$(q "select count(*) > 0 from question_pool;")"
-check "봇 문구 풀이 차 있다" "t" "$(q "select count(*) > 0 from bot_line_pool;")"
-check "advance_phase가 있다" "1" \
-  "$(q "select count(*) from pg_proc where proname='advance_phase';")"
-check "anon은 advance_phase를 못 부른다 (I9)" "f" \
-  "$(q "select has_function_privilege('anon','advance_phase(uuid,int,uuid)','execute');")"
-check "anon은 players를 못 읽는다 (I1)" "f" \
-  "$(q "select has_table_privilege('anon','players','select');")"
-check "anon은 public_players를 읽는다" "t" \
-  "$(q "select has_table_privilege('anon','public_players','select');")"
-check "anon은 rooms에 쓰지 못한다 (I9)" "f" \
-  "$(q "select has_table_privilege('anon','rooms','update');")"
+# ★ 목록은 supabase/checks.sh 하나다. test.sh도 같은 것을 돌린다.
+#   **여기에 검사를 직접 적지 않는다** — 한쪽에만 있는 검사가 사고를 두 번 냈다.
+#   이유는 그 파일 머리말에 있다.
+# shellcheck source=./checks.sh
+. "$ROOT/supabase/checks.sh"
+schema_checks
 
+echo ""
+echo "── 배포 DB에만 있는 것 ──"
 # ★ 워치독. 이게 없으면 데모 중에 방이 멈춘다 (SPEC §12.1) — 선택이 아니다.
+#   로컬 Postgres에는 pg_cron이 없으므로 이 검사만 checks.sh 밖에 남긴다.
 CRON="$(q "select count(*) from cron.job where jobname='phase-watchdog';")"
 if [ "$CRON" = "1" ]; then
   echo "  ✓ pg_cron 워치독이 등록돼 있다"

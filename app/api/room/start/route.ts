@@ -28,7 +28,7 @@ interface Body {
  * 규칙은 SPEC §8 그대로다. B를 기다리지 않고 게임을 돌리려고 임시로 둔다.
  * 여기 두는 이유: lib/game/은 B 소유라 A가 채우지 않는다 (I7).
  */
-function fallbackAssignRoles(isBotBySeat: boolean[], seed: number): Role[] {
+export function fallbackAssignRoles(isBotBySeat: boolean[], seed: number): Role[] {
   const humanIndexes = isBotBySeat.flatMap((isBot, i) => (isBot ? [] : [i]));
   const spyIndex = humanIndexes.length >= 2 ? humanIndexes[seed % humanIndexes.length] : -1;
 
@@ -97,7 +97,7 @@ export async function POST(req: Request): Promise<Response> {
 
     const { data: after, error: afterErr } = await db
       .from('rooms')
-      .select('id, code, phase, phase_seq, phase_ends_at, round, host_id, roster_seq')
+      .select('id, code, capacity, phase, phase_seq, phase_ends_at, round, host_id, roster_seq')
       .eq('id', roomId)
       .single();
     if (afterErr) throw new ApiError(500, `방 조회 실패: ${afterErr.message}`);

@@ -7,7 +7,7 @@
 #   ./supabase/e2e.sh        # .env.local의 Supabase에 대고 돈다
 #
 # 쿠키 항아리 2개로 브라우저 두 대를 흉내 내서 방 만들기 → 입장 → 시작 →
-# 답변 → 조기 종료 → 페이즈 완주 → anon 침투까지 한 번에 확인한다.
+# 답변 → 조기 종료 → 페이즈 완주 → anon 침투 → /admin 진단(I1)까지 한 번에 확인한다.
 #
 # ★ 실제 Supabase에 방을 만든다. 만든 방은 24시간 뒤 cleanup_stale_rooms가 지운다.
 #
@@ -106,6 +106,40 @@ chk "public_players는 보임" "5" "$(rest "public_players?room_id=eq.$ROOM&sele
 chk "public_players에 is_bot 없음" "yes" "$(rest "public_players?room_id=eq.$ROOM&select=*" | grep -q is_bot && echo no || echo yes)"
 chk "player_roles 막힘" "yes" "$(rest "player_roles?select=*" | grep -q 'message' && echo yes || echo no)"
 chk "bot_line_pool 막힘" "yes" "$(rest "bot_line_pool?select=*" | grep -q 'message' && echo yes || echo no)"
+
+echo ""
+echo "── /admin 진단이 정체를 흘리지 않는다 (I1) ──"
+# ★ 이 라우트는 service role로 읽으므로 RLS가 막아주지 않는다. 무엇을 담느냐가 곧 방어다.
+#
+#   봇 답변과 봇 투표는 **페이즈 진입 순간 한꺼번에** 들어간다 (on_enter_phase, §5.3).
+#   그래서 진행 중인 방의 answers·votes 개수는 그 자체로 "이 방의 봇 수"다.
+#   is_bot을 안 보내는 것만으로는 부족하고 **세어서 보내는 것도 같은 위반**이다.
+#
+#   그래서 "금지 키가 없다"가 아니라 **키 목록을 통째로** 비교한다. 필드를 하나
+#   더할 때마다 이 줄이 깨지고, 그때 "이걸로 봇을 골라낼 수 있나"를 반드시 묻게 된다
+#   (SPEC §7.2 — public_players 뷰에 컬럼을 더할 때와 같은 규율).
+curl -s "$B/api/admin/rooms" -o /tmp/admin_rooms.json
+ADMIN_KEYS=$(python3 -c '
+import json
+ks=set()
+for r in json.load(open("/tmp/admin_rooms.json"))["rooms"]: ks |= set(r)
+print(",".join(sorted(ks)))
+' 2>/dev/null)
+chk "진단 응답의 키가 정확히 이 목록이다" \
+  "capacity,code,created_at,id,phase,phase_ends_at,phase_seq,remaining_ms,roles_assigned,roster_seq,round,seated" \
+  "$ADMIN_KEYS"
+
+# 막기만 하고 정작 쓸모가 없으면 안 된다. 이 방이 제대로 보이는지도 같이 본다.
+ADMIN_ROW=$(python3 -c "
+import json
+r = next((x for x in json.load(open('/tmp/admin_rooms.json'))['rooms'] if x['code'] == '$CODE'), None)
+print('방이 안 보임' if r is None else f\"{r['seated']}/{r['capacity']}|{str(r['roles_assigned']).lower()}\")
+" 2>/dev/null)
+chk "이 방이 좌석·역할과 함께 보인다" "5/5|true" "$ADMIN_ROW"
+
+# §12.5 — 만료 판정의 기준 시계는 DB 하나다. 두 시계 차이를 못 재면 어긋나도 모른다.
+chk "DB·앱 서버 시계 차이를 숫자로 보고한다 (§12.5)" "yes" \
+  "$(python3 -c 'import json; d=json.load(open("/tmp/admin_rooms.json")); print("yes" if isinstance(d.get("drift_ms"),(int,float)) else "no")' 2>/dev/null)"
 
 echo ""
 [ "$FAIL" -eq 0 ] && echo "전부 통과" || echo "실패 있음"

@@ -326,6 +326,22 @@ begin
          phase_ends_at = v_ends_at
    where id = p_room_id;
 
+  -- 4.5 지나간 페이즈의 답변을 공개한다 (SPEC §13-4).
+  --
+  -- ★ 이게 없으면 답변이 게임 내내 한 번도 화면에 뜨지 않는다.
+  --   답변의 visible_at은 제출 당시의 phase_ends_at이다 (app/api/answer/route.ts).
+  --   조기 종료로 넘어가면 그 시각이 아직 미래라서 RLS(visible_at <= now())가
+  --   계속 가리고, 정작 그 시각이 되면 화면은 이미 다음 질문을 보고 있다.
+  --   페이즈가 끝났으면 그 페이즈의 답은 열려야 한다.
+  --
+  -- ★ 반드시 on_enter_phase보다 **먼저** 돈다. 훅은 새 페이즈의 봇 답변을 미래
+  --   visible_at으로 넣는데, 그 뒤에 이걸 돌리면 봇 답이 사람이 답하기도 전에 뜬다.
+  --   먼저 뜨는 답은 그것만으로 봇이다 (I1). 순서를 바꾸지 말 것.
+  update answers
+     set visible_at = now()
+   where room_id = p_room_id
+     and visible_at > now();
+
   -- 5. 진입 훅 (SPEC §5.3). 같은 트랜잭션이라 훅이 실패하면 전환도 통째로 롤백된다.
   perform on_enter_phase(p_room_id, v_next.phase, v_next.round, v_ends_at);
 

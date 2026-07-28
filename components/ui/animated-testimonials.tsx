@@ -104,13 +104,13 @@ export const AnimatedTestimonials = ({
             exit={{ y: -20, opacity: 0 }}
             transition={{ duration: 0.2, ease: "easeInOut" }}
           >
-            <h3 className="text-2xl font-bold text-neutral-900">
+            <h3 className="text-2xl font-bold text-bone">
               {testimonials[active].name}
             </h3>
-            <p className="text-sm text-neutral-500">
+            <p className="text-sm text-lamp/70">
               {testimonials[active].designation}
             </p>
-            <motion.p className="mt-8 text-lg leading-relaxed text-neutral-600">
+            <motion.p className="mt-8 text-lg leading-relaxed text-dust">
               {testimonials[active].quote.split(" ").map((word, index) => (
                 <motion.span
                   key={index}
@@ -134,17 +134,17 @@ export const AnimatedTestimonials = ({
               type="button"
               onClick={handlePrev}
               aria-label="이전 카드"
-              className="group/button flex h-7 w-7 items-center justify-center rounded-full bg-neutral-100 transition-colors hover:bg-neutral-200"
+              className="group/button flex h-7 w-7 items-center justify-center rounded-full border border-bone/15 bg-bone/5 transition-colors hover:border-lamp/40 hover:bg-lamp/10"
             >
-              <Arrow className="h-5 w-5 text-neutral-800 transition-transform duration-300 group-hover/button:rotate-12" />
+              <Arrow className="h-5 w-5 text-dust transition-transform duration-300 group-hover/button:rotate-12" />
             </button>
             <button
               type="button"
               onClick={handleNext}
               aria-label="다음 카드"
-              className="group/button flex h-7 w-7 items-center justify-center rounded-full bg-neutral-100 transition-colors hover:bg-neutral-200"
+              className="group/button flex h-7 w-7 items-center justify-center rounded-full border border-bone/15 bg-bone/5 transition-colors hover:border-lamp/40 hover:bg-lamp/10"
             >
-              <Arrow className="h-5 w-5 rotate-180 text-neutral-800 transition-transform duration-300 group-hover/button:-rotate-12" />
+              <Arrow className="h-5 w-5 rotate-180 text-dust transition-transform duration-300 group-hover/button:-rotate-12" />
             </button>
           </div>
         </div>

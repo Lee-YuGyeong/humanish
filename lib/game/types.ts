@@ -22,6 +22,12 @@ export type AgentAction = 'answer' | 'deflect' | 'accuse' | 'silent';
 export interface Room {
   id: string;
   code: string; // 4자 대문자
+  /**
+   * 방 정원. 방을 만들 때 3~8에서 정하고 이후 바뀌지 않는다 (SPEC §4).
+   * 하한이 3인 이유는 사람이 2명 이상이어야 스파이가 생기기 때문이고(SPEC §8),
+   * 상한이 8인 이유는 좌석 화면이 8칸 기준으로 그려져 있어서다.
+   */
+  capacity: number;
   phase: Phase;
   phase_seq: number; // 전환마다 +1. 중복 전환 방지 키
   phase_ends_at: string | null; // ISO. null이면 무기한(lobby)
@@ -38,9 +44,9 @@ export interface Room {
 export interface Player {
   id: string;
   room_id: string;
-  nickname: string; // '익명1' ~ '익명5'
+  nickname: string; // '익명1' ~ '익명8'. 자리 번호를 그대로 쓴다
   mask_id: string;
-  seat: number; // 1~5. 표시 순서 고정
+  seat: number; // 1 ~ room.capacity(최대 8). 표시 순서 고정
   is_bot: boolean;
   connected: boolean;
 }
