@@ -1,15 +1,52 @@
 import type { Metadata } from "next";
-import { Geist, Geist_Mono } from "next/font/google";
+import { IBM_Plex_Mono, IBM_Plex_Sans_KR } from "next/font/google";
 import "./globals.css";
 
-const geistSans = Geist({
-  variable: "--font-geist-sans",
+/**
+ * ┌─ 왜 IBM Plex 인가 ──────────────────────────────────────────────────────┐
+ * │ 원래 Geist(Next 기본값)를 subsets:["latin"]으로만 불러왔다. 그런데       │
+ * │ **Geist에는 한글 글자가 없다.** 화면의 대부분이 한국어라 그 부분이 전부  │
+ * │ 시스템 폰트로 떨어졌다 — 맥은 Apple SD Gothic Neo, 윈도우는 맑은 고딕.   │
+ * │ 보는 기기마다 다른 서체로 보였고, 여기서 맞춘 자간·굵기가 내 화면에서만 │
+ * │ 맞는 상태였다.                                                          │
+ * │                                                                        │
+ * │ IBM Plex는 산업·기술 문서용으로 설계된 서체다. 창고·장비·계기판이라는   │
+ * │ 이 화면의 성격과 맞고, 한글(Sans KR)과 고정폭(Mono)이 같은 집안이라     │
+ * │ 계기판 숫자와 본문이 따로 놀지 않는다.                                  │
+ * └────────────────────────────────────────────────────────────────────────┘
+ *
+ * next/font/google 은 빌드 때 받아 **자체 호스팅**한다. 런타임에 외부 요청이 없다.
+ */
+/**
+ * ★ preload: false 는 실수가 아니다.
+ *
+ * 한글 폰트는 Google이 유니코드 구간별로 수백 조각으로 쪼개서 준다. 기본값(preload:true)
+ * 이면 그 조각이 전부 <link rel="preload">로 나가는데, 실제로 재보니 **한 페이지에 234개**
+ * 였다. 브라우저 커넥션을 그걸로 다 쓰고 정작 화면에 필요한 것이 뒤로 밀린다.
+ *
+ * 끄면 unicode-range 를 보고 **그 페이지에 실제로 쓰인 글자가 든 조각만** 받아온다.
+ * CJK에서는 이쪽이 정석이다. display:swap 이라 받아오는 동안 폴백으로 먼저 그린다.
+ */
+const plexSans = IBM_Plex_Sans_KR({
+  variable: "--font-plex-sans",
   subsets: ["latin"],
+  // ★ 굵기를 늘리지 않는다. 한글 폰트는 굵기마다 유니코드 구간별 조각이 100개 가까이
+  //   딸려오고, 그 @font-face 선언이 그대로 CSS 용량이 된다. 400/600/700로 화면의
+  //   font-semibold·font-bold·font-black을 전부 덮는다 (900은 700으로 떨어진다).
+  //   500(font-medium)은 쓰는 곳이 없어서 뺐다 — 그것만으로 폰트 CSS가 1/4 줄었다.
+  weight: ["400", "600", "700"],
+  display: "swap",
+  preload: false,
+  // 폰트가 늦게 와도 글자 크기가 크게 튀지 않도록 비슷한 한글 시스템 폰트를 먼저 세운다
+  fallback: ["Apple SD Gothic Neo", "Malgun Gothic", "system-ui", "sans-serif"],
 });
 
-const geistMono = Geist_Mono({
-  variable: "--font-geist-mono",
+// Mono는 라틴만이라 조각이 몇 개 안 된다. 계기판 숫자와 스텐실에만 쓴다.
+const plexMono = IBM_Plex_Mono({
+  variable: "--font-plex-mono",
   subsets: ["latin"],
+  weight: ["400", "600", "700"],
+  display: "swap",
 });
 
 export const metadata: Metadata = {
@@ -24,9 +61,7 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="ko">
-      <body
-        className={`${geistSans.variable} ${geistMono.variable} antialiased`}
-      >
+      <body className={`${plexSans.variable} ${plexMono.variable} antialiased`}>
         {/*
           창고 — 모든 화면 뒤에 깔리는 공간 (app/globals.css의 .room).
 

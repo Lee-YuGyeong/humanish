@@ -38,8 +38,8 @@
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+  --font-sans: var(--font-plex-sans);
+  --font-mono: var(--font-plex-mono);
 
   /* 어두운 쪽 — 공간 */
   --color-void: #080604;
@@ -81,6 +81,14 @@ body {
   background: var(--background);
   color: var(--foreground);
   font-family: var(--font-sans), system-ui, sans-serif;
+  /* 한글은 라틴보다 글자가 빽빽해서 같은 값이면 답답하다. 조금 띄운다 */
+  line-height: 1.65;
+  /*
+   * ★ 한글은 낱말 중간에서 줄이 바뀌면 읽기가 뚝 끊긴다. keep-all 이 그걸 막는다.
+   *   대신 끊을 데가 없는 긴 영문·URL이 칸을 넘길 수 있어 anywhere 를 짝으로 둔다.
+   */
+  word-break: keep-all;
+  overflow-wrap: anywhere;
   /* .room 의 z-index:-1 이 body 밖으로 새지 않게 가둔다 */
   isolation: isolate;
 }
@@ -369,8 +377,14 @@ body {
   .stencil {
     font-family: var(--font-mono), ui-monospace, monospace;
     text-transform: uppercase;
-    letter-spacing: 0.22em;
-    font-weight: 700;
+    /*
+     * ★ 자간은 한글에 맞춰 잡는다. 라틴 기준으로 0.22em까지 벌렸더니 "방 만들기"가
+     *   낱자로 흩어져 한 단어로 안 읽혔다. 한글은 자모가 이미 네모 안에 짜여 있어
+     *   조금만 벌려도 티가 난다. 0.13em이면 대문자 라틴은 여전히 라벨처럼 읽히고
+     *   한글은 흩어지지 않는다. 이 화면의 라벨은 대부분 한국어다.
+     */
+    letter-spacing: 0.13em;
+    font-weight: 600;
     /* 스프레이가 번진 가장자리 */
     text-shadow: 0 0 12px rgba(214, 207, 194, 0.14);
   }
@@ -407,7 +421,11 @@ body {
       0 1px 0 rgba(255, 217, 172, 0.16),
       0 -1px 0 rgba(0, 0, 0, 0.55),
       0 14px 34px rgba(0, 0, 0, 0.85);
-    letter-spacing: -0.035em;
+    /*
+     * 음수 자간은 라틴 대문자를 조여 붙이려고 쓰는 값이다. 한글에 그대로 걸면
+     * 받침이 옆 글자에 닿는다. 제목이 대부분 한국어라 -0.02em에서 멈춘다.
+     */
+    letter-spacing: -0.02em;
   }
 
   /* 케이스에 박힌 리벳 한 줄. 모서리에 점 네 개면 물건처럼 보인다 */
