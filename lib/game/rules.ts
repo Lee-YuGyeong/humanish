@@ -8,10 +8,16 @@
 import type { Role } from '@/lib/game/types';
 
 /**
- * seat 순서대로의 역할 배열을 반환한다.
- * 규칙: 봇은 전부 'ai'. 인간이 2명 이상이면 1명만 'spy', 나머지 'citizen'.
+ * seat 순서대로의 역할 배열을 반환한다. 입력과 길이가 같다.
+ * 규칙: 봇 자리는 전부 'ai'. 사람이 2명 이상이면 그중 1명만 'spy', 나머지 'citizen'.
+ *
+ * @param isBotBySeat seat 1..N 순서. 어느 자리가 봇인지는 호출자(A)가 안다
+ * @param seed        스파이를 고르는 난수. 함수 안에서 만들지 않는다 (I3)
+ *
+ * ※ 시그니처가 (humanCount, total)에서 바뀌었다 (SPEC §8).
+ *   개수만 받으면 "앞쪽 seat이 사람"이라는 가정이 숨고, 시드가 없으면 스파이를 못 고른다.
  */
-export function assignRoles(_humanCount: number, _total: number): Role[] {
+export function assignRoles(_isBotBySeat: boolean[], _seed: number): Role[] {
   throw new Error('assignRoles: 미구현 (B)');
 }
 

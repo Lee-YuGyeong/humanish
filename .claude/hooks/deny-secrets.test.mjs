@@ -1,6 +1,6 @@
 import { execFileSync } from "node:child_process";
 
-const HOOK = "/Users/nowonsang/humanish/.claude/hooks/deny-secrets.sh";
+const HOOK = new URL("./deny-secrets.sh", import.meta.url).pathname;
 const S = "dev" + ".vars";
 const ENVL = ".env" + ".local";
 

@@ -23,7 +23,7 @@
 
 ## 불변 규칙 (INVARIANTS)
 
-이 아홉 개가 이 프로젝트의 뼈대다. 나머지는 전부 이것들을 지키기 위한 수단이다.
+이 열 개가 이 프로젝트의 뼈대다. 나머지는 전부 이것들을 지키기 위한 수단이다.
 
 | # | 규칙 | 위반 시 증상 | 적용 위치 |
 |---|---|---|---|
@@ -315,7 +315,7 @@ create index on rooms (phase_ends_at) where phase_ends_at is not null;
 | lobby | question(1) | — | 방장이 시작 |
 | question(1) | question(2) | 60초 | 시간 만료 **또는** 사람 전원 제출 |
 | question(2) | target | 60초 | 시간 만료 **또는** 사람 전원 제출 |
-| target | chat | 60초 | 시간 만료 **또는** 대상자 제출 |
+| target | chat | 30초 | 시간 만료 **또는** 대상자 제출. **단 대상이 봇이면 시간 만료만** (§5.3) |
 | chat | vote | 120초 | 시간 만료만 |
 | vote | reveal | 30초 | 시간 만료 **또는** 사람 전원 투표 |
 | reveal | replay | — | 클라이언트 조작 |
@@ -328,7 +328,8 @@ create index on rooms (phase_ends_at) where phase_ends_at is not null;
 
 ```
 클라이언트: phase_ends_at 경과 감지
-  → rpc('advance_phase', { room_id, expected_seq: 현재 phase_seq })
+  → POST /api/phase/advance { room_id, expected_seq: 현재 phase_seq }
+     (쿠키의 player_token으로 본인 확인 후, 서버가 service role로 RPC 호출)
 
 서버(advance_phase):
   1. 행 잠금 (select ... for update)
@@ -340,6 +341,8 @@ create index on rooms (phase_ends_at) where phase_ends_at is not null;
 ```
 
 `phase_seq` 하나로 중복 호출이 전부 무력화된다. 5명이 동시에 호출해도 첫 호출만 성공한다 (I6).
+
+**`advance_phase` RPC는 anon에게 열지 않는다.** 방장 확인(lobby → question)이 필요한데, 호출자가 넘긴 `actor_id`는 호출자가 마음대로 적을 수 있는 값이라 그것만으로는 아무것도 확인하지 못한다. `host_id`는 `rooms`로 누구나 읽는다. 그래서 **쿠키의 `player_token`으로 `player_id`를 되찾은 뒤**(§17.4) service role로 RPC를 부르는 `/api/phase/advance` 하나만 통로로 둔다. I9와 같은 이유다.
 
 **호출자는 세 종류다.** 전부 같은 RPC를 같은 방식으로 부른다.
 
@@ -357,9 +360,15 @@ create index on rooms (phase_ends_at) where phase_ends_at is not null;
 | target | 지목 대상 결정. 대상이 봇이면 답변 생성 |
 | chat | 봇별 쿨다운 초기화 |
 | vote | 봇 투표 생성 |
-| reveal | `calcScores` 호출, 결과 확정 |
+| reveal | 결과 확정. **`calcScores`는 TS 순수 함수라 DB 안에서 못 부른다** — reveal 화면이 `/api/reveal`을 부를 때 계산한다 (§17.2) |
 
 **봇 답변은 페이즈 시작 시 한꺼번에 만든다.** 함수가 6초를 기다릴 수 없으므로, 지연은 `visible_at`에 시각으로 박고 클라이언트가 그 시점에 띄운다.
+
+**이 훅을 누가 실행하는지는 §17.2에서 확정했다.** 지금은 전환 함수(plpgsql)가 DB 안의 문구 풀에서 뽑아 넣는다. LLM을 붙인 뒤에는 §12.3의 선생성 층이 미리 넣어두고, 이 훅은 준비된 게 없을 때만 폴백으로 돈다. **§12.3의 "선생성"과 여기의 "즉시 생성"은 순서가 다른 게 아니라 층이 다르다.** 이렇게 둬야 워치독이 전환한 방에서도 봇이 말한다.
+
+**대상이 봇이어도 target 페이즈는 조기 종료하지 않는다.** 봇은 진입 즉시 답변이 생기므로 조기 종료를 그대로 두면 페이즈가 0초에 끝나고, **그것만으로 대상이 봇임이 드러난다.** I5와 똑같은 함정이다 — I5는 "인원을 센다"는 문장이라 이 경우를 못 잡는다.
+
+**그래서 target은 30초다.** 사람이 대상이면 답하는 즉시 넘어가지만, 봇이 대상이면 위 규칙 때문에 매번 시간을 꽉 채운다. 그동안 나머지 넷은 할 일이 없다. 이 죽은 시간을 줄이려고 60초에서 내렸다. **선택적으로 줄일 수는 없다** — 봇일 때만 짧게 하면 그게 다시 신호가 된다. 답을 뜯어보는 시간은 바로 뒤 chat 120초가 맡는다.
 
 ### 5.4 자유 채팅 예외
 
@@ -378,8 +387,13 @@ chat 페이즈만 실시간 반응이 필요하다. 사람 메시지가 insert�
 | 대상 | 전송 방식 | 이유 |
 |---|---|---|
 | `rooms` (update) | **Postgres Changes** | 초당 수 건. 변경이 드물고 **정확성**이 중요하다 |
-| `answers`, `messages` (insert) | **Broadcast** (DB 트리거 → `realtime.broadcast_changes()`) | 고빈도 구간. **속도**가 중요하고, 아래 이유로 Postgres Changes를 쓸 수 없다 |
-| `players` (insert/update) | Postgres Changes (`public_players` 뷰 기준) | 참가자 목록 갱신 |
+| `answers` (insert) | **보내지 않는다** | 페이즈가 끝나야 공개된다. 전환은 `rooms`가 알려주므로 그때 다시 읽으면 된다 |
+| `messages` (insert) | **`public_messages` 뷰를 1.5초 폴링** | 실시간이 필요하지만 **Broadcast는 도착 시각으로 봇을 드러낸다** (§6.1) |
+| `players` (insert/update) | **`rooms.roster_seq` 신호 + 재조회** | 참가자 목록 갱신. **뷰는 구독할 수 없다** — 아래 이유 |
+
+**`players`는 직접 구독할 수 없다.** Postgres Changes는 논리 복제 publication을 타는데 **publication에는 테이블만 넣을 수 있고 뷰는 넣을 수 없다.** `public_players`는 뷰라서 WAL을 만들지 않는다. 그렇다고 `players` 테이블을 구독하면 `is_bot`이 실려 나가고(I1), 애초에 anon에게서 revoke했으므로 배달 평가에서 전부 걸러진다.
+
+**대신 신호만 보낸다.** `players`가 바뀌면 트리거가 `rooms.roster_seq`를 +1 한다. 클라이언트는 이미 걸어둔 `rooms` 구독에서 그 변화를 보고 `public_players`를 다시 읽는다. 새 채널도 새 정책도 필요 없고, 방 필터(I10)는 `rooms` 구독에 이미 걸려 있다.
 
 ### 6.1 왜 답변·채팅은 Broadcast여야 하는가
 
@@ -388,6 +402,26 @@ Postgres Changes는 **배달 시점에 RLS를 평가한다.** 그런데 answers�
 봇의 타이핑 지연은 "미래 `visible_at`을 가진 행을 미리 받아두고 그 시각에 렌더"하는 방식이다. Postgres Changes로는 이 행이 오지 않으므로 **지연 연출이 통째로 깨진다.**
 
 Broadcast는 트리거가 직접 쏘므로 RLS 배달 평가를 거치지 않는다. 페이로드에 `visible_at`이 실려 오고, 클라이언트가 그 시각에 렌더한다.
+
+**그 대가로 도착 시각이 새어나간다.** Broadcast는 RLS를 우회하므로 devtools에서 페이로드가 그대로 보이고, **행이 언제 insert됐는지가 그대로 드러난다.** 봇 답변은 페이즈 진입 시 한꺼번에 들어가고 사람 답변은 각자 제출할 때 들어가므로, 도착 시각만 늘어놓아도 봇이 갈린다 (I1).
+
+**그래서 답변은 Broadcast로 쏘지 않는다.** 답변은 실시간이 필요 없다 — 어차피 페이즈가 끝나야 공개된다. 페이즈가 넘어가면 `rooms` 구독이 알려주고, 그때 클라이언트가 다시 읽는다.
+
+**채팅도 Broadcast를 쓰지 않기로 했다.** 같은 이유가 더 세게 걸린다. 봇 메시지는 타이핑 지연 때문에 미래 `visible_at`을 갖는데 브로드캐스트는 insert 순간에 나간다. 도착과 표시 사이의 간격이 봇만 유독 길어서, devtools를 열면 그것만으로 봇이 갈린다. 사람 메시지에도 같은 지연을 주는 방법은 채팅을 굼뜨게 만들고, 표시 시각에 맞춰 쏘려면 1초 단위 스케줄러가 필요하다.
+
+**대신 `public_messages` 뷰를 1.5초마다 읽는다.**
+
+```sql
+create view public_messages as
+  select id, room_id, player_id, text, visible_at
+    from messages where visible_at <= now();
+```
+
+- **`created_at`을 뷰에서 뺀다.** 봇은 `created_at`과 `visible_at`이 몇 초 벌어지고 사람은 같다. 그 간격이 곧 봇 표시다 — `public_players`에서 `created_at`을 뺀 것과 같은 이유다 (§7.2)
+- **행 필터를 뷰 안에 박는다.** 클라이언트 선의가 아니라 서버가 막는다. 아직 시간이 안 된 메시지는 애초에 나오지 않는다
+- **대가는 최대 1.5초 지연이다.** 봇이 일부러 2~8초를 끄는 판에서 문제가 되지 않는다. 5인 × 1.5초 폴링은 부하도 아니다
+
+**속도보다 I1이 먼저다.** §12.4가 Broadcast를 고른 이유는 속도였는데, 그 속도가 게임을 깨면 의미가 없다.
 
 ### 6.2 클라이언트 계약
 
@@ -421,6 +455,8 @@ Supabase Auth를 쓰지 않으므로 DB는 "지금 이 요청이 어느 player�
 
 **결론 (I9): 클라이언트는 읽기만 한다.** 모든 쓰기는 service role을 쥔 서버(Route Handler / Edge Function)를 거치고, 거기서 `player_id`를 검증한다. RLS는 "읽으면 안 되는 것"만 막는 역할로 좁힌다.
 
+**단, 서버도 `player_id`만으로는 본인을 확인할 수 없다.** `player_id`는 `public_players`로 누구나 읽는다. 그대로 두면 남의 이름으로 답변·투표를 넣을 수 있다. 그래서 **입장할 때 `player_token`을 발급해 httpOnly 쿠키로 내려주고, 모든 쓰기 라우트가 그 토큰으로 `player_id`를 되찾는다** (§17.4). 토큰은 `players` 테이블에만 있고 `public_players` 뷰에는 넣지 않는다.
+
 ### 7.2 정책
 
 | 테이블 | select 정책 |
@@ -435,6 +471,8 @@ Supabase Auth를 쓰지 않으므로 DB는 "지금 이 요청이 어느 player�
 | `questions` | 허용 |
 
 **`is_bot`이 클라이언트로 새어나가면 게임이 즉시 끝난다.** 클라이언트가 읽는 것은 `players` 테이블이 아니라 `is_bot`을 제외한 뷰다.
+
+**뷰에서 뺄 것은 `is_bot`만이 아니다.** `created_at`도 빼야 한다 — 봇은 시작 순간 한꺼번에 생성되므로 생성 시각이 몇 ms 안에 뭉치고, 사람은 몇 분에 걸쳐 들어온다. **`select created_at from public_players` 한 번으로 봇이 전부 특정된다.** `player_token`도 당연히 뺀다. 뷰에 컬럼을 더할 때는 매번 "이걸로 봇을 골라낼 수 있나"를 먼저 묻는다.
 
 ### 7.3 RLS는 방을 가르지 못한다 — 알고 쓴다
 
@@ -457,14 +495,20 @@ Supabase Auth를 쓰지 않으므로 DB는 "지금 이 요청이 어느 player�
 `lib/game/rules.ts` — B가 작성, A가 호출. **DB를 모른다 (I3).**
 
 ```ts
-export function assignRoles(humanCount: number, total: number): Role[];
-// 반환: seat 순서대로의 역할 배열
-// 규칙: 봇은 전부 'ai'. 인간이 2명 이상이면 1명만 'spy', 나머지 'citizen'
+export function assignRoles(
+  isBotBySeat: boolean[],  // seat 1..N 순서. 어느 자리가 봇인지는 호출자(A)가 안다
+  seed: number,            // 스파이를 고르는 난수. 함수 안에서 만들지 않는다 (I3)
+): Role[];
+// 반환: seat 순서대로의 역할 배열. 입력과 길이가 같다
+// 규칙: 봇 자리는 전부 'ai'. 사람이 2명 이상이면 그중 1명만 'spy', 나머지 'citizen'
 
 export function calcScores(
   votes: { voterId: string; targetId: string }[],
   roles: Record<string, Role>
 ): Record<string, number>;
+// ★ 채점 규칙이 이 문서에 정해진 적이 없다 — 시그니처만 있었다.
+//   지금은 게임이 끝나는 느낌이 나도록 app/api/reveal/route.ts에 임시 규칙이 들어 있다.
+//   정하면 그 파일과 이 자리를 같이 고친다. 알려진 문제는 §8.1.
 
 export function mostSuspectedHuman(
   votes: { targetId: string }[],
@@ -474,7 +518,22 @@ export function mostSuspectedHuman(
 
 **A는 이 함수들의 내부를 모르고, B는 DB를 모른다.** 이 경계가 유지되어야 두 사람이 서로를 기다리지 않는다.
 
-순수 함수이므로 랜덤이 필요하면 **인자로 받는다.** 함수 안에서 `Math.random()`을 부르지 않는다 (I3).
+순수 함수이므로 랜덤이 필요하면 **인자로 받는다.** 함수 안에서 `Math.random()`을 부르지 않는다 (I3). `assignRoles`의 `seed`가 그 예다 — 이 인자가 없으면 스파이를 못 고른다.
+
+### 8.1 채점의 알려진 문제 — 봇 투표가 무작위다
+
+**5표 중 3표가 봇 표이고, 그 봇 표는 무작위다.** 지금 봇은 자기 아닌 사람 중 하나를 그냥 고른다 (`on_enter_phase`의 vote 훅). 그래서 점수가 실력보다 운에 좌우된다.
+
+특히 **스파이 점수가 통째로 운이다.** 스파이는 "받은 표"로 점수를 얻는데 그 표의 대부분이 무작위 봇 표다. 사람 2명 · 봇 3명인 방에서는 사람 표가 2장뿐이라 더 심하다.
+
+고치려면 둘 중 하나다.
+
+- **봇이 근거를 갖고 투표한다.** LLM을 붙일 때 `agent_logs`의 `suspicion`을 근거로 고르게 한다 (§9). 그 전까지는 무작위다
+- **봇 표를 점수에서 뺀다.** 사람 표만 세면 운이 사라지지만, 사람이 적은 방에서는 점수가 거의 안 움직인다
+
+**어느 쪽이든 채점 규칙을 정할 때 같이 정한다.** 규칙만 손보고 이 문제를 남겨두면 숫자가 예쁘게 나와도 게임이 공정해지지 않는다.
+
+**`assignRoles`는 seat 배열을 받지 플레이어 수를 받지 않는다.** 개수만 받으면 "앞쪽 seat이 사람"이라는 가정이 함수 안에 숨는다. 그 가정은 §17.4에서 깬다 — 봇 자리를 섞기 때문이다.
 
 ---
 
@@ -518,7 +577,7 @@ export async function generate(ctx: AgentContext): Promise<AgentOutput>;
 | `agent_logs` 기록 항목 | 토큰 사용량 필드 이름 |
 | 인젝션 방어 원칙 (9.1) | 구조화 출력 구현 방식 |
 
-**공급자 교체가 `app/api/agent/route.ts` 한 파일로 끝나야 한다.** 그렇지 않으면 격리에 실패한 것이다.
+**공급자에 의존하는 코드는 `app/api/agent/route.ts` 한 파일에만 둔다.** SDK 초기화, 모델 ID, 요청·응답 모양 변환이 전부 여기다. `lib/agent/generate.ts`는 `AgentContext`를 프롬프트로 빚고 응답을 `AgentOutput`으로 파싱하는 **공급자 무관 층**이며, 실제 호출은 route가 넘겨준 함수로 한다. 공급자를 바꿀 때 `generate.ts`를 열게 된다면 격리에 실패한 것이다.
 
 ---
 
@@ -613,11 +672,21 @@ select cron.schedule(
 
 **대응.** 접속 시 서버 시각을 한 번 받아 오프셋을 계산하고, 모든 카운트다운과 `visible_at` 비교를 `serverNow() = Date.now() + offset`으로 한다. 판정은 어차피 서버가 하므로 클라이언트 카운트다운은 표시용이다 (I2).
 
+**어긋나는 시계는 둘이 아니라 셋이다.** 브라우저 · 앱 서버(Vercel) · DB. 그런데 `phase_ends_at`도 `visible_at`도 전부 **DB가 찍는다.** 그래서 `/api/time`은 앱 서버의 `new Date()`가 아니라 **DB의 `now()`를 돌려줘야 한다** (`server_now()` RPC). 앱 서버 시각을 주면 클라이언트는 엉뚱한 시계에 맞춰놓고 DB가 찍은 시각과 비교하게 된다.
+
+**실제로 밟았다.** 개발 기계에서 DB가 앱 서버보다 2.26초 앞서 있었고, 모든 카운트다운이 그만큼 밀려 있었다. 사람 메시지의 `visible_at`을 Route Handler에서 만들었더니 `created_at`보다 과거로 찍히기도 했다.
+
+**규칙: 시각을 만드는 일은 전부 DB에서 한다.** Route Handler에서 `new Date()`로 DB에 넣을 시각을 만들지 않는다. 필요하면 SQL 함수를 하나 더 만든다.
+
 ### 12.6 비용 폭주
 
 **증상.** chat 페이즈에서 사람이 도배하면 봇 응답이 그만큼 생성된다.
 
-**대응.** 봇당 쿨다운 8초, 한 메시지에 반응하는 봇은 최대 1명, **방당 총 호출 상한 40회.** 상한 도달 시 폴백 풀로 전환한다. 호출 수와 토큰을 `agent_logs`에 남겨 기술 문서 근거로 쓴다.
+**대응.** 봇당 쿨다운 8초, 한 메시지에 반응하는 봇은 최대 1명, **방당 총 호출 상한.** 상한 도달 시 폴백 풀로 전환한다. 호출 수와 토큰을 `agent_logs`에 남겨 기술 문서 근거로 쓴다.
+
+**상한 숫자는 LLM을 붙이는 시점에 계산해서 정한다.** 원래 적혀 있던 40회는 chat 한 판을 못 버틴다 — 봇 4명 × (120초 ÷ 쿨다운 8초) = 최대 60회에, 다른 페이즈 선생성 12~13회가 더 붙는다. 상한을 올리든 쿨다운을 늘리든 **둘을 같이 맞춘다.** 지금은 AI를 쓰지 않으므로(§17) 이 항목 전체가 놀고 있다.
+
+**기록할 자리도 그때 만든다.** 지금 `agent_logs`에는 호출 시각도 토큰 수도 폴백 여부도 넣을 컬럼이 없고, `AgentAction`에 `'fallback'`이 없다. §4에 `created_at`·`tokens`·`fallback`을 더한다.
 
 **방당 상한만으로는 부족하다.** API rate limit은 방이 아니라 **계정 전체**에 걸린다. 방 10개가 동시에 chat이면 봇 40명이 한꺼번에 호출해 전부 429를 맞고, 모든 방이 같이 폴백으로 떨어진다. 전역 동시 호출 상한이 함께 필요하다 — §16.5.
 
@@ -671,6 +740,8 @@ npm run lint
 npm run build       # 최종. 이게 통과해야 끝난 것
 ```
 
+**DB 쪽은 `./supabase/test.sh`가 돌린다.** 일회용 로컬 Postgres를 띄워 `supabase/`의 SQL을 전부 올리고 아래 §14.2 · §14.3 · §14.4를 검사한 뒤 지운다. Supabase 프로젝트도 인터넷도 필요 없다. 스키마나 전환 함수를 고쳤으면 이걸로 끝낸다.
+
 ### 14.2 RLS 침투 (anon 키로 실행)
 
 **전부 0행 또는 에러여야 한다.** 하나라도 데이터가 나오면 게임이 깨진 것이다.
@@ -709,9 +780,9 @@ select * from agent_logs;                       -- 봇 내부 판단
 
 | # | 항목 | 결정해야 하는 것 | 막히는 작업 |
 |---|---|---|---|
-| **15-1** | LLM 공급자 | 어느 API를 쓸지. 정해지면 §1·§9.2·`.env.local.example`을 갱신하고, Route Handler 런타임(`edge` / `nodejs`)을 그 SDK 지원 여부로 확정한다 | §13-5 이후 |
+| **15-1** | LLM 공급자 | 어느 API를 쓸지. 정해지면 §1·§9.2·`.env.local.example`을 갱신하고, Route Handler 런타임(`edge` / `nodejs`)을 그 SDK 지원 여부로 확정한다. **§17로 순서가 바뀌어 지금은 아무것도 막지 않는다** — 게임을 문구 풀로 먼저 완성한 뒤에 고른다 | 없음 (AI를 얹기 직전까지) |
 | **15-2** | 익명 인증 도입 여부 | Supabase 익명 인증을 붙이면 `players`에 `user_id`가 필요하다 → `types.ts` 변경이라 팀 공지 사안. 붙이지 않으면 §7.1 전제를 유지한다 | RLS를 더 조이려 할 때 |
-| **15-3** | 봇을 채우는 시점 | lobby에서 미리 채우는가, 시작 버튼을 누른 순간 채우는가. 전자는 인원수로 봇 존재가 추론될 수 있다 | §13-1 |
+| **15-3** | 봇을 채우는 시점 | lobby에서 미리 채우는가, 시작 버튼을 누른 순간 채우는가. 전자는 인원수로 봇 존재가 추론될 수 있다. **배치 규칙은 §17.4에서 정했다** — 시점만 남았다 | §13-1 |
 | **15-4** | 이탈 · 재접속 처리 | 게임 중 나간 사람의 자리를 봇이 이어받는가, 빈 채로 두는가 | §13-2 |
 | **15-5** | replay 페이즈 동작 | 같은 방으로 재시작인가, 새 방인가. 역할을 다시 배정하는가 | §13-7 |
 | **15-6** | 방 격리를 DB로 강제할지 | 지금은 클라이언트 계약(§6.3)으로만 유지된다. anon 키로 다른 방의 닉네임·좌석·질문·공개 답변·채팅을 읽을 수 있다. 승패 정보(`is_bot`·역할·미공개 답변·reveal 이전 투표)는 이미 막혀 있다. 강제하려면 15-2가 선행돼야 한다 (이유는 §7.3) | 데모 공개 범위를 정할 때 |
@@ -755,7 +826,7 @@ create index on rooms (phase_ends_at) where phase_ends_at is not null;
 ### 16.4 방 코드와 수명
 
 - **코드 충돌 재시도.** 4자 × 24글자 = 331,776가지. `code` unique 제약에 걸리면 `createRoom`이 에러를 던지지 말고 **다른 코드로 재시도**한다 (최대 5회).
-- **끝난 방 정리.** 지금은 방이 영원히 남는다. 코드를 계속 점유하고 워치독 스캔 대상으로도 남는다. `phase = 'replay'`이거나 `created_at`이 24시간 지난 방을 주기적으로 지운다. cascade가 딸린 데이터를 함께 정리한다.
+- **끝난 방 정리.** 지금은 방이 영원히 남는다. 코드를 계속 점유하고 워치독 스캔 대상으로도 남는다. `created_at`이 24시간 지난 방을 매시 정각에 지운다. cascade가 딸린 데이터를 함께 정리한다. **`phase = 'replay'`는 아직 조건에 넣지 않는다** — replay가 같은 방 재시작인지 새 방인지 미결정이라(§15-5), 지금 지우면 재시작이 깨진다. 정해지면 조건을 더한다.
 - **코드 재사용 주의.** 방을 지우면 코드가 다시 쓰일 수 있다. 그래서 Realtime 채널 이름은 `code`가 아니라 `room_id`를 쓴다 (§6.3).
 
 ### 16.5 LLM 전역 상한
@@ -769,6 +840,92 @@ create index on rooms (phase_ends_at) where phase_ends_at is not null;
 ### 16.6 그 밖의 한도
 
 Supabase 무료 티어는 Realtime 동시 접속에 한도가 있다. 5인 × 방 N개로 계산해서 데모 전에 확인한다. 넘으면 방 수를 제한하거나 유료로 올린다. **데모 당일에 알게 되면 늦다.**
+
+---
+
+## 17. 목 우선 — AI 없이 먼저 완주시킨다
+
+### 17.1 왜 이 순서인가
+
+**§13-5의 완료 조건이 이미 이 경로다.** "LLM 키를 일부러 틀리게 넣어도 게임이 끝까지 진행된다(폴백 풀로 대체)". 즉 AI 없이 도는 경로는 **어차피 만들어야 하는 것**이고, §12.3이 말하는 폴백이 바로 그것이다.
+
+그렇다면 그걸 먼저 만든다. 순서를 뒤집으면 두 가지가 공짜로 따라온다.
+
+- **§13-5가 구현하는 순간 통과된다.** 나중에 증명할 게 아니라 처음부터 그 상태다
+- **LLM 미결정(§15-1)이 아무것도 막지 않는다.** 공급자는 게임이 다 돌아간 뒤에 고른다
+
+**나중에 AI를 얹을 때 이 코드는 지우지 않는다.** 안전망으로 그대로 남는다 (§17.5).
+
+### 17.2 결정 A — 페이즈 진입 훅은 전환 함수 안에서 끝낸다
+
+§5.3의 훅을 누가 실행하는가. 원래 설계는 이 자리가 비어 있었다 — plpgsql은 TS 함수도 외부 API도 부르지 못하는데 훅에는 둘 다 들어 있었다.
+
+AI를 빼면 남는 일이 전부 SQL로 된다.
+
+| 훅 | 지금 (문구 풀) | 실행 주체 |
+|---|---|---|
+| 질문 뽑기 | `question_pool`에서 1개 select | 전환 함수 (plpgsql) |
+| 봇 답변 | `bot_line_pool`에서 뽑아 insert, `visible_at`에 지연 시각 | 전환 함수 (plpgsql) |
+| 봇 투표 | 자기 아닌 플레이어 중 하나 | 전환 함수 (plpgsql) |
+| 점수 | **DB 밖.** reveal 화면이 `/api/reveal`을 부를 때 `calcScores` 실행 | Route Handler |
+
+**점수만 밖으로 뺀다.** `calcScores`는 `lib/game/rules.ts`의 TS 순수 함수라 DB가 못 부른다. reveal은 조회 시점에 계산해도 아무 문제가 없다 — 투표는 이미 확정돼 있고, 같은 입력이면 같은 결과다 (I3 덕분이다).
+
+**§4에 테이블 두 개가 추가된다.** `question_pool(kind, text)`, `bot_line_pool(phase, text)`. 내용은 B가 채운다 — `lib/game/questions.ts`와 봇 문구가 원본이고, seed 스크립트가 DB로 넣는다.
+
+**pg_net도 Edge Function 호출도 쓰지 않는다.** 전환이 SQL 한 트랜잭션 안에서 끝나므로 워치독(§12.1)이 넘긴 방에서도 봇이 똑같이 말한다. 클라이언트가 전부 죽어도 게임이 완주한다.
+
+### 17.3 결정 B — 참가자 목록은 `rooms.roster_seq` 신호로 갱신한다
+
+§6에 근거를 적었다. 요약하면 **뷰는 Postgres Changes로 구독할 수 없고, 테이블은 구독하면 안 된다.**
+
+```
+players insert/update
+  └ 트리거 → update rooms set roster_seq = roster_seq + 1
+
+클라이언트 (이미 걸어둔 rooms 구독 하나)
+  └ roster_seq 변화 감지 → select * from public_players where room_id = <room_id>
+```
+
+`rooms`에 `roster_seq int not null default 0`을 더한다. 새 채널도, 새 RLS 정책도, 새 구독도 없다. 방 필터(I10)는 `rooms` 구독에 이미 걸려 있다.
+
+**`phase_seq`와 헷갈리지 않는다.** `phase_seq`는 페이즈 전환의 잠금 키이고, `roster_seq`는 "명단 다시 읽어라"는 신호일 뿐이다. 잠금에 쓰지 않는다.
+
+### 17.4 결정 C — 입장할 때 `player_token`을 발급한다
+
+§7.1에 근거를 적었다. `player_id`는 누구나 읽으므로 그것만으로는 본인 확인이 안 된다.
+
+```
+POST /api/room/join
+  └ token = 랜덤 32바이트
+     insert players (..., token)
+     Set-Cookie: hp_<room_id>=<token>; HttpOnly; SameSite=Lax; Secure
+
+모든 쓰기 라우트 (답변 · 투표 · 메시지 · 페이즈 전환)
+  └ requirePlayer(req, roomId)
+       쿠키의 토큰으로 players를 조회해 player_id를 되찾는다. 없으면 401
+```
+
+- **`players.token`은 `public_players` 뷰에 넣지 않는다.** `is_bot`·`created_at`과 같은 취급이다 (§7.2)
+- **방마다 쿠키를 따로 둔다.** 한 사람이 여러 방에 들어갈 수 있고, 코드 재사용(§16.4) 때문에 방 이름이 아니라 `room_id`로 키를 만든다
+- **이게 익명 인증(§15-2)을 대신하지는 않는다.** 토큰은 "이 브라우저가 그때 그 자리에 앉았다"만 증명한다. RLS로 방을 가르는 건 여전히 §15-2가 필요하다 (§7.3)
+
+**같이 정한 것: 봇 자리는 섞는다.** 빈 seat을 순서대로 채우면 봇이 늘 뒷자리·뒷번호에 몰려서 seat만 보고 봇을 고를 수 있다. `fillWithBots`는 사람과 봇의 seat·nickname을 **섞어서** 배정한다. §15-3에 남은 건 "언제 채우는가"뿐이다.
+
+### 17.5 AI를 얹을 때 바뀌는 것
+
+여기 적힌 것만 바뀐다. 나머지는 그대로 둔다.
+
+| 대상 | 무엇이 바뀌나 |
+|---|---|
+| `app/api/agent/route.ts` | 공급자 SDK 연결. §15-1을 그때 정한다 |
+| `lib/agent/generate.ts` | `AgentContext` → 프롬프트, 응답 → `AgentOutput` |
+| 선생성 층 | 현재 페이즈가 도는 동안 다음 페이즈 봇 답변을 미리 insert (§12.3) |
+| 전환 함수 (plpgsql) | **한 줄만 바뀐다** — "이미 준비된 답변이 있으면 건드리지 않는다" |
+| `agent_logs` | `created_at` · `tokens` · `fallback` 컬럼 추가 (§12.6) |
+| §12.6 · §16.5 | 호출 상한과 전역 동시 상한을 숫자로 확정 |
+
+**문구 풀은 지우지 않는다.** LLM이 죽거나, 8초를 넘기거나, 상한에 걸리면 이 풀로 떨어진다. 그게 §12.3의 폴백이고 §13-5의 완료 조건이다.
 
 ---
 
@@ -796,3 +953,18 @@ Supabase 무료 티어는 Realtime 동시 접속에 한도가 있다. 5인 × �
 | §16.4 | 코드 충돌 재시도, 방 정리 | 재시도 5회, 24시간 지난 방 삭제 |
 | §12.6, §16.5 | LLM 전역 상한 | 방당 40회만으로는 계정 rate limit을 못 막는다 |
 | §7.3, §15-6 | 방 격리를 RLS로 못 하는 이유 | 헤더 기반 정책은 Realtime 배달을 죽인다. 현재 노출 범위를 명시 |
+
+### 목 우선 (§17) 추가분
+
+AI를 나중에 붙이기로 하면서, 그동안 실행 주체가 비어 있던 자리 셋을 채웠다. **§0~§16 번호는 그대로다.**
+
+| 위치 | 비어 있던 것 | 채운 것 |
+|---|---|---|
+| §5.3, §17.2 | 진입 훅을 **누가** 실행하는가. plpgsql은 TS도 LLM도 못 부른다 | 전환 함수가 문구 풀에서 뽑는다. 점수만 `/api/reveal`로 뺀다 |
+| §6, §17.3 | `players`를 뷰로 구독한다고 적혀 있었다. **뷰는 publication에 못 들어간다** | `rooms.roster_seq` 신호 + 재조회 |
+| §7.1, §17.4 | 서버가 요청자를 확인할 방법 | 입장 시 `player_token` 발급, httpOnly 쿠키 |
+| §5.1, §5.3 | 대상이 봇이면 target이 0초에 끝나 봇이 드러났다 | 봇이 대상이면 조기 종료하지 않는다 |
+| §7.2 | 뷰의 `created_at`으로 봇이 전부 특정됐다 | 뷰에서 뺀다 |
+| §8 | `assignRoles`에 시드가 없어 스파이를 못 골랐다 | `(isBotBySeat, seed)`로 교체 — **B 확인 필요** |
+| §12.6 | 방당 40회가 chat 한 판을 못 버틴다 | 숫자를 LLM 붙일 때 재계산하기로 미룸 |
+| 불변 규칙 | "아홉 개"인데 표는 열 개 | 열 개로 |
