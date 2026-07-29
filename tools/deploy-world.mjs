@@ -209,9 +209,21 @@ async function main() {
 
   await probe(origin);
 
+  // ★ --config 를 빼지 않는다. 저장소 루트에 Next 앱용 wrangler.jsonc 가 생긴 뒤로,
+  //   cwd 가 worker/ 여도 wrangler 는 루트 설정을 집어간다 (worker/wrangler.toml 이
+  //   바로 옆에 있는데도 그렇다). 그러면 이 명령이 월드 워커가 아니라 Next 앱 워커를
+  //   NEXT_ORIGIN 만 붙여 배포하려 든다 — 이름이 다르니 조용히 엉뚱한 걸 덮어쓴다.
   const wrangler = spawnSync(
     'npx',
-    ['wrangler', 'deploy', '--var', `NEXT_ORIGIN:${origin}`, ...passthrough],
+    [
+      'wrangler',
+      'deploy',
+      '--config',
+      'wrangler.toml',
+      '--var',
+      `NEXT_ORIGIN:${origin}`,
+      ...passthrough,
+    ],
     { cwd: WORKER_DIR, stdio: 'inherit' },
   );
   if (wrangler.status !== 0) process.exit(wrangler.status ?? 1);

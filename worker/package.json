@@ -5,7 +5,7 @@
   "type": "module",
   "description": "3D 월드 멀티플레이 서버 (Cloudflare Worker + Durable Object). 소유: A",
   "scripts": {
-    "dev": "wrangler dev --env-file ../.env.local",
+    "dev": "wrangler dev --config wrangler.toml --env-file ../.env.local",
     "deploy": "node ../tools/deploy-world.mjs",
     "typecheck": "tsc --noEmit"
   },

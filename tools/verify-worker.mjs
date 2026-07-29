@@ -158,6 +158,11 @@ const worker = spawn(
   [
     'wrangler',
     'dev',
+    // ★ --config 를 빼지 않는다. 저장소 루트에 Next 앱용 wrangler.jsonc 가 생긴 뒤로,
+    //   cwd 가 worker/ 여도 wrangler 가 루트 설정(= 워커 이름 humanish)을 집어간다.
+    //   그러면 이 검증이 3D 월드가 아니라 Next 앱을 띄우려 든다.
+    '--config',
+    'wrangler.toml',
     '--port',
     String(WORKER_PORT),
     '--var',
