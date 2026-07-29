@@ -13,7 +13,7 @@
  *   .cut     파인 면 — 입력칸·로그
  *   .rib     골강판 — 머리말 같은 구조물
  * 배경은 app/layout.tsx 의 .room 이 맡으므로 여기서 배경색을 칠하지 않는다.
- * 색을 더할 때는 씬(app/bg-3d/room-scene.tsx)에 있는 색인지 먼저 본다.
+ * 색을 더할 때는 씬(app/world/warehouse.tsx)에 있는 색인지 먼저 본다.
  */
 'use client';
 

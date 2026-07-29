@@ -43,17 +43,10 @@ export const workspaces: Workspace[] = [
     status: "비어 있음",
   },
   {
-    href: "/bg-3d",
-    title: "3D 배경화면",
-    owner: "원상",
-    description: "창고 시네마 라운지를 Three.js 로 재현 (텍스처 Higgsfield)",
-    status: "작업 중",
-  },
-  {
     href: "/world",
     title: "3D 월드 (멀티플레이)",
     owner: "원상",
-    description: "같은 방 사람들이 한 공간에서 걸어다닌다 (worker/ 를 같이 띄울 것)",
+    description: "창고 라운지에서 같은 방 사람들이 걸어다닌다 (worker/ 를 같이 띄울 것)",
     status: "작업 중",
   },
   {

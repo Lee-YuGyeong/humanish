@@ -3,9 +3,8 @@
 /**
  * 3D 월드 씬 — 여러 명이 같이 걸어다니는 공간. 소유: 원상 (/world)
  *
- * 배경은 app/bg-3d 의 창고(시네마 라운지)를 **그대로** 세운다. 좌표계가 같아서
- * (WORLD 는 ROOM 을 0.6 인셋한 값) 옮겨 심을 필요 없이 컴포넌트만 가져다 쓴다.
- * 여기에 복붙하면 그 순간 두 씬이 갈리므로 import 로 붙인다.
+ * 배경(창고 시네마 라운지)은 ./warehouse.tsx 에 있다. 이 파일은 캔버스·카메라·이동·
+ * 네트워크만 쥔다.
  *
  * 경계는 lib/mp/constants.ts 의 WORLD 하나뿐이고 서버가 같은 값으로 검증한다.
  * 씬을 넓히려면 거기부터 고친다.
@@ -19,7 +18,7 @@ import { Canvas, useFrame, useThree } from '@react-three/fiber';
 import { Suspense, memo, useEffect, useMemo, useRef } from 'react';
 import * as THREE from 'three';
 
-import { Furniture, Lights, Warehouse, resolveColliders } from '@/app/bg-3d/room-scene';
+import { Furniture, Lights, Warehouse, resolveColliders } from './warehouse';
 import {
   EYE_HEIGHT,
   INTERP_DELAY_MS,
@@ -64,7 +63,6 @@ export default function WorldScene({
       <color attach="background" args={['#080604']} />
       <fogExp2 attach="fog" args={['#0b0805', 0.028]} />
 
-      {/* 배경화면(/bg-3d)과 같은 조명 */}
       <Lights flicker />
       {/*
         다만 여기에는 **남이 서 있다.** 배경화면 조명만으로는 스포트 밖의 사람이

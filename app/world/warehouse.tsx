@@ -1,7 +1,7 @@
 "use client";
 
 /**
- * 3D 배경화면 — 레퍼런스(창고를 개조한 시네마 라운지)를 Three.js 로 다시 세운 씬.
+ * 창고 시네마 라운지 — /world 의 배경. 소유: 원상
  *
  * 사진 한 장을 판때기에 붙이는 방식과 달리 방을 **실제로 짓는다**.
  * 바닥·벽·박공지붕·트러스·스크린·가구가 전부 별개의 메시라 카메라가 움직이면 시차가 생긴다.
@@ -10,28 +10,16 @@
  *   public/textures/warehouse/{wall,floor,box}.jpg
  * 벽·바닥은 이음매가 맞물리고, 조명이 구워져 있지 않아 아래 조명 설정이 그대로 먹는다.
  *
- * 이 폴더(app/bg-3d) 밖은 건드리지 않는다.
+ * 여기에는 **씬만 있다.** 캔버스·카메라·이동·네트워크는 world-scene.tsx 가 쥔다.
+ * 원래 /bg-3d 라는 전용 배경화면 라우트였는데, /world 가 같은 방을 쓰게 되면서
+ * 배경만 보는 화면은 지웠다. 치수는 lib/mp/constants.ts 의 WORLD 와 같은 좌표계다
+ * (WORLD 는 아래 ROOM 을 0.6 인셋한 값 — 서버가 그 범위로 검증한다).
  */
 
-import { Canvas, useFrame } from "@react-three/fiber";
-import {
-  Html,
-  PointerLockControls,
-  RoundedBox,
-  useProgress,
-  useTexture,
-} from "@react-three/drei";
-import {
-  Suspense,
-  useEffect,
-  useLayoutEffect,
-  useMemo,
-  useRef,
-  useState,
-  type ReactNode,
-} from "react";
+import { useFrame } from "@react-three/fiber";
+import { RoundedBox, useTexture } from "@react-three/drei";
+import { useLayoutEffect, useMemo, useRef } from "react";
 import * as THREE from "three";
-import type { PointerLockControls as PointerLockControlsImpl } from "three-stdlib";
 
 /* ─────────────────────────── 창고 치수 (월드 단위 ≈ m) ─────────────────────────── */
 
@@ -60,98 +48,6 @@ const TEX = {
 };
 
 useTexture.preload([TEX.wall, TEX.floor, TEX.box]);
-
-/* ─────────────────────────────── 최상위 ─────────────────────────────── */
-
-export default function RoomScene() {
-  const [moving, setMoving] = useState(true);
-  const [flicker, setFlicker] = useState(true);
-  /** 포인터 락 중 = 걷기 모드. 표류 카메라와 서로 배타다 */
-  const [walking, setWalking] = useState(false);
-
-  return (
-    <div className="relative h-full w-full overflow-hidden bg-[#080604]">
-      <Canvas
-        shadows
-        dpr={[1, 1.75]}
-        camera={{ position: [0, 2.6, 4.5], fov: 55, near: 0.1, far: 70 }}
-        gl={{ antialias: true }}
-        onCreated={({ gl }) => {
-          gl.toneMapping = THREE.ACESFilmicToneMapping;
-          gl.toneMappingExposure = 1.1;
-        }}
-      >
-        <color attach="background" args={["#080604"]} />
-        {/* 안개가 있어야 지붕 골조가 멀어 보이고 따뜻한 조명이 공기에 번진다 */}
-        <fogExp2 attach="fog" args={["#0b0805", 0.026]} />
-
-        <Lights flicker={flicker} />
-
-        <Suspense fallback={<Loader />}>
-          <Warehouse />
-          <Furniture />
-        </Suspense>
-
-        {!walking && <CameraRig moving={moving} />}
-        {walking && <PlayerBody />}
-        <WalkRig
-          onLock={() => setWalking(true)}
-          onUnlock={() => setWalking(false)}
-        />
-      </Canvas>
-
-      {/* 화면 가장자리를 떨어뜨려 렌즈 비네팅처럼 보이게 한다 */}
-      <div
-        aria-hidden
-        className="pointer-events-none absolute inset-0"
-        style={{
-          background:
-            "radial-gradient(120% 90% at 50% 45%, transparent 35%, rgba(0,0,0,0.55) 78%, rgba(0,0,0,0.85) 100%)",
-        }}
-      />
-
-      <div className="pointer-events-none absolute inset-x-0 bottom-0 flex flex-wrap items-center justify-between gap-3 p-5">
-        <p className="rounded-full bg-black/40 px-3 py-1.5 text-[11px] text-neutral-400 backdrop-blur">
-          {walking
-            ? "WASD 이동 · Space 점프 · Shift 달리기 · ESC 나가기"
-            : "화면을 클릭하면 걸어다닐 수 있습니다 (WASD · Space)"}
-        </p>
-        <div className="pointer-events-auto flex gap-2">
-          <HudButton on={moving} onClick={() => setMoving((v) => !v)}>
-            카메라 {moving ? "정지" : "이동"}
-          </HudButton>
-          <HudButton on={flicker} onClick={() => setFlicker((v) => !v)}>
-            조명 흔들림 {flicker ? "끄기" : "켜기"}
-          </HudButton>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function HudButton({
-  on,
-  onClick,
-  children,
-}: {
-  on: boolean;
-  onClick: () => void;
-  children: ReactNode;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className={`rounded-full px-4 py-2 text-xs font-bold backdrop-blur transition-colors ${
-        on
-          ? "bg-white/10 text-white ring-1 ring-white/25 hover:bg-white/20"
-          : "bg-amber-950/60 text-amber-200 ring-1 ring-amber-500/40 hover:bg-amber-900/60"
-      }`}
-    >
-      {children}
-    </button>
-  );
-}
 
 /* ─────────────────────────────── 텍스처 ─────────────────────────────── */
 
@@ -946,68 +842,11 @@ function Chair({
   );
 }
 
-/* ─────────────────────────────── 카메라 ─────────────────────────────── */
-
-const camTmp = new THREE.Vector3();
-const lookTmp = new THREE.Vector3();
-
-/**
- * 배경화면용 카메라. OrbitControls 를 붙이지 않는다 —
- * 드래그로 방 밖까지 나가버리면 배경이 아니라 뷰어가 된다.
- *
- * 포인터로 좌우·상하를 조금 흔들고, moving 이면 아주 느린 표류를 얹는다.
- */
-function CameraRig({ moving }: { moving: boolean }) {
-  useFrame((state, delta) => {
-    const t = state.clock.getElapsedTime();
-    // 탭을 오래 비웠다 돌아오면 delta 가 튄다. 한 프레임 분량으로 묶는다
-    const dt = Math.min(delta, 0.1);
-
-    const driftX = moving ? Math.sin(t * 0.11) * 1.8 : 0;
-    const driftY = moving ? Math.sin(t * 0.19) * 0.15 : 0;
-    const driftZ = moving ? Math.sin(t * 0.07) * 1.2 : 0;
-
-    camTmp.set(
-      driftX + state.pointer.x * 1.6,
-      2.7 + driftY + state.pointer.y * 0.5,
-      4.6 + driftZ,
-    );
-    // 지수 감쇠로 따라간다 (프레임레이트에 무관)
-    state.camera.position.lerp(camTmp, 1 - Math.pow(0.0016, dt));
-
-    // 시선을 조금 내려야 앞쪽 테이블이 화면에 걸린다
-    lookTmp.set(state.pointer.x * 0.9, 2.3 + state.pointer.y * 0.5, ROOM.back);
-    state.camera.lookAt(lookTmp);
-  });
-
-  return null;
-}
-
-/* ─────────────────────────────── 걷기 (WASD) ─────────────────────────────── */
-
-/** 걷는 눈높이. 표류 카메라(2.7)보다 낮아야 사람 키로 보인다 */
-const EYE = 1.7;
-/** 벽·무대에 파묻히지 않는 이동 한계 */
-const WALK_BOUNDS = {
-  x: HALF_W - 0.7,
-  zMin: ROOM.back + 1.6,
-  zMax: ROOM.front - 0.7,
-};
-
-const walkFwd = new THREE.Vector3();
-const walkRight = new THREE.Vector3();
-const walkMove = new THREE.Vector3();
+/* ─────────────────────────────── 가구 충돌 ─────────────────────────────── */
 
 /** 플레이어 몸통 반지름 — 이만큼 가구에서 밀려난다 */
 const PLAYER_R = 0.35;
-
-/**
- * 점프. 중력은 현실(9.8)보다 세게 잡는다 — 실제 값이면 체공이 길어 둥둥 뜬 느낌이 난다.
- * 최고점 = JUMP_SPEED² / (2·GRAVITY) ≈ 1.11m. 소파 등받이(0.99)에 올라설 수 있는 높이다.
- */
-const GRAVITY = 22;
-const JUMP_SPEED = 7;
-/** 이보다 낮은 턱은 막지 않고 그냥 올라선다 (낮은 탁자). 점프해야 넘는 것과 가른다 */
+/** 이보다 낮은 턱은 막지 않고 그냥 지나간다 (낮은 탁자). 걸려서 멈추면 답답하다 */
 const STEP_UP = 0.55;
 
 /**
@@ -1090,224 +929,4 @@ export function resolveColliders(p: THREE.Vector3, feetY: number) {
     p.x = c.x + lx * cos + lz * sin;
     p.z = c.z - lx * sin + lz * cos;
   }
-}
-
-/**
- * 발밑에서 가장 높은 지지면. 바닥(0)이 기본이고, 지금 발보다 낮은 윗면만 후보다.
- * 밀려나는 판정(+PLAYER_R)과 달리 실제 윗면 범위로 재야 가장자리에서 허공을 딛지 않는다.
- */
-function groundHeight(p: THREE.Vector3, feetY: number) {
-  let g = 0;
-  for (const c of COLLIDERS) {
-    if (c.top <= g || c.top > feetY + STEP_UP) continue;
-    const [lx, lz] = toLocal(c, p.x, p.z);
-    if (Math.abs(lx) >= c.hw || Math.abs(lz) >= c.hd) continue;
-    g = c.top;
-  }
-  return g;
-}
-
-/**
- * 캔버스를 클릭하면 포인터 락으로 들어가 FPS 처럼 걷는다.
- * 락 중에는 CameraRig 를 내려서(lookAt 이 시선을 덮어쓰므로) 충돌을 막는다.
- * ESC 로 풀리면 표류 카메라가 다시 붙는다.
- */
-function WalkRig({
-  onLock,
-  onUnlock,
-}: {
-  onLock: () => void;
-  onUnlock: () => void;
-}) {
-  const controls = useRef<PointerLockControlsImpl | null>(null);
-  const keys = useRef({
-    f: false,
-    b: false,
-    l: false,
-    r: false,
-    run: false,
-    jump: false,
-  });
-  /** 수직 속도(m/s). 걷기 모드가 아닐 때는 0으로 재워둔다 */
-  const vy = useRef(0);
-
-  useEffect(() => {
-    // e.key 는 한/영 상태를 타므로 물리 키(e.code)로 읽는다
-    const set = (code: string, on: boolean) => {
-      const k = keys.current;
-      if (code === "KeyW" || code === "ArrowUp") k.f = on;
-      else if (code === "KeyS" || code === "ArrowDown") k.b = on;
-      else if (code === "KeyA" || code === "ArrowLeft") k.l = on;
-      else if (code === "KeyD" || code === "ArrowRight") k.r = on;
-      else if (code === "ShiftLeft" || code === "ShiftRight") k.run = on;
-      else if (code === "Space") k.jump = on;
-    };
-    const down = (e: KeyboardEvent) => {
-      // 걷는 중의 Space 는 페이지 스크롤이 아니라 점프다
-      if (e.code === "Space" && document.pointerLockElement) e.preventDefault();
-      set(e.code, true);
-    };
-    const up = (e: KeyboardEvent) => set(e.code, false);
-    window.addEventListener("keydown", down);
-    window.addEventListener("keyup", up);
-    return () => {
-      window.removeEventListener("keydown", down);
-      window.removeEventListener("keyup", up);
-    };
-  }, []);
-
-  useFrame((state, delta) => {
-    if (!controls.current?.isLocked) {
-      // 다시 들어왔을 때 나갈 때의 낙하 속도가 되살아나지 않게
-      vy.current = 0;
-      return;
-    }
-    const dt = Math.min(delta, 0.1);
-    const k = keys.current;
-
-    // 시선의 수평 성분만 이동 방향으로 쓴다 — 위를 봐도 떠오르지 않게
-    state.camera.getWorldDirection(walkFwd);
-    walkFwd.y = 0;
-    walkFwd.normalize();
-    walkRight.crossVectors(walkFwd, state.camera.up).normalize();
-
-    walkMove
-      .set(0, 0, 0)
-      .addScaledVector(walkFwd, Number(k.f) - Number(k.b))
-      .addScaledVector(walkRight, Number(k.r) - Number(k.l));
-    if (walkMove.lengthSq() > 0) {
-      walkMove.normalize().multiplyScalar((k.run ? 6 : 3.2) * dt);
-      state.camera.position.add(walkMove);
-    }
-
-    const p = state.camera.position;
-    // 발 높이로 판정한다. 카메라는 눈이고, 가구를 딛는 건 발이다
-    let feet = p.y - EYE;
-    resolveColliders(p, feet);
-    p.x = THREE.MathUtils.clamp(p.x, -WALK_BOUNDS.x, WALK_BOUNDS.x);
-    p.z = THREE.MathUtils.clamp(p.z, WALK_BOUNDS.zMin, WALK_BOUNDS.zMax);
-
-    const ground = groundHeight(p, feet);
-    // 착지해 있을 때만 뛴다 (누르고 있으면 계속 뛴다 — 연타할 필요 없게)
-    if (k.jump && feet <= ground + 0.02 && vy.current <= 0) {
-      vy.current = JUMP_SPEED;
-    }
-    vy.current -= GRAVITY * dt;
-    feet += vy.current * dt;
-    if (feet <= ground) {
-      feet = ground;
-      vy.current = 0;
-    }
-    // 표류 카메라(y≈2.7)에서 넘어온 직후는 이 낙하로 자연스럽게 눈높이까지 떨어진다
-    p.y = feet + EYE;
-  });
-
-  return (
-    <PointerLockControls
-      ref={controls}
-      onLock={onLock}
-      onUnlock={onUnlock}
-      // 바로 위·바로 아래를 보면 이동 방향이 퇴화한다. 살짝 남겨둔다
-      minPolarAngle={0.15}
-      maxPolarAngle={Math.PI - 0.15}
-    />
-  );
-}
-
-const bodyDir = new THREE.Vector3();
-
-/**
- * 걷기 모드에서 아래를 보면 걸리는 1인칭 몸 — 다리와 신발만.
- * 허리 위는 만들지 않는다 (near 0.1 카메라에 어깨가 잘려 들어와 흉하다).
- * 다리는 카메라의 수평 회전(요)만 따라간다. 고개를 들어도 몸은 안 돈다.
- */
-function PlayerBody() {
-  const body = useRef<THREE.Group>(null);
-  const legL = useRef<THREE.Group>(null);
-  const legR = useRef<THREE.Group>(null);
-  const prev = useRef<THREE.Vector3 | null>(null);
-  const phase = useRef(0);
-  const swing = useRef(0);
-
-  useFrame((state, delta) => {
-    if (!body.current) return;
-    const dt = Math.min(delta, 0.1);
-    const p = state.camera.position;
-
-    if (!prev.current) prev.current = p.clone();
-    // 걷는 속도는 수평 성분만 — 점프로 오르내리는 걸 걸음으로 세면 안 된다
-    const speed =
-      Math.hypot(p.x - prev.current.x, p.z - prev.current.z) / Math.max(dt, 1e-4);
-    prev.current.copy(p);
-
-    state.camera.getWorldDirection(bodyDir);
-    const feet = p.y - EYE;
-    body.current.position.set(p.x, feet, p.z);
-    body.current.rotation.y = Math.atan2(bodyDir.x, bodyDir.z);
-
-    // 공중에서는 다리를 젓지 않고 앞뒤로 벌린 채 굳힌다
-    const airborne = feet > groundHeight(p, feet) + 0.03;
-    if (airborne) {
-      swing.current = THREE.MathUtils.damp(swing.current, 0, 10, dt);
-      if (legL.current) legL.current.rotation.x = 0.5;
-      if (legR.current) legR.current.rotation.x = -0.25;
-      return;
-    }
-
-    // 이동 속도에 비례해 다리를 젓고, 멈추면 감쇠로 차렷 자세로 돌아온다
-    swing.current = THREE.MathUtils.damp(
-      swing.current,
-      THREE.MathUtils.clamp(speed / 3.2, 0, 1.5),
-      8,
-      dt,
-    );
-    phase.current += speed * dt * 2.6;
-    const a = Math.sin(phase.current) * 0.5 * swing.current;
-    if (legL.current) legL.current.rotation.x = a;
-    if (legR.current) legR.current.rotation.x = -a;
-  });
-
-  return (
-    <group ref={body}>
-      {(
-        [
-          [-0.13, legL],
-          [0.13, legR],
-        ] as const
-      ).map(([x, ref]) => (
-        // 엉덩이(y=0.95)를 축으로 흔든다. 발끝은 로컬 +z(시선 방향)
-        <group key={x} ref={ref} position={[x, 0.95, 0]}>
-          <mesh position={[0, -0.44, 0]} castShadow>
-            <boxGeometry args={[0.17, 0.88, 0.19]} />
-            <meshStandardMaterial color="#191512" roughness={0.9} />
-          </mesh>
-          <mesh position={[0, -0.85, 0.08]} castShadow>
-            <boxGeometry args={[0.18, 0.1, 0.33]} />
-            <meshStandardMaterial color="#0d0b09" roughness={0.55} />
-          </mesh>
-        </group>
-      ))}
-    </group>
-  );
-}
-
-/* ─────────────────────────────── 로딩 ─────────────────────────────── */
-
-function Loader() {
-  const { progress } = useProgress();
-  return (
-    <Html center>
-      <div className="w-56 text-center">
-        <div className="mb-3 h-1 w-full overflow-hidden rounded-full bg-neutral-800">
-          <div
-            className="h-full rounded-full bg-amber-600 transition-all"
-            style={{ width: `${progress}%` }}
-          />
-        </div>
-        <p className="font-mono text-[11px] tracking-widest text-neutral-500">
-          {progress.toFixed(0)}%
-        </p>
-      </div>
-    </Html>
-  );
 }

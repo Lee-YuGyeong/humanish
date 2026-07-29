@@ -70,7 +70,7 @@ export default function RootLayout({
           슬래브 눈금이 소실점을 향해 저절로 좁아진다 — 평면에 그린 격자와 다른 점이다.
           JS는 한 줄도 쓰지 않는다.
 
-          /bg-3d 의 진짜 Three.js 씬은 자기 캔버스로 이걸 덮는다. 그 폴더는 건드리지 않는다.
+          /world 의 진짜 Three.js 씬(app/world/warehouse.tsx)은 자기 캔버스로 이걸 덮는다.
         */}
         <div aria-hidden className="room">
           <div className="room-wall room-wall-l" />
