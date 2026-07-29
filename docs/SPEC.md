@@ -74,7 +74,7 @@
 | DB / 실시간 | Supabase (Postgres + Realtime) | |
 | 서버 로직 | Supabase Edge Function + Next.js Route Handler | |
 | 3D | react-three-fiber + drei | 게임이 끝까지 돌아간 뒤에 도입. 그 전에는 2D |
-| LLM | **미정 — §15-1** | 잠정: NVIDIA NIM API. 프록시는 Route Handler 경유 |
+| LLM | **NVIDIA NIM API — §15-1-결정** | OpenAI 호환 REST. 프록시는 `/api/agent`(edge) 경유 |
 | 배포 | Vercel | 첫날부터 URL 유지 |
 
 **금지 사항** (근거는 「불변 규칙」)
@@ -586,7 +586,9 @@ export interface AgentOutput {
   action: AgentAction;
 }
 
-export async function generate(ctx: AgentContext): Promise<AgentOutput>;
+// call은 route가 넘겨주는 LLM 호출 함수(§9.2, LlmCall — lib/game/types.ts).
+// 없으면 즉시 폴백 — 키가 없어도 게임은 돈다 (§13-5).
+export async function generate(ctx: AgentContext, call?: LlmCall | null): Promise<AgentOutput>;
 ```
 
 ### 9.1 프롬프트 인젝션 방어는 이 계층의 책임이다
@@ -604,7 +606,9 @@ export async function generate(ctx: AgentContext): Promise<AgentOutput>;
 | `agent_logs` 기록 항목 | 토큰 사용량 필드 이름 |
 | 인젝션 방어 원칙 (9.1) | 구조화 출력 구현 방식 |
 
-**공급자에 의존하는 코드는 `app/api/agent/route.ts` 한 파일에만 둔다.** SDK 초기화, 모델 ID, 요청·응답 모양 변환이 전부 여기다. `lib/agent/generate.ts`는 `AgentContext`를 프롬프트로 빚고 응답을 `AgentOutput`으로 파싱하는 **공급자 무관 층**이며, 실제 호출은 route가 넘겨준 함수로 한다. 공급자를 바꿀 때 `generate.ts`를 열게 된다면 격리에 실패한 것이다.
+**공급자에 의존하는 코드는 `app/api/agent/route.ts` 한 파일에만 둔다.** SDK 초기화, 모델 ID, 요청·응답 모양 변환이 전부 여기다. `lib/agent/generate.ts`는 `AgentContext`를 프롬프트로 빚고 응답을 `AgentOutput`으로 파싱하는 **공급자 무관 층**이며, 실제 호출은 route가 넘겨준 함수로 한다(타입은 `lib/game/types.ts`의 `LlmCall`). 공급자를 바꿀 때 `generate.ts`를 열게 된다면 격리에 실패한 것이다.
+
+공급자는 **NVIDIA NIM으로 확정했다** (§15-1-결정). OpenAI 호환 REST라 SDK 없이 fetch로 부르고, 런타임은 edge다.
 
 ---
 
@@ -812,7 +816,7 @@ select * from agent_logs;                       -- 봇 내부 판단
 
 | # | 항목 | 결정해야 하는 것 | 막히는 작업 |
 |---|---|---|---|
-| **15-1** | LLM 공급자 | 어느 API를 쓸지. 정해지면 §1·§9.2·`.env.local.example`을 갱신하고, Route Handler 런타임(`edge` / `nodejs`)을 그 SDK 지원 여부로 확정한다. **§17로 순서가 바뀌어 지금은 아무것도 막지 않는다** — 게임을 문구 풀로 먼저 완성한 뒤에 고른다 | 없음 (AI를 얹기 직전까지) |
+| **15-1** | ~~LLM 공급자~~ **결정: NVIDIA NIM API.** OpenAI 호환 REST라 SDK 없이 fetch로 부르고, Route Handler 런타임은 `edge`로 확정한다. 어댑터는 `app/api/agent/route.ts` 한 파일에만 둔다 (§9.2). 근거는 §15-1-결정 | — |
 | **15-2** | 익명 인증 도입 여부 | Supabase 익명 인증을 붙이면 `players`에 `user_id`가 필요하다 → `types.ts` 변경이라 팀 공지 사안. 붙이지 않으면 §7.1 전제를 유지한다 | RLS를 더 조이려 할 때 |
 | **15-3** | ~~봇을 채우는 시점 · 봇 수 공개~~ **결정: 공개한다.** 봇이 **몇인지**는 화면에 띄운다. 어느 자리인지는 여전히 숨긴다 (I1). 근거는 §15-3-결정 | — |
 | **15-4** | 이탈 · 재접속 처리 | 게임 중 나간 사람의 자리를 봇이 이어받는가, 빈 채로 두는가 | §13-2 |
@@ -820,6 +824,15 @@ select * from agent_logs;                       -- 봇 내부 판단
 | **15-6** | 방 격리를 DB로 강제할지 | 지금은 클라이언트 계약(§6.3)으로만 유지된다. anon 키로 다른 방의 닉네임·좌석·질문·공개 답변·채팅을 읽을 수 있다. 승패 정보(`is_bot`·역할·미공개 답변·reveal 이전 투표)는 이미 막혀 있다. 강제하려면 15-2가 선행돼야 한다 (이유는 §7.3) | 데모 공개 범위를 정할 때 |
 
 ---
+
+### 15-1-결정 — NVIDIA NIM API
+
+**결정: NVIDIA NIM API를 쓴다. 런타임은 edge.** (2026-07-29)
+
+- **OpenAI 호환 REST**(`{base}/chat/completions`)라 SDK가 필요 없다. fetch만 쓰므로 Route Handler는 `edge`로 확정한다. fetch에는 기본 재시도가 없어 §12.3의 "재시도 0"이 공짜로 지켜진다 — 나중에 SDK를 들이게 되면 그 순간 재시도 설정부터 확인한다.
+- 키는 `NVIDIA_NIM_API_KEY`, 주소는 `NVIDIA_NIM_BASE_URL`, 모델은 `NVIDIA_NIM_MODEL` (`.env.local.example`). 모델 교체는 환경변수만 바꾸면 된다 — 한국어 반말 채팅 품질은 `/lab`에서 비교해 고른다.
+- 공급자 의존 코드는 §9.2대로 `app/api/agent/route.ts` 안에만 있다. `generate`(B)에는 `LlmCall`(`lib/game/types.ts`) 함수만 넘어간다. 공급자를 바꾸면 route 한 파일만 갈아끼운다.
+- 선생성 층(§12.3)이 붙기 전까지 이 라우트는 **개발 환경 전용**이다(프로덕션 404). 열어두면 남의 지갑으로 쓰는 LLM 프록시가 된다. 붙일 때 world-room처럼 내부 Bearer 인증으로 바꾼다.
 
 ### 15-3-결정 — 봇 수를 공개한다
 
@@ -989,7 +1002,7 @@ POST /api/room/join
 
 | 대상 | 무엇이 바뀌나 |
 |---|---|
-| `app/api/agent/route.ts` | 공급자 SDK 연결. §15-1을 그때 정한다 |
+| `app/api/agent/route.ts` | ~~공급자 SDK 연결~~ **완료 — NIM 어댑터** (§15-1-결정). 남은 것은 선생성 층과의 연결 |
 | `lib/agent/generate.ts` | `AgentContext` → 프롬프트, 응답 → `AgentOutput` |
 | 선생성 층 | 현재 페이즈가 도는 동안 다음 페이즈 봇 답변을 미리 insert (§12.3) |
 | 전환 함수 (plpgsql) | **한 줄만 바뀐다** — "이미 준비된 답변이 있으면 건드리지 않는다" |

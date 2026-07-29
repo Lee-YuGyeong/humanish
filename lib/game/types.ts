@@ -104,6 +104,22 @@ export interface Vote {
   reason: string;
 }
 
+/**
+ * LLM 호출 계약 — A(app/api/agent/route.ts)가 구현하고 B(lib/agent/generate.ts)가
+ * 인자로 받는다 (SPEC §9.2 "실제 호출은 route가 넘겨준 함수로 한다").
+ * 공급자 세부(NIM 엔드포인트 · 인증 · 모델 ID)는 route.ts 밖으로 나오지 않는다.
+ * B는 이 함수만 알면 되고, 공급자가 바뀌어도 이 타입은 그대로다 (§15-1-결정).
+ */
+export interface LlmChatMessage {
+  role: 'system' | 'user' | 'assistant';
+  content: string;
+}
+
+export type LlmCall = (
+  messages: LlmChatMessage[],
+  opts?: { signal?: AbortSignal },
+) => Promise<string>;
+
 export interface AgentLog {
   id: string;
   room_id: string;
