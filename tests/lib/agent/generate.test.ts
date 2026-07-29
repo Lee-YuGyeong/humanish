@@ -11,6 +11,7 @@ import {
   fallbackOutput,
   FALLBACK_POOL,
   generate,
+  isEvasive,
   parseOutput,
   type AgentContext,
 } from '@/lib/agent/generate';
@@ -64,9 +65,23 @@ describe('buildMessages — 인젝션 방어 구조 (§9.1)', () => {
     expect(msgs[0].content).toContain('말투');
   });
 
-  it('질문이 없으면(chat 페이즈) 질문 줄이 빠진다', () => {
-    const msgs = buildMessages(ctx({ phase: 'chat', question: undefined }));
-    expect(msgs[1].content).not.toContain('질문:');
+  it('질문은 대화 기록 뒤(지시 직전)에 온다 — 모델은 마지막에 본 것에 답한다', () => {
+    const user = buildMessages(
+      ctx({
+        visibleHistory: [
+          { speaker: '익명2', text: '나는 무조건 엽떡 ㅋㅋ' },
+          { speaker: '익명4', text: '3번 너 좀 이상해' },
+        ],
+      }),
+    )[1].content;
+    expect(user.indexOf('[지금 답할 질문]')).toBeGreaterThan(user.indexOf('3번 너 좀 이상해'));
+    expect(user).toContain('질문에 바로 답한다');
+  });
+
+  it('질문이 없으면(chat 페이즈) 질문 블록이 빠지고 흐름에 끼어든다', () => {
+    const user = buildMessages(ctx({ phase: 'chat', question: undefined }))[1].content;
+    expect(user).not.toContain('[지금 답할 질문]');
+    expect(user).toContain('끼어들어라');
   });
 });
 
@@ -92,6 +107,16 @@ describe('parseOutput — 뭐가 오든 발화 가능한 모양으로 (§12.3)',
   it('JSON이 아니면 원문을 발화로 쓴다', () => {
     const out = parseOutput('그냥 치킨 아닐까', ctx());
     expect(out.messages).toEqual(['그냥 치킨 아닐까']);
+  });
+
+  it('깨진 JSON에서도 발화만 건진다 — 잔해가 채팅에 나가면 즉사다', () => {
+    const out = parseOutput('{"messages":["물이라는거 생각나서 물\'],"}', ctx());
+    expect(out.messages).toEqual(['물이라는거 생각나서 물']);
+  });
+
+  it('발화를 못 건진 JSON 잔해는 폴백으로 바꾼다', () => {
+    const out = parseOutput('{"mess', ctx());
+    expect(FALLBACK_POOL).toContain(out.messages[0]);
   });
 
   it('자백(금칙어)이 든 발화는 폴백 문구로 바뀐다 — §9.1의 마지막 그물', () => {
@@ -131,11 +156,46 @@ describe('parseOutput — 뭐가 오든 발화 가능한 모양으로 (§12.3)',
     }
   });
 
+  it('얼버무림은 실속 있는 발화가 있으면 버린다', () => {
+    const out = parseOutput(
+      JSON.stringify({ messages: ['음 글쎄', '치킨이지 뭐'] }),
+      ctx(),
+    );
+    expect(out.messages).toEqual(['치킨이지 뭐']);
+  });
+
+  it('전부 얼버무림이면 그대로 둔다 — 폴백("ㅇㅇ")으로 바꾸면 더 나쁜 얼버무림이다', () => {
+    const out = parseOutput(JSON.stringify({ messages: ['음 글쎄...'] }), ctx());
+    expect(out.messages).toEqual(['음 글쎄...']);
+  });
+
+  it('isEvasive — 회피는 잡고, 답이 붙어 있으면 살린다', () => {
+    for (const bad of ['음 글쎄', '왜 이런 걸 물어보지', '대답하기 좀 그런데', '잘 모르겠어 ㅎㅎ']) {
+      expect(isEvasive(bad)).toBe(true);
+    }
+    for (const fine of ['글쎄 나는 무조건 치킨', '모르겠고 국밥이나 먹자', '엽떡이지', 'ㅇㅇ']) {
+      expect(isEvasive(fine)).toBe(false);
+    }
+  });
+
   it('정상 발화는 금칙 필터를 통과한다 — 오탐 확인', () => {
     for (const fine of ['아 몰라 그냥 국밥', 'wait 뭐라고 ㅋㅋ', '메인은 엽떡이지']) {
       const out = parseOutput(JSON.stringify({ messages: [fine] }), ctx());
       expect(out.messages[0]).toBe(fine);
     }
+  });
+
+  it('한자 유출을 걷어낸다 — 한국어 채팅에 한자는 봇 티다', () => {
+    const out = parseOutput(JSON.stringify({ messages: ['서로 봐주는 거吧'] }), ctx());
+    expect(out.messages).toEqual(['서로 봐주는 거']);
+  });
+
+  it('길이 컷은 단어 경계에서 자른다 — 중간에서 뚝 끊긴 문장은 어색하다', () => {
+    const long = '오늘 알바 끝나고 집에 가는데 비를 쫄딱 맞아서 '.repeat(4).trim(); // 80자 초과
+    expect(long.length).toBeGreaterThan(80);
+    const out = parseOutput(JSON.stringify({ messages: [long] }), ctx());
+    expect(out.messages[0].length).toBeLessThanOrEqual(80);
+    expect(long.startsWith(out.messages[0] + ' ')).toBe(true); // 단어 경계 — 잘린 조각이 아니다
   });
 
   it('발화는 최대 2개 · 80자로 자른다 — 길이 자체가 봇 티다', () => {
