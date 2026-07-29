@@ -177,7 +177,8 @@ function useTiled(map: THREE.Texture, repeatX: number, repeatY: number) {
 
 const STEEL = "#1e1b17";
 
-function Warehouse() {
+/** 건물 골조 · 스크린 · 선반. /world 가 같은 좌표계로 이걸 그대로 세운다 */
+export function Warehouse() {
   const [wall, floor, box] = useTexture([TEX.wall, TEX.floor, TEX.box]);
 
   // 텍스처 한 장이 덮는 실제 크기: 골강판 3.2m, 바닥 슬래브 4장 = 7m
@@ -561,7 +562,7 @@ function RoadCases() {
  * 스크린 스포트 3개 + 펜던트 등 + 벽 브래킷 등으로만 구성한다.
  * 그림자는 좌석 위 스포트 2개만 굽는다 — 전부 켜면 프레임이 반토막 난다.
  */
-function Lights({ flicker }: { flicker: boolean }) {
+export function Lights({ flicker }: { flicker: boolean }) {
   return (
     <>
       {/* 완전한 암부가 생기지 않을 만큼만, 따뜻하게 */}
@@ -765,7 +766,7 @@ const LEATHER_BLACK = "#1b1715";
 const CHAIR_BROWN = "#4a2b21";
 const WOOD_DARK = "#241a13";
 
-function Furniture() {
+export function Furniture() {
   return (
     <group>
       {/* 스크린 앞 소파 라운지 — 전부 스크린을 본다 */}
@@ -1069,7 +1070,7 @@ function toLocal(
  *
  * 발(feetY)이 윗면보다 높으면 막지 않는다 — 뛰어넘거나 위에 올라선 상태다.
  */
-function resolveColliders(p: THREE.Vector3, feetY: number) {
+export function resolveColliders(p: THREE.Vector3, feetY: number) {
   for (const c of COLLIDERS) {
     if (feetY >= c.top - 0.02 || c.top - feetY <= STEP_UP) continue;
     const [lx0, lz0] = toLocal(c, p.x, p.z);

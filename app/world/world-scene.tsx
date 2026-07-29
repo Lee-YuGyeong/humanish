@@ -3,19 +3,23 @@
 /**
  * 3D 월드 씬 — 여러 명이 같이 걸어다니는 공간. 소유: 원상 (/world)
  *
- * app/bg-3d 의 창고와 같은 좌표계·같은 텍스처를 쓰되, **아바타 N명을 그리는 게 목적**이라
- * 골조·가구를 걷어내고 가볍게 지었다. 경계는 lib/mp/constants.ts 의 WORLD 하나뿐이고
- * 서버가 같은 값으로 검증한다. 씬을 넓히려면 거기부터 고친다.
+ * 배경은 app/bg-3d 의 창고(시네마 라운지)를 **그대로** 세운다. 좌표계가 같아서
+ * (WORLD 는 ROOM 을 0.6 인셋한 값) 옮겨 심을 필요 없이 컴포넌트만 가져다 쓴다.
+ * 여기에 복붙하면 그 순간 두 씬이 갈리므로 import 로 붙인다.
+ *
+ * 경계는 lib/mp/constants.ts 의 WORLD 하나뿐이고 서버가 같은 값으로 검증한다.
+ * 씬을 넓히려면 거기부터 고친다.
  *
  * ★ 이 파일에는 "누가 봇인가"를 알 수 있는 코드가 한 줄도 없다 (I1).
  *   아바타는 전부 같은 경로로 그려지고, 색은 좌석 번호에서만 나온다.
  */
 
-import { Html, PointerLockControls, useTexture } from '@react-three/drei';
+import { Html, PointerLockControls } from '@react-three/drei';
 import { Canvas, useFrame, useThree } from '@react-three/fiber';
 import { Suspense, memo, useEffect, useMemo, useRef } from 'react';
 import * as THREE from 'three';
 
+import { Furniture, Lights, Warehouse, resolveColliders } from '@/app/bg-3d/room-scene';
 import {
   EYE_HEIGHT,
   INTERP_DELAY_MS,
@@ -33,16 +37,6 @@ import { useWorldStore } from './store';
 
 const CENTER_X = (WORLD.minX + WORLD.maxX) / 2;
 const CENTER_Z = (WORLD.minZ + WORLD.maxZ) / 2;
-const SPAN_X = WORLD.maxX - WORLD.minX;
-const SPAN_Z = WORLD.maxZ - WORLD.minZ;
-const WALL_H = 5.6;
-
-const TEX = {
-  wall: '/textures/warehouse/wall.jpg',
-  floor: '/textures/warehouse/floor.jpg',
-};
-
-useTexture.preload([TEX.wall, TEX.floor]);
 
 /* ─────────────────────────────── 최상위 ─────────────────────────────── */
 
@@ -70,16 +64,18 @@ export default function WorldScene({
       <color attach="background" args={['#080604']} />
       <fogExp2 attach="fog" args={['#0b0805', 0.028]} />
 
-      {/* 아바타를 알아볼 수 있는 밝기가 우선이다. 분위기만 좇으면 남이 검은 덩어리가 된다 */}
-      <ambientLight intensity={0.9} color="#ffd9a8" />
-      <hemisphereLight args={['#8fb6ff', '#3a2a1c', 0.7]} />
-      <directionalLight position={[6, 9, 4]} intensity={1.1} color="#ffcf94" />
-      <pointLight position={[CENTER_X, 4.2, CENTER_Z]} intensity={60} distance={30} color="#ffb765" />
-      <pointLight position={[CENTER_X - 6, 3.4, CENTER_Z + 5]} intensity={26} distance={20} color="#6f8dff" />
-      <pointLight position={[CENTER_X + 6, 3.4, CENTER_Z - 5]} intensity={22} distance={20} color="#ff9a6f" />
+      {/* 배경화면(/bg-3d)과 같은 조명 */}
+      <Lights flicker />
+      {/*
+        다만 여기에는 **남이 서 있다.** 배경화면 조명만으로는 스포트 밖의 사람이
+        검은 덩어리가 되어 누가 있는지 안 보인다. 아바타를 알아볼 최소한만 얹는다.
+      */}
+      <ambientLight intensity={0.45} color="#ffd9a8" />
+      <hemisphereLight args={['#8fb6ff', '#3a2a1c', 0.35]} />
 
       <Suspense fallback={null}>
-        <Arena />
+        <Warehouse />
+        <Furniture />
       </Suspense>
 
       <Remotes />
@@ -89,72 +85,6 @@ export default function WorldScene({
         onUnlock={() => onLockChange?.(false)}
       />
     </Canvas>
-  );
-}
-
-/* ─────────────────────────────── 공간 ─────────────────────────────── */
-
-function useTiled(map: THREE.Texture, repeatX: number, repeatY: number) {
-  // useTexture는 URL 단위로 캐시를 공유한다. 원본의 repeat를 고치면 같은 텍스처를 쓰는
-  // 다른 면까지 같이 변하므로 면마다 clone한다 (이미지 데이터는 공유된다).
-  return useMemo(() => {
-    const t = map.clone();
-    t.wrapS = THREE.RepeatWrapping;
-    t.wrapT = THREE.RepeatWrapping;
-    t.repeat.set(repeatX, repeatY);
-    t.colorSpace = THREE.SRGBColorSpace;
-    t.anisotropy = 8;
-    t.needsUpdate = true;
-    return t;
-  }, [map, repeatX, repeatY]);
-}
-
-function Arena() {
-  const [wall, floor] = useTexture([TEX.wall, TEX.floor]);
-
-  const floorTex = useTiled(floor, SPAN_X / 7, SPAN_Z / 7);
-  const sideTex = useTiled(wall, SPAN_Z / 3.2, WALL_H / 3.2);
-  const endTex = useTiled(wall, SPAN_X / 3.2, WALL_H / 3.2);
-
-  return (
-    <group>
-      <mesh rotation-x={-Math.PI / 2} position={[CENTER_X, 0, CENTER_Z]}>
-        <planeGeometry args={[SPAN_X, SPAN_Z]} />
-        <meshStandardMaterial map={floorTex} color="#93887a" roughness={0.9} metalness={0.04} />
-      </mesh>
-
-      {/* 좌우 벽 */}
-      {[WORLD.minX, WORLD.maxX].map((x) => (
-        <mesh
-          key={`side-${x}`}
-          position={[x, WALL_H / 2, CENTER_Z]}
-          rotation-y={x < 0 ? Math.PI / 2 : -Math.PI / 2}
-        >
-          <planeGeometry args={[SPAN_Z, WALL_H]} />
-          <meshStandardMaterial map={sideTex} color="#6b6259" roughness={0.95} side={THREE.DoubleSide} />
-        </mesh>
-      ))}
-
-      {/* 앞뒤 벽 */}
-      {[WORLD.minZ, WORLD.maxZ].map((z) => (
-        <mesh key={`end-${z}`} position={[CENTER_X, WALL_H / 2, z]} rotation-y={z < 0 ? 0 : Math.PI}>
-          <planeGeometry args={[SPAN_X, WALL_H]} />
-          <meshStandardMaterial map={endTex} color="#6b6259" roughness={0.95} side={THREE.DoubleSide} />
-        </mesh>
-      ))}
-
-      {/* 천장. 열린 하늘이 보이면 안개가 끊겨 보인다 */}
-      <mesh rotation-x={Math.PI / 2} position={[CENTER_X, WALL_H, CENTER_Z]}>
-        <planeGeometry args={[SPAN_X, SPAN_Z]} />
-        <meshStandardMaterial color="#141009" roughness={1} />
-      </mesh>
-
-      {/* 가운데 원형 러그 — 좌석 스폰이 이 위에 놓인다. 방향 감각용 지표다 */}
-      <mesh rotation-x={-Math.PI / 2} position={[CENTER_X, 0.01, CENTER_Z + 1.5]}>
-        <circleGeometry args={[4.6, 48]} />
-        <meshStandardMaterial color="#3a241c" roughness={1} />
-      </mesh>
-    </group>
   );
 }
 
@@ -228,6 +158,10 @@ function LocalRig({ conn, spawn }: { conn: WorldConnection; spawn: { x: number; 
       pos.current.addScaledVector(right.current, (ax / len) * speed);
       anim = running ? 'run' : 'walk';
     }
+
+    // 가구. 배경이 빈 상자가 아니라 라운지가 됐으므로 소파·랙을 뚫고 지나가지 않게 막는다.
+    // 발 높이는 항상 0이다 — 이 씬에는 점프가 없다.
+    resolveColliders(pos.current, 0);
 
     // 벽. 서버는 범위 밖을 **거절**만 하므로(보정하지 않는다) 클라가 먼저 막는다
     pos.current.x = Math.min(Math.max(pos.current.x, WORLD.minX + 0.4), WORLD.maxX - 0.4);
