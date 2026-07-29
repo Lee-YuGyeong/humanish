@@ -24,6 +24,7 @@ interface LabResult {
   player_id: string;
   persona?: { id: string; traits: string[] };
   output: AgentOutput;
+  took_ms?: number;
   fallback: boolean;
 }
 
@@ -49,6 +50,8 @@ export default function LabPage() {
   const [question, setQuestion] = useState('요즘 제일 자주 시켜 먹는 야식이 뭐야?');
   const [phase, setPhase] = useState<(typeof PHASES)[number]>('question');
   const [historyText, setHistoryText] = useState('익명2: 나는 무조건 엽떡\n익명4: 헐 나도 ㅋㅋ 로제로');
+  const [model, setModel] = useState('');
+  const [usedModel, setUsedModel] = useState<string | null>(null);
   const [results, setResults] = useState<LabResult[] | null>(null);
   const [tookMs, setTookMs] = useState<number | null>(null);
   const [loading, setLoading] = useState(false);
@@ -75,11 +78,13 @@ export default function LabPage() {
           question: question.trim() || undefined,
           phase,
           history: parseHistory(historyText),
+          model: model.trim() || undefined,
         }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? `HTTP ${res.status}`);
       setResults(data.results as LabResult[]);
+      setUsedModel(data.model ?? null);
       setTookMs(Date.now() - t0);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -147,6 +152,18 @@ export default function LabPage() {
 
           <label className="block">
             <span className="stencil text-[10px] text-ash">
+              모델 (비우면 .env.local의 NVIDIA_NIM_MODEL) — 예: meta/llama-3.1-70b-instruct
+            </span>
+            <input
+              value={model}
+              onChange={(e) => setModel(e.target.value)}
+              className="cut mt-1 w-full bg-transparent px-4 py-2 text-sm outline-none"
+              placeholder={config?.model ?? ''}
+            />
+          </label>
+
+          <label className="block">
+            <span className="stencil text-[10px] text-ash">
               앞선 대화 (한 줄에 하나, &quot;닉네임: 내용&quot;) — 봇이 이 말투를 관측해서 따라간다
             </span>
             <textarea
@@ -174,7 +191,7 @@ export default function LabPage() {
         {results && (
           <div className="mt-10">
             <p className="stencil text-[10px] text-ash">
-              결과 · {tookMs !== null ? `${tookMs}ms` : ''} · 병렬 {results.length}명
+              결과 · {usedModel ?? ''} · {tookMs !== null ? `${tookMs}ms` : ''} · 병렬 {results.length}명
             </p>
             <div className="mt-4 grid gap-4 sm:grid-cols-2">
               {results.map((r) => (
@@ -183,9 +200,10 @@ export default function LabPage() {
                     <span className="stencil text-[10px] text-tung">
                       {r.persona?.id ?? r.player_id}
                     </span>
-                    {r.fallback && (
-                      <span className="stencil text-[10px] text-ash">fallback</span>
-                    )}
+                    <span className="stencil text-[10px] text-ash">
+                      {r.fallback ? 'fallback · ' : ''}
+                      {r.took_ms !== undefined ? `${(r.took_ms / 1000).toFixed(1)}s` : ''}
+                    </span>
                   </div>
                   {r.persona && (
                     <p className="mt-1 text-[11px] text-ash">{r.persona.traits.join(' · ')}</p>

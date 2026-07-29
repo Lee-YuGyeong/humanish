@@ -73,7 +73,7 @@ async function callNim(
     body: JSON.stringify({
       model: cfg.model,
       messages,
-      temperature: 0.9, // 낮으면 봇들이 같은 말을 한다 — 봇마다 답이 달라야 숨는다
+      temperature: 0.75, // 0.9는 8b에서 말이 샜다(실측 — 엉뚱한 답). 다양성은 페르소나가 만든다
       max_tokens: 300, // 게임 발화는 길 이유가 없다. 길면 그것부터 봇 티가 난다
     }),
     signal: signal ?? null,
@@ -97,19 +97,36 @@ async function callNim(
 // ── 공급자 무관 층 — 타임아웃 ───────────────────────────────────────────────
 
 /** 8초 컷 (§12.3). AbortController로 fetch까지 실제로 끊는다. */
-function withDeadline<T>(run: (signal: AbortSignal) => Promise<T>): Promise<T> {
+function withDeadline<T>(run: (signal: AbortSignal) => Promise<T>, ms: number): Promise<T> {
   const ac = new AbortController();
-  const timer = setTimeout(
-    () => ac.abort(new Error(`시간 초과 (${AGENT_TIMEOUT_MS}ms)`)),
-    AGENT_TIMEOUT_MS,
-  );
+  const timer = setTimeout(() => ac.abort(new Error(`시간 초과 (${ms}ms)`)), ms);
   return run(ac.signal).finally(() => clearTimeout(timer));
 }
 
+/**
+ * /lab 전용 여유 컷. 게임은 8초가 규칙(§12.3)이지만 lab은 품질 비교가 목적이라
+ * 느린 모델도 일단 답을 보게 한다. 응답 시간(took_ms)을 같이 보여주므로
+ * "이 모델이 8초 안에 들어오는가"도 lab에서 판단할 수 있다.
+ */
+const LAB_TIMEOUT_MS = 30_000;
+
 // ── 라우트 ──────────────────────────────────────────────────────────────────
 
-export async function GET(): Promise<Response> {
+export async function GET(req: Request): Promise<Response> {
   const cfg = nimConfig();
+
+  // ?models=1 — NIM 카탈로그에서 쓸 수 있는 모델 ID 목록 (개발 전용, /lab 비교용).
+  if (new URL(req.url).searchParams.has('models')) {
+    if (process.env.NODE_ENV === 'production') return new Response(null, { status: 404 });
+    if (!cfg) return Response.json({ error: 'NVIDIA_NIM_API_KEY 미설정' }, { status: 500 });
+    const res = await fetch(`${cfg.baseUrl}/models`, {
+      headers: { authorization: `Bearer ${cfg.apiKey}` },
+    });
+    if (!res.ok) return Response.json({ error: `NIM ${res.status}` }, { status: 502 });
+    const data = (await res.json()) as { data?: { id?: string }[] };
+    return Response.json({ models: (data.data ?? []).map((m) => m.id).filter(Boolean) });
+  }
+
   return Response.json({
     provider: 'nvidia-nim',
     configured: cfg !== null,
@@ -131,6 +148,8 @@ interface Body {
   question?: string;
   phase?: Phase;
   history?: { speaker?: string; text?: string }[];
+  /** 개발 전용 라우트라 허용 — /lab에서 모델을 나란히 비교하기 위한 오버라이드 (§15-1-결정). */
+  model?: string;
   room_id?: string;
   bots?: { player_id?: string; context?: AgentContext }[];
 }
@@ -177,7 +196,10 @@ export async function POST(req: Request): Promise<Response> {
     }
 
     const body = await readJson<Body>(req);
-    const cfg = nimConfig();
+    const baseCfg = nimConfig();
+    // 모델 오버라이드는 이 라우트가 개발 전용(위의 404)이라서만 허용된다.
+    const cfg =
+      baseCfg && body.model ? { ...baseCfg, model: body.model.slice(0, 100) } : baseCfg;
 
     // ── probe: NIM 왕복 확인 ────────────────────────────────────────────────
     if (body.probe) {
@@ -185,15 +207,17 @@ export async function POST(req: Request): Promise<Response> {
 
       const prompt = (body.prompt ?? '지금 뭐 먹고 싶은지 한 줄로만 말해줘.').slice(0, MAX_PROBE_PROMPT_LEN);
       const t0 = Date.now();
-      const reply = await withDeadline((signal) =>
-        callNim(
-          cfg,
-          [
-            { role: 'system', content: '너는 한국 대학생이다. 반말로 짧게 한두 문장만 답한다.' },
-            { role: 'user', content: prompt },
-          ],
-          signal,
-        ),
+      const reply = await withDeadline(
+        (signal) =>
+          callNim(
+            cfg,
+            [
+              { role: 'system', content: '너는 한국 대학생이다. 반말로 짧게 한두 문장만 답한다.' },
+              { role: 'user', content: prompt },
+            ],
+            signal,
+          ),
+        LAB_TIMEOUT_MS,
       );
       return Response.json({ ok: true, model: cfg.model, took_ms: Date.now() - t0, reply });
     }
@@ -219,11 +243,14 @@ export async function POST(req: Request): Promise<Response> {
 
     // 봇 수만큼 병렬 (§12.3). 순차 호출은 봇 수 배만큼 느리다.
     // LlmCall을 봇마다 deadline의 signal에 묶어 generate에 넘긴다 (SPEC §9.2).
+    const deadlineMs = body.lab ? LAB_TIMEOUT_MS : AGENT_TIMEOUT_MS;
+    const t0 = Date.now();
     const settled = await Promise.allSettled(
       jobs.map((job) =>
-        withDeadline((signal) =>
-          generate(job.context, cfg ? (msgs) => callNim(cfg, msgs, signal) : null),
-        ),
+        withDeadline(
+          (signal) => generate(job.context, cfg ? (msgs) => callNim(cfg, msgs, signal) : null),
+          deadlineMs,
+        ).then((output) => ({ output, tookMs: Date.now() - t0 })),
       ),
     );
 
@@ -231,10 +258,20 @@ export async function POST(req: Request): Promise<Response> {
       const job = jobs[i];
       const base = { player_id: job.player_id, ...(job.persona ? { persona: job.persona } : {}) };
       if (s.status === 'fulfilled') {
-        return { ...base, output: s.value, fallback: s.value.reasoning.startsWith('fallback:') };
+        return {
+          ...base,
+          output: s.value.output,
+          took_ms: s.value.tookMs,
+          fallback: s.value.output.reasoning.startsWith('fallback:'),
+        };
       }
       const reason = s.reason instanceof Error ? s.reason.message : String(s.reason);
-      return { ...base, output: fallbackOutput(job.context, reason), fallback: true };
+      return {
+        ...base,
+        output: fallbackOutput(job.context, reason),
+        took_ms: Date.now() - t0,
+        fallback: true,
+      };
     });
 
     // agent_logs 기록 (§9.2 표). ref_id는 발화가 insert된 뒤에야 생기므로 선생성
@@ -254,7 +291,7 @@ export async function POST(req: Request): Promise<Response> {
       if (logErr) console.error('[agent] agent_logs 기록 실패:', logErr.message);
     }
 
-    return Response.json({ ok: true, results });
+    return Response.json({ ok: true, model: cfg?.model ?? null, results });
   } catch (e) {
     return apiError(e);
   }
