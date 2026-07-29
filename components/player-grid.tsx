@@ -40,6 +40,7 @@ export function PlayerGrid({
   selectable = false,
   selectedId = null,
   onSelect,
+  lobby = false,
 }: {
   players: PublicPlayer[];
   /** 그 방의 정원 (3~8). room.capacity를 그대로 넘긴다. */
@@ -48,6 +49,15 @@ export function PlayerGrid({
   selectable?: boolean;
   selectedId?: string | null;
   onSelect?: (id: string) => void;
+  /**
+   * 대기실인가 (SPEC §15-3-결정). 말풍선·준비 표시를 그릴지 정한다.
+   *
+   * ★ 뷰가 이미 phase='lobby' 일 때만 값을 주므로(policies.sql) 이 플래그가 없어도
+   *   게임 중에는 아무것도 안 그려진다. 그래도 명시하는 이유는, 그 보호가 **뷰 쪽
+   *   한 줄에만** 걸려 있기 때문이다. 대기실에는 사람만 있어서(봇은 시작할 때 앉는다)
+   *   이 값이 게임까지 새면 값이 있는 자리 = 사람이 되어 봇이 전부 드러난다 (I1).
+   */
+  lobby?: boolean;
 }) {
   const bySeat = new Map(players.map((p) => [p.seat, p]));
 
@@ -88,6 +98,26 @@ export function PlayerGrid({
                   canPick ? 'case-live cursor-pointer' : 'cursor-default',
                 ].join(' ')}
               >
+                {/*
+                  대기실 말풍선. 사람마다 **지금 한 줄**만 있다 — 기록이 아니라서
+                  쌓이지 않는다. 로그로 쌓으면 순서 자체가 메시지가 되어, 문구를
+                  여덟 개로 좁혀둔 의미가 사라진다 (lib/server/lobby-lines.ts).
+
+                  빈 줄이라도 자리를 잡아 두는 이유: 한 사람만 말했을 때 그 칸만
+                  키가 커져서 그리드가 들썩인다.
+                */}
+                {lobby && (
+                  <span
+                    className={[
+                      'flex h-5 w-full items-center justify-center px-1 text-[9px] leading-none',
+                      p?.lobby_line ? 'cut text-bone' : '',
+                    ].join(' ')}
+                    title={p?.lobby_line ?? undefined}
+                  >
+                    <span className="truncate">{p?.lobby_line ?? ''}</span>
+                  </span>
+                )}
+
                 {/* 케이스에 스텐실로 찍힌 자리 번호 */}
                 <span
                   className={[
@@ -113,7 +143,15 @@ export function PlayerGrid({
                 </span>
 
                 {/* 자리마다 높이를 맞추려고 '나'가 아니어도 한 줄을 비워 둔다 */}
-                <span className="stencil h-3 text-[8px] text-signal">{isMe ? '나' : ' '}</span>
+                <span className="stencil flex h-3 items-center gap-1.5 text-[8px] text-signal">
+                  {isMe ? '나' : ' '}
+                  {/*
+                    준비 완료는 발화가 아니라 상태다. 말풍선으로 흘리지 않는다 —
+                    켜고 끄는 순서가 그대로 신호가 되기 때문이다.
+                    시작을 막지도 않는다. 방장이 참고하는 표시일 뿐이다.
+                  */}
+                  {lobby && p?.is_ready && <span className="text-tung">준비</span>}
+                </span>
               </button>
             </li>
           );

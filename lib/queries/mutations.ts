@@ -20,7 +20,15 @@ import { useMutation, type UseMutationResult } from '@tanstack/react-query';
 import { useCallback } from 'react';
 
 import { ApiRequestError } from '@/lib/api/client';
-import { advancePhase, castVote, sendMessage, startRoom, submitAnswer } from '@/lib/api/room';
+import {
+  advancePhase,
+  castVote,
+  sayLobbyLine,
+  sendMessage,
+  setLobbyReady,
+  startRoom,
+  submitAnswer,
+} from '@/lib/api/room';
 import { dispatchRoom, readRoomUi, roomActions } from '@/lib/store/room';
 import { useInvalidateRoom } from './room';
 
@@ -31,6 +39,8 @@ export const REQUEST = {
   vote: '지목',
   message: '채팅',
   advance: '전환',
+  lobbyLine: '대기방 발화',
+  lobbyReady: '준비',
 } as const;
 
 function messageOf(e: unknown): string {
@@ -106,6 +116,25 @@ export function useCastVote(code: string, roomId: string | undefined) {
 
 export function useSendMessage(code: string, roomId: string | undefined) {
   return useRoomWrite<string>(REQUEST.message, code, roomId, (text) => sendMessage(roomId!, text));
+}
+
+/**
+ * 대기방 프리셋 발화 (SPEC §15-3-결정).
+ *
+ * 게이트를 같이 탄다. 연타 자체는 서버가 쿨다운으로 막지만, 그건 **에러로** 막는
+ * 것이라 배너가 뜬다. 화면에서 먼저 잠가서 정상적인 조급함이 오류로 보이지 않게 한다.
+ */
+export function useSayLobbyLine(code: string, roomId: string | undefined) {
+  return useRoomWrite<string>(REQUEST.lobbyLine, code, roomId, (lineId) =>
+    sayLobbyLine(roomId!, lineId),
+  );
+}
+
+/** 준비 완료 토글. 같은 값으로 다시 보내도 서버가 아무 일도 하지 않는다. */
+export function useSetLobbyReady(code: string, roomId: string | undefined) {
+  return useRoomWrite<boolean>(REQUEST.lobbyReady, code, roomId, (ready) =>
+    setLobbyReady(roomId!, ready),
+  );
 }
 
 /**

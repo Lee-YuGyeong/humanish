@@ -62,6 +62,21 @@ export interface RoomAndPlayer {
   player: PublicPlayer;
 }
 
+/**
+ * GET /api/lobby/lines — 대기방에서 누를 수 있는 문구 (SPEC §15-3-결정).
+ *
+ * ★ 목록을 화면에 복붙하지 않고 여기로 받는다. 두 군데로 갈리면 서버가 모르는
+ *   문구를 눌러도 400 만 뜨고 원인이 안 보인다. 목록의 원본은
+ *   lib/server/lobby-lines.ts 하나다.
+ */
+export interface LobbyLinesResponse {
+  lines: { id: string; text: string }[];
+  /** 같은 사람이 다시 누르기까지 기다려야 하는 초. 화면은 이걸로 버튼을 잠근다 */
+  cooldown_sec: number;
+  /** 한 사람이 대기방 전체에서 누를 수 있는 총 횟수 */
+  max_lines: number;
+}
+
 /* ─────────────────────────────── 읽기 ─────────────────────────────── */
 
 export function fetchMe(roomId: string, signal?: AbortSignal): Promise<MeResponse> {
@@ -75,6 +90,11 @@ export function fetchReveal(roomId: string, signal?: AbortSignal): Promise<Revea
 /** 서버 시각 (SPEC §12.5). 카운트다운을 여기에 맞춘다 — 판정은 여전히 서버가 한다 (I2). */
 export function fetchServerTime(signal?: AbortSignal): Promise<{ now: string }> {
   return getJson<{ now: string }>('/api/time', signal);
+}
+
+/** 방과 무관하다. 어느 방이든 같은 목록이라 한 번 받아서 계속 쓴다. */
+export function fetchLobbyLines(signal?: AbortSignal): Promise<LobbyLinesResponse> {
+  return getJson<LobbyLinesResponse>('/api/lobby/lines', signal);
 }
 
 /* ─────────────────────────────── 쓰기 (I9) ─────────────────────────────── */
@@ -93,6 +113,22 @@ export function castVote(roomId: string, targetId: string, reason: string): Prom
 
 export function sendMessage(roomId: string, text: string): Promise<unknown> {
   return postJson('/api/message', { room_id: roomId, text });
+}
+
+/**
+ * 대기방 프리셋 발화.
+ *
+ * ★ text 가 아니라 **lineId** 를 보낸다. 텍스트를 보내는 모양이면 화면을 거치지 않고
+ *   아무 말이나 넣을 수 있어서 프리셋으로 좁힌 의미가 사라진다 — 라우트가 id 로
+ *   목록을 찾는다 (I9).
+ */
+export function sayLobbyLine(roomId: string, lineId: string): Promise<unknown> {
+  return postJson('/api/lobby/line', { room_id: roomId, line_id: lineId });
+}
+
+/** 준비 완료 토글. 시작을 막지는 않는다 — 방장이 참고하는 표시다. */
+export function setLobbyReady(roomId: string, ready: boolean): Promise<unknown> {
+  return postJson('/api/lobby/ready', { room_id: roomId, ready });
 }
 
 /**

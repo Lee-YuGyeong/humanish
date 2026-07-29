@@ -32,14 +32,24 @@ const db = vi.hoisted(() => ({
   fetchMessages: vi.fn(),
 }));
 
+/**
+ * ★ 여기 빠진 함수는 **undefined 가 되고, 그래도 화면은 안 죽는다.**
+ *   react-query 가 그 호출을 실패한 쿼리로 삼켜서 data 만 undefined 로 남기 때문이다.
+ *   그러면 그 값으로 그리는 부분이 통째로 안 그려지는데 검사는 초록불이다.
+ *   실제로 대기방 문구 버튼이 그렇게 조용히 사라졌다 — lib/api/room 에 함수를
+ *   더하면 여기도 같이 더한다.
+ */
 const api = vi.hoisted(() => ({
   fetchMe: vi.fn(),
   fetchReveal: vi.fn(),
   fetchServerTime: vi.fn(),
+  fetchLobbyLines: vi.fn(),
   startRoom: vi.fn(),
   submitAnswer: vi.fn(),
   castVote: vi.fn(),
   sendMessage: vi.fn(),
+  sayLobbyLine: vi.fn(),
+  setLobbyReady: vi.fn(),
   advancePhase: vi.fn(),
 }));
 
@@ -71,10 +81,48 @@ function room(patch: Partial<Room> = {}): Room {
   };
 }
 
+/**
+ * 대기방 값(is_ready · lobby_line)은 lobby 에서만 채워진다. 시작하면 shuffle_seats 가
+ * 비우고 뷰도 phase='lobby' 일 때만 준다 — 게임까지 따라가면 값이 있는 자리 = 사람이
+ * 되어 봇이 전부 드러난다 (I1, SPEC §15-3-결정).
+ *
+ * p2 에만 말풍선을 둔다. 나(p1)는 비어 있어야 "같은 말 연속 금지"가 안 걸린 상태다.
+ */
 const PLAYERS = [
-  { id: 'p1', room_id: ROOM_ID, nickname: '익명1', mask_id: 'mask-01', seat: 1, connected: true },
-  { id: 'p2', room_id: ROOM_ID, nickname: '익명2', mask_id: 'mask-02', seat: 2, connected: true },
+  {
+    id: 'p1',
+    room_id: ROOM_ID,
+    nickname: '익명1',
+    mask_id: 'mask-01',
+    seat: 1,
+    connected: true,
+    is_ready: false,
+    lobby_line: null,
+    lobby_line_at: null,
+  },
+  {
+    id: 'p2',
+    room_id: ROOM_ID,
+    nickname: '익명2',
+    mask_id: 'mask-02',
+    seat: 2,
+    connected: true,
+    is_ready: true,
+    lobby_line: 'ㅋㅋㅋ',
+    lobby_line_at: '2026-07-30T00:00:00.000Z',
+  },
 ];
+
+/** 서버가 내려주는 문구 목록. 원본은 lib/server/lobby-lines.ts 다. */
+const LOBBY_LINES = {
+  lines: [
+    { id: 'wait', text: '잠깐만' },
+    { id: 'hi', text: '안녕' },
+    { id: 'lol', text: 'ㅋㅋㅋ' },
+  ],
+  cooldown_sec: 3,
+  max_lines: 10,
+};
 
 function me(patch: Record<string, unknown> = {}) {
   return {
@@ -117,8 +165,11 @@ beforeEach(() => {
   db.fetchMessages.mockResolvedValue([]);
   api.fetchMe.mockResolvedValue(me());
   api.fetchServerTime.mockResolvedValue({ now: new Date().toISOString() });
+  api.fetchLobbyLines.mockResolvedValue(LOBBY_LINES);
   api.startRoom.mockResolvedValue({});
   api.submitAnswer.mockResolvedValue({});
+  api.sayLobbyLine.mockResolvedValue({});
+  api.setLobbyReady.mockResolvedValue({});
 });
 
 afterEach(cleanup);
@@ -138,6 +189,55 @@ describe('대기실', () => {
     db.fetchRoomByCode.mockResolvedValue(room({ capacity: 8 }));
     renderRoom();
     await waitFor(() => expect(screen.getAllByRole('listitem').length).toBe(8));
+  });
+});
+
+describe('대기실에서 말하기 (SPEC §15-3-결정)', () => {
+  it('서버가 준 문구로 버튼을 그린다', async () => {
+    renderRoom();
+    // ★ 화면에 문구를 적어두지 않는다. 목록이 두 군데로 갈리면 서버가 모르는
+    //   버튼이 생기고, 눌러도 400 만 뜬다.
+    expect(await screen.findByRole('button', { name: '잠깐만' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '안녕' })).toBeInTheDocument();
+  });
+
+  it('누르면 텍스트가 아니라 line_id 를 보낸다 (I9)', async () => {
+    renderRoom();
+    fireEvent.click(await screen.findByRole('button', { name: '안녕' }));
+    await waitFor(() => expect(api.sayLobbyLine).toHaveBeenCalledWith(ROOM_ID, 'hi'));
+  });
+
+  it('★ 방금 한 말은 다시 못 누른다 — 연타가 뜻이 되는 걸 막는다', async () => {
+    // 서버도 막지만(say_lobby_line), 그건 에러라 빨간 배너가 뜬다.
+    // 화면에서 먼저 잠가야 정상적인 조급함이 오류로 보이지 않는다.
+    api.fetchMe.mockResolvedValue(me({ player: { ...PLAYERS[0], lobby_line: '안녕' } }));
+    db.fetchRoster.mockResolvedValue([{ ...PLAYERS[0], lobby_line: '안녕' }, PLAYERS[1]]);
+
+    renderRoom();
+    await waitFor(() => expect(screen.getByRole('button', { name: '안녕' })).toBeDisabled());
+    expect(screen.getByRole('button', { name: '잠깐만' })).toBeEnabled();
+  });
+
+  it('남의 말풍선이 좌석에 뜬다', async () => {
+    renderRoom();
+    // 사람마다 지금 한 줄만. 기록이 아니라 쌓이지 않는다.
+    expect(await screen.findByText('ㅋㅋㅋ')).toBeInTheDocument();
+  });
+
+  it('준비 완료를 누르면 서버로 간다', async () => {
+    renderRoom();
+    fireEvent.click(await screen.findByRole('button', { name: /준비되면 누른다/ }));
+    await waitFor(() => expect(api.setLobbyReady).toHaveBeenCalledWith(ROOM_ID, true));
+  });
+
+  it('★ 게임이 시작되면 말하기 판이 사라진다', async () => {
+    // 대기방에만 있는 기능이다. question 으로 넘어가면 조작판이 통째로 바뀐다.
+    db.fetchRoomByCode.mockResolvedValue(room({ phase: 'question', round: 1, phase_seq: 1 }));
+    db.fetchQuestions.mockResolvedValue([question('c1', 'common', 1)]);
+
+    renderRoom();
+    await screen.findByPlaceholderText('답을 쓴다');
+    expect(screen.queryByRole('button', { name: '안녕' })).not.toBeInTheDocument();
   });
 });
 

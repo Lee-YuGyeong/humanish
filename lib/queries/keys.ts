@@ -46,3 +46,10 @@ export const serverTimeKey = ['server-time'] as const;
 
 /** 로비의 열린 방 목록. 특정 방에 속하지 않는다. */
 export const openRoomsKey = ['open-rooms'] as const;
+
+/**
+ * 대기방 프리셋 문구 목록 (SPEC §15-3-결정).
+ * 방마다 다르지 않고 배포 전까지 바뀌지 않으므로 스코프 밖이다 —
+ * scope(roomId) 안에 두면 방 무효화 때마다 같은 목록을 다시 받는다.
+ */
+export const lobbyLinesKey = ['lobby-lines'] as const;

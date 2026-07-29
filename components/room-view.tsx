@@ -38,7 +38,9 @@ import {
   REQUEST,
   useAdvancePhase,
   useCastVote,
+  useSayLobbyLine,
   useSendMessage,
+  useSetLobbyReady,
   useStartRoom,
   useSubmitAnswer,
 } from '@/lib/queries/mutations';
@@ -47,6 +49,7 @@ import { useRoomRealtime } from '@/lib/queries/realtime';
 import {
   useAnswers,
   useInvalidateRoom,
+  useLobbyLines,
   useMe,
   useMessages,
   useQuestions,
@@ -221,7 +224,12 @@ export function RoomView({ code }: { code: string }) {
         */}
         {room.phase !== 'lobby' && me != null && <MachineCount n={me.bot_count} />}
 
-        <PlayerGrid players={players} capacity={room.capacity} meId={me?.player?.id} />
+        <PlayerGrid
+          players={players}
+          capacity={room.capacity}
+          meId={me?.player?.id}
+          lobby={room.phase === 'lobby'}
+        />
 
         {/* 내가 스파이라는 건 나만 본다. 남의 역할은 reveal까지 아무 데도 오지 않는다 (I1) */}
         {me?.role === 'spy' && room.phase !== 'reveal' && room.phase !== 'replay' && (
@@ -334,6 +342,112 @@ function LobbyHero({
 }
 
 /**
+ * 대기실에서 말하기 — 정해진 문구만 누른다 (SPEC §15-3-결정).
+ *
+ * ┌─ 왜 자유 채팅이 아닌가 ────────────────────────────────────────────────────┐
+ * │ 대기실에서 미리 짜면 게임이 죽는다. 다만 담합의 두 축은 이미 구조가 끊어놨다 │
+ * │ — 봇은 시작할 때 앉고, 자리·닉네임은 시작 순간 다시 섞이며(shuffle_seats),  │
+ * │ 역할도 그때 배정된다. 그래서 "나 3번이야"도 "내가 스파이야"도 여기서는       │
+ * │ 성립하지 않는다.                                                           │
+ * │                                                                            │
+ * │ 남는 건 "우리 다 짧게만 답하자" 같은 메타 합의뿐이고, 문구 목록이 그걸       │
+ * │ 막는다. 목록의 원본은 lib/server/lobby-lines.ts 하나다 —                    │
+ * │ **여기에 문구를 적어두지 않는다.** 두 군데로 갈리면 화면에는 있는데 서버가   │
+ * │ 모르는 버튼이 생기고, 눌러도 400 만 뜬다.                                   │
+ * └────────────────────────────────────────────────────────────────────────────┘
+ *
+ * ★ 진짜 막아야 하는 건 목록이 아니라 조합이다. 여덟 개여도 마음대로 연타하면
+ *   3비트짜리 통신 채널이 된다. 쿨다운·연속 금지·총량은 서버가 보고(I9),
+ *   여기서는 같은 조건으로 버튼을 미리 잠글 뿐이다 — 정상적인 조급함이 빨간
+ *   오류 배너로 보이지 않게 하려는 것이다.
+ */
+function LobbySay({
+  code,
+  roomId,
+  players,
+  meId,
+}: {
+  code: string;
+  roomId: string;
+  players: PublicPlayer[];
+  meId: string;
+}) {
+  const { data: cfg } = useLobbyLines(true);
+  const say = useSayLobbyLine(code, roomId);
+  const ready = useSetLobbyReady(code, roomId);
+  const busy = useRoomUi(selectIsBusy);
+  const { serverNow } = useServerClock();
+
+  /**
+   * 쿨다운이 끝나면 버튼이 스스로 풀려야 한다. 그런데 그때 바뀌는 건 서버 값이
+   * 아니라 **시간**뿐이라 다시 그릴 계기가 없다 — 여기서만 초를 센다.
+   * 표시용이다. 진짜 판정은 서버가 한다 (I2).
+   */
+  const [, tick] = useState(0);
+  useEffect(() => {
+    const t = setInterval(() => tick((n) => n + 1), 500);
+    return () => clearInterval(t);
+  }, []);
+
+  const mine = players.find((p) => p.id === meId) ?? null;
+  const cooldownMs = (cfg?.cooldown_sec ?? 3) * 1000;
+  const lastAt = mine?.lobby_line_at ? new Date(mine.lobby_line_at).getTime() : 0;
+  const waitMs = Number.isFinite(lastAt) ? Math.max(0, lastAt + cooldownMs - serverNow()) : 0;
+  const cooling = waitMs > 0;
+
+  return (
+    <Box>
+      <Label>말하기</Label>
+      <p className="text-[11px] leading-relaxed text-grime">
+        대기실에서는 정해진 말만 할 수 있다. 시작 전에 미리 짜지 못하게 하려는 것이다.
+      </p>
+
+      <div className="flex flex-wrap gap-1.5">
+        {(cfg?.lines ?? []).map((l) => (
+          <button
+            key={l.id}
+            type="button"
+            // 같은 말을 연달아 보내는 건 서버도 막는다. 눌리기 전에 잠가서
+            // "왜 안 되지"가 아니라 "지금은 못 누르는구나"로 보이게 한다.
+            disabled={busy || cooling || l.text === mine?.lobby_line}
+            onClick={() => say.run(l.id)}
+            className="cut px-3 py-2 text-[11px] text-bone transition-colors hover:text-flare disabled:cursor-not-allowed disabled:opacity-25"
+          >
+            {l.text}
+          </button>
+        ))}
+      </div>
+
+      {cooling && (
+        <p className="stencil text-[8px] text-ash" aria-live="polite">
+          {Math.ceil(waitMs / 1000)}초 뒤에 다시 말할 수 있다
+        </p>
+      )}
+
+      {/*
+        준비 완료는 발화가 아니라 상태다. 말풍선으로 흐르지 않고 좌석 카드에 붙는다 —
+        켜고 끄는 순서가 그대로 신호가 되기 때문이다.
+        시작을 막지도 않는다. 한 명이 자리를 비우면 방이 영영 시작되지 않는다.
+      */}
+      <button
+        type="button"
+        disabled={busy}
+        onClick={() => ready.run(!mine?.is_ready)}
+        className={[
+          'stencil mt-1 flex w-full items-center justify-center gap-2.5 py-3 text-[10px] transition-all disabled:cursor-not-allowed disabled:opacity-30',
+          mine?.is_ready
+            ? 'bg-tung/15 text-flare shadow-[inset_0_0_0_1px_rgba(255,217,172,0.45)]'
+            : 'cut text-grime hover:text-tung',
+        ].join(' ')}
+      >
+        {mine?.is_ready && <CheckIcon className="h-3.5 w-3.5" />}
+        {mine?.is_ready ? '준비 완료' : '준비되면 누른다'}
+      </button>
+    </Box>
+  );
+}
+
+/**
  * 페이즈별 조작판.
  *
  * ★ 훅은 전부 여기 맨 위에서 부른다. 아래 분기 안에서 부르면 페이즈가 바뀔 때마다
@@ -439,6 +553,8 @@ function Panel({
             />
           </ul>
         </Box>
+
+        <LobbySay code={code} roomId={room.id} players={players} meId={me.player.id} />
 
         {me.is_host ? (
           <div className="case riveted px-6 py-5">

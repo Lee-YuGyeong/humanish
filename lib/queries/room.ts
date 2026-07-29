@@ -17,7 +17,15 @@
 import { useQuery, useQueryClient, type UseQueryResult } from '@tanstack/react-query';
 import { useCallback } from 'react';
 
-import { fetchMe, fetchReveal, fetchServerTime, type MeResponse, type RevealResponse } from '@/lib/api/room';
+import {
+  fetchLobbyLines,
+  fetchMe,
+  fetchReveal,
+  fetchServerTime,
+  type LobbyLinesResponse,
+  type MeResponse,
+  type RevealResponse,
+} from '@/lib/api/room';
 import {
   fetchAnswers,
   fetchMessages,
@@ -30,7 +38,7 @@ import {
   type VoteRow,
 } from '@/lib/api/db';
 import type { PublicPlayer, Question, Room } from '@/lib/game/types';
-import { roomKeys, serverTimeKey } from './keys';
+import { lobbyLinesKey, roomKeys, serverTimeKey } from './keys';
 
 /**
  * 방 상태는 realtime 이 알려준다 (useRoomRealtime). 그래서 주기 폴링을 걸지 않는다.
@@ -131,6 +139,22 @@ export function useReveal(
     queryFn: ({ signal }) => fetchReveal(roomId!, signal),
     enabled: Boolean(roomId) && enabled,
     staleTime: 0,
+  });
+}
+
+/**
+ * 대기방 프리셋 문구 목록 (SPEC §15-3-결정).
+ *
+ * 배포 전까지 바뀌지 않는 정적인 값이라 한 번만 받는다. lobby 에서만 켠다 —
+ * 게임이 시작되면 쓸 데가 없고, 방마다 다시 받을 이유도 없다.
+ */
+export function useLobbyLines(enabled: boolean): UseQueryResult<LobbyLinesResponse> {
+  return useQuery({
+    queryKey: lobbyLinesKey,
+    queryFn: ({ signal }) => fetchLobbyLines(signal),
+    enabled,
+    staleTime: Infinity,
+    gcTime: Infinity,
   });
 }
 
