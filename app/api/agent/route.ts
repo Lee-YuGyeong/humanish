@@ -1,25 +1,261 @@
 /**
- * LLM 프록시. 껍데기는 A, 내용은 B (SPEC §2).
+ * LLM 프록시 — NVIDIA NIM 어댑터. 껍데기: A · 내용: B (SPEC §2). 공급자는 §15-1-결정.
  *
- * 클라이언트에서 LLM API를 직접 부르면 키가 노출된다. 모든 봇 호출은 여기를 지난다 (SPEC I4).
+ * 공급자에 의존하는 것(엔드포인트 · 인증 헤더 · 모델 ID · 응답 모양)은 이 파일 밖으로
+ * 내보내지 않는다 (SPEC §9.2). 공급자를 바꾸면 이 파일만 갈아끼운다.
+ * 프롬프트 조립과 응답 정제는 lib/agent/generate.ts(공급자 무관 층)가 한다.
  *
- * 공급자 미확정 (SPEC §15-1). 잠정으로 NVIDIA NIM 키를 본다.
- * 런타임도 함께 확정한다 — 공급자 SDK가 Edge를 지원하지 않으면 'nodejs'로 바꾼다.
+ * GET  /api/agent                              → { provider, configured, model }
+ *   키가 설정됐는지만 본다. NIM을 부르지 않는다.
+ * POST /api/agent
+ *   { probe: true, prompt? }                   → { ok, model, took_ms, reply }
+ *     NIM 왕복 확인용. 키를 넣은 뒤 이걸로 연결을 검증한다.
+ *   { lab: true, question?, phase?, history? } → { ok, results: [...] }
+ *     /lab 전용 — 페르소나 전원에게 같은 상황을 주고 나란히 비교한다.
+ *     컨텍스트 조립을 서버에서 하는 이유: 페르소나 프롬프트가 클라이언트로 새면 안 된다.
+ *   { room_id, bots: [{ player_id, context }] } → { ok, results: [...] }
+ *     봇 응답 일괄 생성. room_id가 있으면 agent_logs에 남긴다.
+ *
+ * SPEC §12.3의 네 가지를 여기서 지킨다.
+ *   병렬 — Promise.allSettled · 8초 컷 — AbortController · 재시도 0 — fetch 기본엔
+ *   재시도가 없다(SDK를 들이게 되면 그 순간 재시도 설정부터 확인할 것) · 폴백 — FALLBACK_POOL
+ *
+ * ★ 지금은 개발 환경에서만 열린다 (프로덕션 404). 선생성 층(§12.3, §17.5)이 이
+ *   라우트를 부르기 시작할 때 world-room 라우트처럼 내부 Bearer 인증으로 바꾼다.
  */
+
+import {
+  generate,
+  fallbackOutput,
+  AGENT_TIMEOUT_MS,
+  type AgentContext,
+} from '@/lib/agent/generate';
+import { PERSONAS, type Persona } from '@/lib/agent/persona';
+import { observeStyle } from '@/lib/agent/disguise';
+import type { LlmChatMessage, Phase } from '@/lib/game/types';
+import { ApiError, apiError, readJson } from '@/lib/server/auth';
+import { getServiceClient } from '@/lib/server/supabase';
 
 export const runtime = 'edge';
 
-export async function POST(): Promise<Response> {
-  if (!process.env.NVIDIA_NIM_API_KEY) {
-    return Response.json(
-      { error: 'NVIDIA_NIM_API_KEY 미설정' },
-      { status: 500 },
-    );
+// ── NVIDIA NIM 어댑터 — 공급자 의존부는 전부 이 블록 안 ─────────────────────
+
+interface NimConfig {
+  apiKey: string;
+  baseUrl: string;
+  model: string;
+}
+
+/** 키가 없으면 null. 폴백 경로는 키 없이도 돌아야 한다 (§12.3). */
+function nimConfig(): NimConfig | null {
+  const apiKey = process.env.NVIDIA_NIM_API_KEY;
+  if (!apiKey) return null;
+  return {
+    apiKey,
+    baseUrl: (process.env.NVIDIA_NIM_BASE_URL ?? 'https://integrate.api.nvidia.com/v1').replace(/\/$/, ''),
+    // 카탈로그에서 고르면 .env.local의 NVIDIA_NIM_MODEL만 바꾼다. 한국어 품질은 /lab에서 비교.
+    model: process.env.NVIDIA_NIM_MODEL || 'meta/llama-3.1-8b-instruct',
+  };
+}
+
+/** OpenAI 호환 chat/completions 한 번. 재시도 없음 — 실패는 폴백이 받는다. */
+async function callNim(
+  cfg: NimConfig,
+  messages: LlmChatMessage[],
+  signal?: AbortSignal,
+): Promise<string> {
+  const res = await fetch(`${cfg.baseUrl}/chat/completions`, {
+    method: 'POST',
+    headers: {
+      authorization: `Bearer ${cfg.apiKey}`,
+      'content-type': 'application/json',
+    },
+    body: JSON.stringify({
+      model: cfg.model,
+      messages,
+      temperature: 0.9, // 낮으면 봇들이 같은 말을 한다 — 봇마다 답이 달라야 숨는다
+      max_tokens: 300, // 게임 발화는 길 이유가 없다. 길면 그것부터 봇 티가 난다
+    }),
+    signal: signal ?? null,
+  });
+
+  if (!res.ok) {
+    const detail = (await res.text().catch(() => '')).slice(0, 200);
+    throw new Error(`NIM ${res.status}: ${detail}`);
   }
 
-  // TODO(B): lib/agent/generate.ts 연결.
-  //   - AbortController로 8초 타임아웃 (SPEC §12.3)
-  //   - 봇 여러 명은 Promise.allSettled로 병렬 호출
-  //   - 실패분은 FALLBACK_POOL로 대체하고 agent_logs에 기록
-  return Response.json({ error: 'not implemented' }, { status: 501 });
+  const data = (await res.json()) as {
+    choices?: { message?: { content?: unknown } }[];
+  };
+  const text = data.choices?.[0]?.message?.content;
+  if (typeof text !== 'string' || !text.trim()) {
+    throw new Error('NIM 응답이 비었다');
+  }
+  return text.trim();
+}
+
+// ── 공급자 무관 층 — 타임아웃 ───────────────────────────────────────────────
+
+/** 8초 컷 (§12.3). AbortController로 fetch까지 실제로 끊는다. */
+function withDeadline<T>(run: (signal: AbortSignal) => Promise<T>): Promise<T> {
+  const ac = new AbortController();
+  const timer = setTimeout(
+    () => ac.abort(new Error(`시간 초과 (${AGENT_TIMEOUT_MS}ms)`)),
+    AGENT_TIMEOUT_MS,
+  );
+  return run(ac.signal).finally(() => clearTimeout(timer));
+}
+
+// ── 라우트 ──────────────────────────────────────────────────────────────────
+
+export async function GET(): Promise<Response> {
+  const cfg = nimConfig();
+  return Response.json({
+    provider: 'nvidia-nim',
+    configured: cfg !== null,
+    model: cfg?.model ?? null,
+  });
+}
+
+interface BotJob {
+  player_id: string;
+  context: AgentContext;
+  /** lab 모드에서만 채워서 응답에 실어준다. */
+  persona?: Pick<Persona, 'id' | 'traits'>;
+}
+
+interface Body {
+  probe?: boolean;
+  prompt?: string;
+  lab?: boolean;
+  question?: string;
+  phase?: Phase;
+  history?: { speaker?: string; text?: string }[];
+  room_id?: string;
+  bots?: { player_id?: string; context?: AgentContext }[];
+}
+
+/** 정원 상한(8)보다 많은 봇을 한 번에 만들 일이 없다 (SPEC §4). */
+const MAX_BOTS = 8;
+const MAX_PROBE_PROMPT_LEN = 500;
+const MAX_LAB_TEXT_LEN = 300;
+const MAX_LAB_HISTORY = 30;
+
+/** /lab: 페르소나 전원에게 같은 상황을 준다. 조립은 서버에서 — 프롬프트가 새면 안 된다. */
+function labJobs(body: Body): BotJob[] {
+  const history = (body.history ?? [])
+    .filter((h): h is { speaker?: string; text: string } => typeof h?.text === 'string' && h.text.trim() !== '')
+    .slice(-MAX_LAB_HISTORY)
+    .map((h) => ({
+      speaker: (h.speaker || '익명?').slice(0, 20),
+      text: h.text.slice(0, MAX_LAB_TEXT_LEN),
+    }));
+
+  const styleProfile = observeStyle(history.map((h) => h.text));
+  const phase: Phase = body.phase ?? 'question';
+  const question = body.question?.slice(0, MAX_LAB_TEXT_LEN) || undefined;
+
+  return PERSONAS.map((persona) => ({
+    player_id: `lab-${persona.id}`,
+    persona: { id: persona.id, traits: persona.traits },
+    context: {
+      persona,
+      phase,
+      question,
+      visibleHistory: history,
+      styleProfile,
+      suspicionOnMe: 0.2,
+    },
+  }));
+}
+
+export async function POST(req: Request): Promise<Response> {
+  try {
+    // 선생성 층이 붙기 전까지는 개발 전용이다. 열어두면 남의 지갑으로 쓰는 LLM 프록시가 된다.
+    if (process.env.NODE_ENV === 'production') {
+      return new Response(null, { status: 404 });
+    }
+
+    const body = await readJson<Body>(req);
+    const cfg = nimConfig();
+
+    // ── probe: NIM 왕복 확인 ────────────────────────────────────────────────
+    if (body.probe) {
+      if (!cfg) throw new ApiError(500, 'NVIDIA_NIM_API_KEY 미설정 (.env.local.example 참고)');
+
+      const prompt = (body.prompt ?? '지금 뭐 먹고 싶은지 한 줄로만 말해줘.').slice(0, MAX_PROBE_PROMPT_LEN);
+      const t0 = Date.now();
+      const reply = await withDeadline((signal) =>
+        callNim(
+          cfg,
+          [
+            { role: 'system', content: '너는 한국 대학생이다. 반말로 짧게 한두 문장만 답한다.' },
+            { role: 'user', content: prompt },
+          ],
+          signal,
+        ),
+      );
+      return Response.json({ ok: true, model: cfg.model, took_ms: Date.now() - t0, reply });
+    }
+
+    // ── 봇 응답 생성 (lab 또는 실전) ────────────────────────────────────────
+    let jobs: BotJob[];
+    let roomId: string | null;
+
+    if (body.lab) {
+      jobs = labJobs(body);
+      roomId = null; // lab은 방이 없다 — agent_logs를 남기지 않는다
+    } else {
+      if (!body.room_id) throw new ApiError(400, 'room_id가 없다');
+      const bots = body.bots;
+      if (!Array.isArray(bots) || bots.length === 0) throw new ApiError(400, 'bots가 비었다');
+      if (bots.length > MAX_BOTS) throw new ApiError(400, `봇은 한 번에 ${MAX_BOTS}명까지다`);
+      if (bots.some((b) => !b.player_id || !b.context)) {
+        throw new ApiError(400, 'player_id나 context 없는 봇이 있다');
+      }
+      jobs = bots.map((b) => ({ player_id: b.player_id!, context: b.context! }));
+      roomId = body.room_id;
+    }
+
+    // 봇 수만큼 병렬 (§12.3). 순차 호출은 봇 수 배만큼 느리다.
+    // LlmCall을 봇마다 deadline의 signal에 묶어 generate에 넘긴다 (SPEC §9.2).
+    const settled = await Promise.allSettled(
+      jobs.map((job) =>
+        withDeadline((signal) =>
+          generate(job.context, cfg ? (msgs) => callNim(cfg, msgs, signal) : null),
+        ),
+      ),
+    );
+
+    const results = settled.map((s, i) => {
+      const job = jobs[i];
+      const base = { player_id: job.player_id, ...(job.persona ? { persona: job.persona } : {}) };
+      if (s.status === 'fulfilled') {
+        return { ...base, output: s.value, fallback: s.value.reasoning.startsWith('fallback:') };
+      }
+      const reason = s.reason instanceof Error ? s.reason.message : String(s.reason);
+      return { ...base, output: fallbackOutput(job.context, reason), fallback: true };
+    });
+
+    // agent_logs 기록 (§9.2 표). ref_id는 발화가 insert된 뒤에야 생기므로 선생성
+    // 층이 채운다 — 여기서는 null로 남긴다. 기록 실패가 응답을 막아서는 안 된다.
+    if (roomId) {
+      const db = getServiceClient();
+      const { error: logErr } = await db.from('agent_logs').insert(
+        results.map((r) => ({
+          room_id: roomId,
+          player_id: r.player_id,
+          ref_id: null,
+          reasoning: r.output.reasoning,
+          suspicion: r.output.suspicionOnMe,
+          action: r.output.action,
+        })),
+      );
+      if (logErr) console.error('[agent] agent_logs 기록 실패:', logErr.message);
+    }
+
+    return Response.json({ ok: true, results });
+  } catch (e) {
+    return apiError(e);
+  }
 }
