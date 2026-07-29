@@ -5,7 +5,9 @@
  * 클라이언트 카운트다운은 표시용일 뿐이다 (SPEC §12.5).
  */
 
+import { after } from 'next/server';
 import { getServiceClient } from '@/lib/server/supabase';
+import { regenerateBotAnswers } from '@/lib/agent/prefill';
 import type { Phase } from '@/lib/game/types';
 
 /** SPEC §5.1 전환표. lobby / reveal은 시간이 아니라 조작으로 넘어간다. */
@@ -103,6 +105,17 @@ export async function advancePhase(
 
   if (error) {
     throw new Error(`advance_phase 실패 (room=${roomId}, seq=${expectedSeq}): ${error.message}`);
+  }
+
+  // 전환 성공 → 새 페이즈의 봇 답변을 응답 반환 뒤 LLM으로 재생성한다
+  // (lib/agent/prefill.ts, SPEC §17.5). 실패해도 문구 풀이 그대로 남는다.
+  if (data === true) {
+    try {
+      after(() => regenerateBotAnswers(roomId));
+    } catch {
+      // 요청 컨텍스트 밖(테스트·스크립트)에서는 after가 없다 — 그냥 발사한다
+      void regenerateBotAnswers(roomId);
+    }
   }
   return data === true;
 }
