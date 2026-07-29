@@ -107,6 +107,6 @@ npm test               # 순수 함수 · 화면 조각 (vitest, tests/ 아래)
 - 코드를 고쳤으면 `npm run build`로 끝낸다. 타입 에러를 남기지 않는다.
 - `supabase/` 아래를 고쳤으면 `./supabase/test.sh`로 끝낸다. 일회용 로컬 Postgres에서 SPEC §14를 검사한다.
 - **3D 월드는 `lib/mp/`부터 본다** (`docs/MULTIPLAYER.md`). 프로토콜 · 상수 · 월드 경계가 거기 하나뿐이고 클라이언트와 워커가 **같이 읽는다** — 한쪽에 복붙하면 그 순간 갈린다. `worker/` 를 고쳤으면 `npm run world:typecheck` 와 `npm run world:verify`(소켓 2개 왕복)로 끝낸다. 타입체크는 멀티플레이가 동작한다는 증거가 못 된다.
-- **배포는 워커 둘이다.** `npm run app:deploy`(Next 앱 = `humanish`)와 `npm run world:deploy`(월드 = `humanish-world`). **`npm run build` 산출물은 배포에 쓰지 않는다** — 그건 Node 용이고, Workers 로 가는 건 `app:build`(= `next build` + OpenNext 번들)뿐이다. 그리고 **`NEXT_PUBLIC_*` 은 서버 코드에서도 빌드 시점에 굳는다** — `wrangler secret put` 으로 못 바꾼다. 바꾸려면 `.env.local` 을 고치고 다시 빌드해야 한다. 전체 순서와 변수 표는 `worker/README.md`.
+- **배포는 워커 둘이다.** `npm run app:deploy`(Next 앱 = `humanish`)와 `npm run world:deploy`(월드 = `humanish-world`). **`npm run build` 산출물은 배포에 쓰지 않는다** — 그건 Node 용이고, Workers 로 가는 건 `app:build`(= `next build` + OpenNext 번들)뿐이다. 그리고 **배포본은 `.env.local` 을 보지 않는다 — 값은 전부 워커 변수/비밀에서 온다.** 빌드에 굳는 값은 없다: 서버는 `process.env` 를 런타임에 읽고, 브라우저가 필요로 하는 supabase 주소·anon 키는 `GET /api/config` 가 내려준다. **브라우저에 새 값을 보내야 하면 `app/api/config/route.ts` 의 화이트리스트에 이름을 손으로 적는다** — `process.env` 를 전개하면 service role 키가 같이 새어 I9·I4가 무너진다. 전체 순서와 변수 표는 `worker/README.md`.
 - 시각은 전부 ISO 문자열로 주고받는다.
 - 파일명 kebab-case, 컴포넌트 PascalCase.

@@ -24,6 +24,16 @@
 	"assets": {
 		"directory": ".open-next/assets",
 		"binding": "ASSETS"
+	},
+
+	// 비밀이 아닌 값만 여기 둔다. 비밀은 `wrangler secret put` 으로 넣는다.
+	//
+	// AGENT_SELF_URL  봇 답변 재생성(lib/agent/prefill.ts)이 /api/agent 를 self-fetch 할 주소.
+	//   기본값이 http://127.0.0.1:3000 이라 배포본에서는 엣지가 자기 컴퓨터를 부르려다 실패한다
+	//   (전환은 성공하고 봇 답변만 조용히 안 바뀐다). 자기 공개 주소를 못 박아 둔다 —
+	//   compatibility_flags 의 global_fetch_strictly_public 이 이 self-fetch 를 위한 것이다.
+	"vars": {
+		"AGENT_SELF_URL": "https://humanish.shdnjstkd12.workers.dev"
 	}
 
 	// 아래 둘은 어댑터 기본 템플릿에 있지만 이 앱엔 필요 없어서 뺐다.

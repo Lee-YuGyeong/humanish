@@ -26,19 +26,34 @@ export function useRoomRealtime(roomId: string | undefined, onChange: () => void
 
   useEffect(() => {
     if (!roomId) return;
-    const db = getBrowserClient();
 
-    const channel = db
-      .channel(`room:${roomId}`)
-      .on(
-        'postgres_changes',
-        { event: 'UPDATE', schema: 'public', table: 'rooms', filter: `id=eq.${roomId}` },
-        () => handler.current(),
-      )
-      .subscribe();
+    /**
+     * 클라이언트를 만드는 데 왕복이 한 번 필요하다 (/api/config — lib/server/supabase.ts).
+     * 그 사이에 방을 나가거나 roomId 가 바뀔 수 있으므로, 늦게 도착한 응답이
+     * 채널을 열어 두고 가지 않도록 막는다. 안 막으면 떠난 방의 전환 이벤트가
+     * 계속 들어와 엉뚱한 타이밍에 화면이 넘어간다 (I10 과 같은 증상이다).
+     */
+    let stopped = false;
+    let close: (() => void) | undefined;
+
+    void getBrowserClient().then((db) => {
+      if (stopped) return;
+
+      const channel = db
+        .channel(`room:${roomId}`)
+        .on(
+          'postgres_changes',
+          { event: 'UPDATE', schema: 'public', table: 'rooms', filter: `id=eq.${roomId}` },
+          () => handler.current(),
+        )
+        .subscribe();
+
+      close = () => void db.removeChannel(channel);
+    });
 
     return () => {
-      void db.removeChannel(channel);
+      stopped = true;
+      close?.();
     };
   }, [roomId]);
 }

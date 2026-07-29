@@ -54,7 +54,8 @@ function must<T>(what: string, res: { data: T | null; error: { message: string }
 
 /** 코드로 방을 찾는다. 없으면 null — 오타를 에러가 아니라 화면 문구로 다루기 위해서다. */
 export async function fetchRoomByCode(code: string): Promise<Room | null> {
-  const res = await getBrowserClient()
+  const db = await getBrowserClient();
+  const res = await db
     .from('rooms')
     .select(ROOM_COLUMNS)
     .eq('code', code.toUpperCase())
@@ -66,16 +67,18 @@ export async function fetchRoomByCode(code: string): Promise<Room | null> {
 
 /** 좌석 명단. ★ players 가 아니라 public_players 다 (I1). */
 export async function fetchRoster(roomId: string): Promise<PublicPlayer[]> {
+  const db = await getBrowserClient();
   return must<PublicPlayer[]>(
     '참가자',
-    await getBrowserClient().from('public_players').select('*').eq('room_id', roomId).order('seat'),
+    await db.from('public_players').select('*').eq('room_id', roomId).order('seat'),
   );
 }
 
 export async function fetchQuestions(roomId: string): Promise<Question[]> {
+  const db = await getBrowserClient();
   return must<Question[]>(
     '질문',
-    await getBrowserClient().from('questions').select('*').eq('room_id', roomId).order('round'),
+    await db.from('questions').select('*').eq('room_id', roomId).order('round'),
   );
 }
 
@@ -87,9 +90,10 @@ export async function fetchQuestions(roomId: string): Promise<Question[]> {
  *   거르면 "안 온 것"과 "걸러진 것"이 뒤섞여 왜 안 보이는지 알 수 없어진다.
  */
 export async function fetchAnswers(roomId: string): Promise<AnswerRow[]> {
+  const db = await getBrowserClient();
   return must<AnswerRow[]>(
     '답변',
-    await getBrowserClient()
+    await db
       .from('answers')
       .select('id, player_id, text, question_id')
       .eq('room_id', roomId),
@@ -98,9 +102,10 @@ export async function fetchAnswers(roomId: string): Promise<AnswerRow[]> {
 
 /** 투표. reveal 이후에만 행이 보인다 (SPEC §7.2). */
 export async function fetchVotes(roomId: string): Promise<VoteRow[]> {
+  const db = await getBrowserClient();
   return must<VoteRow[]>(
     '투표',
-    await getBrowserClient()
+    await db
       .from('votes')
       .select('voter_id, target_id, reason')
       .eq('room_id', roomId),
@@ -116,9 +121,10 @@ export async function fetchVotes(roomId: string): Promise<VoteRow[]> {
  *   봇이 갈린다 (I1). 뷰가 visible_at 이 지난 행만 내보내므로 이쪽은 샐 게 없다.
  */
 export async function fetchMessages(roomId: string): Promise<MessageRow[]> {
+  const db = await getBrowserClient();
   return must<MessageRow[]>(
     '메시지',
-    await getBrowserClient()
+    await db
       .from('public_messages')
       .select('id, player_id, text, visible_at')
       .eq('room_id', roomId)

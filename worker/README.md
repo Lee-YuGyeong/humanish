@@ -33,8 +33,22 @@ cd worker && npm install          # wrangler · workers-types
 배포는 파일이 없으니 Cloudflare에 직접 넣는다. **한 번만** 하면 된다.
 
 ```bash
-npx wrangler secret put WORLD_SHARED_SECRET   # .env.local 과 같은 값
+# 저장소 루트에서. --config 를 반드시 붙인다 (바로 아래 「★ --config」 참고)
+npx wrangler secret put WORLD_SHARED_SECRET --config worker/wrangler.toml
 ```
+
+> **★ `--config` 를 빼지 않는다.** 저장소 루트에 Next 앱용 `wrangler.jsonc`가 생긴 뒤로,
+> `cd worker` 를 해도 wrangler 는 **루트 설정을 집어간다** — 바로 옆에 `wrangler.toml`이
+> 있는데도 그렇다. 즉 `cd worker && npx wrangler secret put ...` 은 월드 워커가 아니라
+> **Next 앱 워커에 비밀을 넣는다.** 에러도 안 난다.
+>
+> ```bash
+> cd worker && npx wrangler secret list          # → Worker "humanish" not found  ← 루트를 봤다는 증거
+> npx wrangler secret list --config worker/wrangler.toml   # → humanish-world 의 목록
+> ```
+>
+> `npm run world:dev` · `world:deploy` · `world:smoke` 는 이미 `--config` 를 박아 뒀다.
+> 손으로 부를 때만 조심하면 된다.
 
 `NEXT_ORIGIN`은 비밀이 아니다. `wrangler.toml`의 `[vars]`에 있는 값은 **로컬 기본값일 뿐**이고,
 배포할 때는 `npm run world:deploy`가 `.env.local`의 `NEXT_ORIGIN`을 `--var`로 덮어쓴다.
@@ -74,19 +88,26 @@ Next 앱도 워커로 올린다. 그러면 대시보드에 워커가 **둘** 선
 # 1. 로그인 (처음 한 번)
 npx wrangler login
 
-# 2. .env.local 두 줄을 맞춘다. ★ 빌드가 여기서 값을 읽어 코드에 굳힌다 (아래 표 참고)
-#    NEXT_PUBLIC_WORLD_WS_URL=wss://humanish-world.<계정>.workers.dev
+# 2. .env.local 의 NEXT_ORIGIN 을 맞춘다 (월드 워커가 부를 Next 주소. 아래 표 참고)
 #    NEXT_ORIGIN=https://humanish.<계정>.workers.dev
 
-# 3. 런타임 비밀을 humanish 워커에 넣는다 (한 번만). 값은 .env.local 과 같다
+# 3. Next 앱 배포 — next build → OpenNext 번들 → wrangler deploy
+#    ★ 비밀보다 먼저 한다. `secret put` 은 **이미 있는 워커**에만 넣을 수 있어서,
+#      배포 전에 부르면 Worker "humanish" not found 로 막힌다.
+npm run app:deploy
+
+# 4. 런타임 값을 humanish 워커에 넣는다 (한 번만). 값은 .env.local 과 같다.
+#    재배포는 필요 없다 — 넣는 즉시 적용되고, deploy 가 지우지도 않는다.
+#    .env.local 을 그대로 밀어 넣어도 된다:  npx wrangler secret bulk .env.local
+npx wrangler secret put NEXT_PUBLIC_SUPABASE_URL
+npx wrangler secret put NEXT_PUBLIC_SUPABASE_ANON_KEY
+npx wrangler secret put NEXT_PUBLIC_WORLD_WS_URL   # wss://humanish-world.<계정>.workers.dev
 npx wrangler secret put SUPABASE_SERVICE_ROLE_KEY
 npx wrangler secret put WORLD_SHARED_SECRET
 
-# 4. Next 앱 배포 — next build → OpenNext 번들 → wrangler deploy
-npm run app:deploy
-
-# 5. 월드 워커에도 같은 비밀을 넣고 (한 번만) 배포한다
-cd worker && npx wrangler secret put WORLD_SHARED_SECRET; cd ..
+# 5. 월드 워커. 비밀은 이미 들어 있으면 건너뛴다 — 먼저 확인할 것:
+#      npx wrangler secret list --config worker/wrangler.toml
+npx wrangler secret put WORLD_SHARED_SECRET --config worker/wrangler.toml
 npm run world:deploy
 
 # 6. 브라우저 없이 전체 왕복 확인 — 진짜 방을 하나 만든다
@@ -97,25 +118,36 @@ NEXT_URL=https://humanish.<계정>.workers.dev npm run world:verify
 
 #### 무엇이 언제 들어가는가 — 여기서 헷갈리면 조용히 깨진다
 
-Next 는 `NEXT_PUBLIC_` 붙은 변수를 **빌드 시점에 코드로 치환한다. 브라우저 번들뿐 아니라
-서버 코드에서도 그렇다.** 그래서 `wrangler secret put NEXT_PUBLIC_WORLD_WS_URL` 은
-**아무 효과가 없다** — 이미 굳은 문자열을 덮어쓸 방법이 없다.
+**이 앱의 값은 전부 런타임 조회다. 빌드 시점에 굳는 값은 하나도 없다.**
 
-빌드 산출물로 직접 확인할 수 있다. 런타임 조회로 남은 것만 secret 이 먹는다:
+`NEXT_PUBLIC_` 접두사를 보면 "빌드 때 굳는다"고 읽기 쉽지만(그리고 예전에 이 문서가
+그렇게 적혀 있었지만), 굳는 건 **브라우저 번들에서 그 이름을 직접 읽을 때**뿐이다.
+이 저장소의 서버 코드는 `process.env.NEXT_PUBLIC_SUPABASE_URL` 을 런타임에 읽고,
+브라우저는 그 이름을 아예 읽지 않는다 — `GET /api/config` 로 서버에 물어본다
+(`app/api/config/route.ts` · `lib/server/supabase.ts` 머리말).
+
+그래서 **모든 값을 워커 변수/비밀로 넣을 수 있다.** 배포 전에 채워 둬야 하는 값이 없고,
+값을 바꿀 때 다시 빌드하지 않아도 된다.
+
+빌드 산출물로 확인할 수 있다. `process.env.X` 로 남아 있으면 워커 변수가 먹는다:
 
 ```bash
-grep -rho 'process\.env\.[A-Z_]*' .next/server --include='*.js' | sort -u
-#   process.env.WORLD_SHARED_SECRET        ← 남았다 = secret 으로 넣는다
-#   process.env.SUPABASE_SERVICE_ROLE_KEY  ← 남았다 = secret 으로 넣는다
-#   (NEXT_PUBLIC_* 은 하나도 안 보인다 = 이미 굳었다)
+grep -rho 'process\.env\.[A-Z_]*' .open-next/server-functions --include='*.js' | sort -u
+#   process.env.NEXT_PUBLIC_SUPABASE_URL   ← 남았다 = 워커 변수로 넣는다
+#   process.env.WORLD_SHARED_SECRET        ← 남았다 = 워커 비밀로 넣는다
 ```
+
+> **★ 브라우저에 새 값을 보내야 하면 `app/api/config/route.ts` 에 한 줄 더한다.**
+> 거기 화이트리스트에 이름을 손으로 적은 것만 나간다. `process.env` 를 전개하거나
+> 필터로 만들지 않는다 — service role 키가 같이 새면 RLS 가 통째로 무의미해진다 (I9).
 
 | 변수 | 어디에 | 왜 |
 |---|---|---|
-| `SUPABASE_SERVICE_ROLE_KEY` | `wrangler secret put` | 런타임 조회로 남는다. 서버 라우트 전용 (I9) |
-| `WORLD_SHARED_SECRET` | `wrangler secret put` **워커 둘 다** | 런타임 조회. Next 가 티켓에 서명하고 월드 워커가 검증한다 — **두 값이 같아야 한다** |
-| `NEXT_PUBLIC_SUPABASE_URL` · `..._ANON_KEY` | `.env.local` (빌드 시점) | 빌드 때 굳는다. secret 으로 넣어도 안 먹는다 |
-| `NEXT_PUBLIC_WORLD_WS_URL` | `.env.local` (빌드 시점) | 위와 같다. **월드 워커 주소가 바뀌면 `npm run app:deploy` 로 다시 빌드해야 한다** |
+| `SUPABASE_SERVICE_ROLE_KEY` | `wrangler secret put` | 서버 라우트 전용. 브라우저로 절대 안 나간다 (I9) |
+| `WORLD_SHARED_SECRET` | `wrangler secret put` **워커 둘 다** | Next 가 티켓에 서명하고 월드 워커가 검증한다 — **두 값이 같아야 한다** |
+| `NEXT_PUBLIC_SUPABASE_URL` · `..._ANON_KEY` | `wrangler secret put` | 서버가 읽고, 브라우저에는 `/api/config` 가 내려준다. 원래 공개값이라 anon 키는 RLS 가 지킨다 |
+| `NEXT_PUBLIC_WORLD_WS_URL` | `wrangler secret put` | `/api/world/ticket` 이 서버에서 읽어 티켓에 실어 준다. 브라우저는 이 이름을 안 본다 |
+| `AGENT_SELF_URL` | `wrangler.jsonc` 의 `vars` | 봇 답변 재생성이 `/api/agent` 를 self-fetch 할 자기 공개 주소. 비밀이 아니다 |
 | `NEXT_ORIGIN` | `.env.local` (로컬 전용) | Next 는 안 읽는다. `next.config.ts` 의 dev 설정과, `world:deploy` 가 월드 워커에 `--var` 로 실어 보낼 때만 쓴다 |
 | `SUPABASE_DB_URL_DIRECT` | 넣지 않는다 | 마이그레이션 전용 (SPEC §12.2) |
 | `NVIDIA_NIM_*` | 선택 (`secret put`) | `/api/agent` 를 쓸 때만. 지금은 봇이 DB 문구 풀로 말한다 (SPEC §17) |
