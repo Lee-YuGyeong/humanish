@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { IBM_Plex_Mono, IBM_Plex_Sans_KR } from "next/font/google";
 import "./globals.css";
+import { Providers } from "./providers";
 
 /**
  * ┌─ 왜 IBM Plex 인가 ──────────────────────────────────────────────────────┐
@@ -77,7 +78,12 @@ export default function RootLayout({
           <div className="room-floor" />
           <div className="room-screen" />
         </div>
-        {children}
+        {/*
+          서버 값 캐시(react-query). 배경 div 바깥이 아니라 children 만 감싼다 —
+          배경은 순수 CSS라 프로바이더가 필요 없고, 여기서 감싸면 layout이
+          클라이언트 컴포넌트가 되어 서버 렌더의 이점을 잃는다.
+        */}
+        <Providers>{children}</Providers>
       </body>
     </html>
   );

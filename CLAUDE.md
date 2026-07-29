@@ -49,9 +49,27 @@ npm test               # 순수 함수 · 화면 조각 (vitest, tests/ 아래)
 | `lib/game/`, `lib/agent/` | **B** — 규칙(순수 함수) · 에이전트 |
 | `app/`(api 제외), `components/`, `mock/` | **C** — 화면 |
 | `lib/mp/`, `worker/`, `tools/verify-world.mjs` | **A** — 3D 월드 멀티플레이 (프로토콜 · Durable Object) |
+| `wrangler.jsonc`, `open-next.config.ts`, `tools/deploy-*.mjs` | **A** — 배포 (Cloudflare Workers) |
+| `lib/api/`, `lib/queries/`, `lib/store/` | **A** — 상태 계층 (아래 「상태는 어디에 두는가」) |
 | `lib/game/types.ts` | 공동. 고치면 팀 채널에 공지 |
 
 이 저장소에서 작업하는 세션은 **A 영역**을 맡는다. B·C 영역 파일이 필요하면 스텁만 두고 사용자에게 알린다.
+
+## 상태는 어디에 두는가
+
+**서버가 아는 값을 `useState`에 담지 않는다.** 방·좌석·질문·답변·투표는 전부 캐시(react-query)에 있고, 화면은 그걸 읽기만 한다. 이 경계가 흐려지면 같은 값이 두 군데 살고, 둘이 어긋날 때 어느 쪽이 맞는지 알 수 없어진다.
+
+| 무엇 | 어디 | 예 |
+|---|---|---|
+| 서버가 아는 값 | `lib/queries/` (react-query) | 방 · 좌석 · 질문 · 답변 · 투표 · 내 정보 |
+| 서버가 모르는 값 | `lib/store/<slice>/` (zustand 4계층) | 입력 초안 · 고른 자리 · 실패 배너 · 요청 잠금 |
+| 요청 그 자체 | `lib/api/` | fetch 래퍼 · 라우트별 함수 · anon 읽기 |
+
+스토어는 `actions → reducer → store → selectors` 순으로 나눈다. reducer와 selector는 **순수 함수**라 `npm test`가 직접 검사한다 — 화면을 띄우지 않고 규칙을 확인할 수 있는 게 이렇게 나눈 이유다. 화면은 `@/lib/store/room`처럼 **폴더만** import한다(안쪽 파일을 직접 가리키면 계층을 건너뛰게 된다).
+
+- **쿼리 키는 `lib/queries/keys.ts`에서만 만든다.** 배열 리터럴을 호출부에 적으면 읽는 쪽과 무효화하는 쪽이 조용히 갈린다 — 타입도 통과하고 에러도 없이 화면만 갱신되지 않는다. 방에 속한 키는 전부 `scope(roomId)`로 시작해서 **I10이 키 모양으로 강제된다.**
+- **`app/world/store.ts`는 이 4계층을 따르지 않는다.** 좌표를 Map 안에서 제자리 변형한다 — 8인 × 10Hz를 불변 업데이트로 바꾸면 초당 80번 리렌더가 난다. 그 파일 머리말에 이유가 있다. **거기에 reducer를 들이지 않는다.**
+- **DB 동작은 여전히 목으로 흉내 내지 않는다.** `tests/components/room-view.test.tsx`가 대신 세우는 건 `lib/api/*`(네트워크 경계)뿐이고, RLS·상태머신은 `supabase/test.sh`가 진짜 Postgres에 물어본다.
 
 ## 작업 보드 (`/`)
 
@@ -89,5 +107,6 @@ npm test               # 순수 함수 · 화면 조각 (vitest, tests/ 아래)
 - 코드를 고쳤으면 `npm run build`로 끝낸다. 타입 에러를 남기지 않는다.
 - `supabase/` 아래를 고쳤으면 `./supabase/test.sh`로 끝낸다. 일회용 로컬 Postgres에서 SPEC §14를 검사한다.
 - **3D 월드는 `lib/mp/`부터 본다** (`docs/MULTIPLAYER.md`). 프로토콜 · 상수 · 월드 경계가 거기 하나뿐이고 클라이언트와 워커가 **같이 읽는다** — 한쪽에 복붙하면 그 순간 갈린다. `worker/` 를 고쳤으면 `npm run world:typecheck` 와 `npm run world:verify`(소켓 2개 왕복)로 끝낸다. 타입체크는 멀티플레이가 동작한다는 증거가 못 된다.
+- **배포는 워커 둘이다.** `npm run app:deploy`(Next 앱 = `humanish`)와 `npm run world:deploy`(월드 = `humanish-world`). **`npm run build` 산출물은 배포에 쓰지 않는다** — 그건 Node 용이고, Workers 로 가는 건 `app:build`(= `next build` + OpenNext 번들)뿐이다. 그리고 **`NEXT_PUBLIC_*` 은 서버 코드에서도 빌드 시점에 굳는다** — `wrangler secret put` 으로 못 바꾼다. 바꾸려면 `.env.local` 을 고치고 다시 빌드해야 한다. 전체 순서와 변수 표는 `worker/README.md`.
 - 시각은 전부 ISO 문자열로 주고받는다.
 - 파일명 kebab-case, 컴포넌트 PascalCase.

@@ -18,8 +18,8 @@
 'use client';
 
 import Link from 'next/link';
-import { useCallback, useEffect, useRef, useState } from 'react';
-import { getBrowserClient } from '@/lib/server/supabase';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+
 import { PlayerGrid } from '@/components/player-grid';
 import {
   ArrowLeftIcon,
@@ -31,54 +31,47 @@ import {
   SpyIcon,
   UserPlusIcon,
 } from '@/components/ui/icons';
+import type { AnswerRow, VoteRow } from '@/lib/api/db';
+import type { MeResponse } from '@/lib/api/room';
+import { currentQuestion, nicknameOf, revealedAnswers } from '@/lib/queries/derive';
+import {
+  REQUEST,
+  useAdvancePhase,
+  useCastVote,
+  useSendMessage,
+  useStartRoom,
+  useSubmitAnswer,
+} from '@/lib/queries/mutations';
+import { usePhaseCountdown } from '@/lib/queries/phase-clock';
+import { useRoomRealtime } from '@/lib/queries/realtime';
+import {
+  useAnswers,
+  useInvalidateRoom,
+  useMe,
+  useMessages,
+  useQuestions,
+  useReveal,
+  useRoomByCode,
+  useRoster,
+  useServerClock,
+  useVotes,
+} from '@/lib/queries/room';
+import {
+  roomActions,
+  selectAnswerDraft,
+  selectCanCastVote,
+  selectCanSendChat,
+  selectCanSubmitAnswer,
+  selectChatDraft,
+  selectError,
+  selectIsBusy,
+  selectIsPending,
+  selectVoteReason,
+  selectVoteTarget,
+  useRoomDispatch,
+  useRoomUi,
+} from '@/lib/store/room';
 import type { Phase, PublicPlayer, Question, Role, Room } from '@/lib/game/types';
-
-interface Me {
-  player: PublicPlayer | null;
-  is_host: boolean;
-  answered: boolean;
-  voted: boolean;
-  /**
-   * ★ 내 역할 하나뿐이다. 남의 역할은 reveal 전까지 어디에도 오지 않는다 (I1).
-   * 배정 전(lobby)에는 null. 스파이가 자기가 스파이인 줄 알아야 게임이 성립한다 (SPEC §0).
-   */
-  role: Role | null;
-  /**
-   * 그 방의 봇 총 수. 0일 수 있다 — 사람이 정원을 다 채운 방이다 (SPEC §15-3-결정).
-   * ★ **몇인지**만 온다. 어느 자리인지는 끝까지 오지 않는다 (I1).
-   */
-  bot_count: number;
-}
-
-interface AnswerRow {
-  id: string;
-  player_id: string;
-  text: string;
-}
-
-interface VoteRow {
-  voter_id: string;
-  target_id: string;
-  reason: string;
-}
-
-/**
- * /api/reveal 응답. 게임에서 정체가 클라이언트로 오는 곳은 여기 하나뿐이고,
- * 그 라우트가 phase와 참가 여부를 확인한 뒤에만 준다 (I1).
- */
-interface RevealData {
-  players: {
-    id: string;
-    nickname: string;
-    seat: number;
-    is_bot: boolean;
-    role: Role | null;
-    votes_received: number;
-    score: number;
-  }[];
-  votes: { voter_id: string; target_id: string; reason: string; correct: boolean }[];
-  rule: string[];
-}
 
 const PHASE_LABEL: Record<Phase, string> = {
   lobby: '대기실',
@@ -94,237 +87,64 @@ const PHASE_LABEL: Record<Phase, string> = {
 const URGENT_SECONDS = 10;
 
 export function RoomView({ code }: { code: string }) {
-  const [room, setRoom] = useState<Room | null>(null);
-  const [players, setPlayers] = useState<PublicPlayer[]>([]);
-  const [me, setMe] = useState<Me | null>(null);
-  const [question, setQuestion] = useState<Question | null>(null);
-  const [answers, setAnswers] = useState<AnswerRow[]>([]);
-  /** answers가 어느 질문의 답인지. 직전 라운드의 답일 수 있어서 함께 보여준다. */
-  const [answerOf, setAnswerOf] = useState<Question | null>(null);
-  const [votes, setVotes] = useState<VoteRow[]>([]);
-  const [error, setError] = useState<string | null>(null);
-  const [remainMs, setRemainMs] = useState<number | null>(null);
-  /** 쓰기 요청이 나가 있는 동안 버튼을 잠근다 */
-  const [busy, setBusy] = useState(false);
-
-  /** SPEC §12.5 — 서버 시각 - 내 시각. 카운트다운을 여기에 맞춘다. */
-  const offsetRef = useRef(0);
-  /** 같은 phase_seq로 전환을 두 번 부르지 않게 하는 표시 (I6) */
-  const advancedSeqRef = useRef<number | null>(null);
-
-  const serverNow = useCallback(() => Date.now() + offsetRef.current, []);
-
-  /** 방 상태 · 참가자 · 질문 · 답변을 한꺼번에 다시 읽는다. 전부 방으로 스코프한다 (I10). */
-  const refresh = useCallback(async () => {
-    const db = getBrowserClient();
-
-    const { data: r, error: roomErr } = await db
-      .from('rooms')
-      // ★ capacity를 빠뜨리면 room.capacity가 undefined가 되어 좌석 그리드가 0칸이 된다 (§17.6)
-      .select('id, code, capacity, phase, phase_seq, phase_ends_at, round, host_id, roster_seq')
-      .eq('code', code.toUpperCase())
-      .maybeSingle();
-
-    if (roomErr) return setError(roomErr.message);
-    if (!r) return setError(`그런 방이 없다: ${code.toUpperCase()}`);
-
-    const current = r as Room;
-    setRoom(current);
-
-    const [{ data: ps }, { data: qs }, { data: as }, { data: vs }, meRes] = await Promise.all([
-      db.from('public_players').select('*').eq('room_id', current.id).order('seat'),
-      db.from('questions').select('*').eq('room_id', current.id).order('round'),
-      // RLS가 visible_at <= now()인 것만 준다. 아직 안 열린 답은 애초에 안 온다 (SPEC §7.2)
-      db.from('answers').select('id, player_id, text, question_id').eq('room_id', current.id),
-      // reveal 이후에만 보인다 (SPEC §7.2)
-      db.from('votes').select('voter_id, target_id, reason').eq('room_id', current.id),
-      fetch(`/api/me?room_id=${current.id}`).then((res) => res.json()),
-    ]);
-
-    setPlayers((ps ?? []) as PublicPlayer[]);
-    setVotes((vs ?? []) as VoteRow[]);
-    setMe(meRes as Me);
-
-    const all = (qs ?? []) as Question[];
-    const now =
-      current.phase === 'target'
-        ? all.filter((q) => q.kind === 'target').at(-1)
-        : all.find((q) => q.kind === 'common' && q.round === current.round);
-    setQuestion(now ?? null);
-
-    /**
-     * ★ 지금 질문의 답이 아니라 **가장 최근에 공개된 질문의 답**을 보여준다.
-     *
-     * 답은 그 페이즈가 끝나야 열린다 (answers.visible_at = phase_ends_at).
-     * 그런데 열리는 순간이 곧 화면이 다음 질문으로 넘어가는 순간이라,
-     * "지금 질문의 답"만 그리면 한 판 내내 아무것도 뜨지 않는다.
-     * 라운드2를 푸는 동안 라운드1의 답이 남아 있어야 서로를 뜯어볼 수 있다.
-     *
-     * RLS가 visible_at이 지난 행만 주므로(SPEC §7.2) 여기 온 답은 전부 공개된 것이다.
-     * 아직 안 열린 답은 애초에 이 목록에 없다 — 클라이언트가 거를 일이 아니다.
-     */
-    const rows = (as ?? []) as (AnswerRow & { question_id: string })[];
-    const byQuestion = new Map<string, AnswerRow[]>();
-    for (const a of rows) {
-      const bucket = byQuestion.get(a.question_id);
-      if (bucket) bucket.push(a);
-      else byQuestion.set(a.question_id, [a]);
-    }
-
-    // 진행 순서: 공통1 → 공통2 → 지목. target은 항상 마지막이다 (SPEC §5.1).
-    const orderOf = (q: Question) => (q.kind === 'target' ? 3 : q.round);
-    const revealed = all
-      .filter((q) => byQuestion.has(q.id))
-      .sort((a, b) => orderOf(a) - orderOf(b))
-      .at(-1);
-
-    setAnswerOf(revealed ?? null);
-    setAnswers(revealed ? (byQuestion.get(revealed.id) ?? []) : []);
-  }, [code]);
-
   /**
-   * 서버 시각 오프셋 (SPEC §12.5). 접속할 때 한 번.
-   *
-   * ★ 응답을 검사한 뒤에만 쓴다. /api/time은 실패하면 { error } + 500을 주는데,
-   *   그걸 그대로 구조분해하면 now가 undefined → NaN이 되고, offset이 NaN으로 굳는다.
-   *   그러면 serverNow()도 NaN이고 `left <= 0`이 영영 false라서 **그 탭은 페이즈
-   *   만료를 한 번도 감지하지 못한다.** 화면에는 'NaN초'만 뜨고 타이머가 죽은 건
-   *   안 보인다. 실패하면 오프셋 0(= 로컬 시계)으로 두는 편이 낫다 —
-   *   어차피 판정은 서버가 한다 (I2).
+   * ┌─ 서버 값은 전부 쿼리다 (lib/queries) ──────────────────────────────────────┐
+   * │ 예전에는 refresh() 하나가 이 여섯 개를 **매번 전부** 다시 읽고 setState 를  │
+   * │ 여섯 번 했다. 답변만 바뀌어도 좌석·질문·투표가 같이 새로 그려졌고, 요청이   │
+   * │ 겹치면 늦게 온 응답이 먼저 온 응답을 덮어썼다. 이제 캐시가 쿼리마다 따로다. │
+   * └────────────────────────────────────────────────────────────────────────────┘
    */
-  useEffect(() => {
-    let alive = true;
-    void (async () => {
-      try {
-        const before = Date.now();
-        const res = await fetch('/api/time');
-        if (!res.ok) return;
-        const { now } = await res.json();
-        const t = new Date(now).getTime();
-        if (!alive || !Number.isFinite(t)) return;
-        // 왕복 시간의 절반을 빼서 대략 보정한다
-        offsetRef.current = t - (before + Date.now()) / 2;
-      } catch {
-        // 오프셋 없이 로컬 시계로 간다. 몇 초 어긋나도 서버가 다시 판정한다.
-      }
-    })();
-    void refresh();
-    return () => {
-      alive = false;
-    };
-  }, [refresh]);
+  const roomQuery = useRoomByCode(code);
+  const room = roomQuery.data ?? null;
+  const roomId = room?.id;
 
-  /** rooms 구독. ★ 반드시 id로 필터를 건다 — 없으면 다른 방 전환이 내 화면에 들어온다 (I10) */
-  useEffect(() => {
-    if (!room) return;
-    const db = getBrowserClient();
+  const { data: players = [] } = useRoster(roomId);
+  const { data: me = null } = useMe(roomId);
+  const { data: questions = [] } = useQuestions(roomId);
+  const { data: answerRows = [] } = useAnswers(roomId);
+  const { data: votes = [] } = useVotes(roomId);
 
-    const channel = db
-      .channel(`room:${room.id}`) // 채널 이름에 code가 아니라 room_id (SPEC §6.3)
-      .on(
-        'postgres_changes',
-        { event: 'UPDATE', schema: 'public', table: 'rooms', filter: `id=eq.${room.id}` },
-        () => {
-          // phase_seq든 roster_seq든 바뀌었으면 다시 읽는다 (SPEC §17.3)
-          void refresh();
-        },
-      )
-      .subscribe();
+  /** 방이 바뀌었다는 신호가 오면 그 방 쿼리를 통째로 무효화한다 (SPEC §17.3, I10) */
+  const invalidate = useInvalidateRoom(code, roomId);
+  useRoomRealtime(roomId, invalidate);
 
-    return () => {
-      void db.removeChannel(channel);
-    };
-  }, [room?.id, refresh]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  /** 백그라운드 탭에서 돌아오면 즉시 재동기화 (SPEC §12.1 2번) */
-  useEffect(() => {
-    const onVisible = () => {
-      if (document.visibilityState === 'visible') void refresh();
-    };
-    document.addEventListener('visibilitychange', onVisible);
-    return () => document.removeEventListener('visibilitychange', onVisible);
-  }, [refresh]);
-
-  /** 카운트다운 + 만료 감지 (SPEC §5.2 1번 호출자) */
-  useEffect(() => {
-    if (!room?.phase_ends_at) {
-      setRemainMs(null);
-      return;
-    }
-    const endsAt = new Date(room.phase_ends_at).getTime();
-
-    const tick = () => {
-      const left = endsAt - serverNow();
-      setRemainMs(left);
-
-      if (left <= 0 && advancedSeqRef.current !== room.phase_seq) {
-        // 요청이 나가 있는 동안 다시 부르지 않게 먼저 찍는다 (I6)
-        advancedSeqRef.current = room.phase_seq;
-
-        void fetch('/api/phase/advance', {
-          method: 'POST',
-          headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ room_id: room.id, expected_seq: room.phase_seq }),
-        })
-          .then((res) => res.json())
-          .then((data) => {
-            // ★ 실패했으면 무장을 푼다. 내 시계가 조금 빨라서 만료 전에 부르면
-            //   서버가 advanced:false를 준다 (advance_phase 3단계). 그때 이 표시를
-            //   그대로 두면 **그 페이즈에서는 다시는 전환을 시도하지 않는다.**
-            //   방에 사람이 나뿐이면 워치독이 훑을 때까지 화면이 0초에 멈춘다.
-            //   I6이 막아야 하는 건 중복 전환이지 재시도가 아니다.
-            if (data?.advanced === false) advancedSeqRef.current = null;
-          })
-          .catch(() => {
-            advancedSeqRef.current = null; // 네트워크 실패도 재시도 대상이다
-          })
-          .finally(() => void refresh());
-      }
-    };
-
-    tick();
-    const id = setInterval(tick, 500);
-    return () => clearInterval(id);
-  }, [room?.id, room?.phase_seq, room?.phase_ends_at, serverNow, refresh]);
-
-  /**
-   * 모든 쓰기가 지나는 통로. 클라이언트는 anon 키로 쓰지 않는다 (I9).
-   *
-   * ★ 한 번에 하나만 나간다. 시작 버튼을 연타하면 POST /api/room/start가 둘 다
-   *   나가고, 둘 다 lobby·phase_seq를 읽은 뒤 각자의 시드로 역할을 upsert한다.
-   *   먼저 도착한 쪽이 전환하면 두 번째는 409를 받아 **정상 시작된 판에 빨간
-   *   에러 배너가 남고**, 그 upsert가 전환 뒤에 착지하면 이미 시작된 판의
-   *   스파이가 다른 사람으로 바뀐다.
-   */
-  const inFlightRef = useRef(false);
-  const post = useCallback(
-    async (path: string, body: unknown) => {
-      if (inFlightRef.current) return false;
-      inFlightRef.current = true;
-      setBusy(true);
-      try {
-        setError(null);
-        const res = await fetch(path, {
-          method: 'POST',
-          headers: { 'content-type': 'application/json' },
-          body: JSON.stringify(body),
-        });
-        const data = await res.json();
-        if (!res.ok) setError(data.error ?? '알 수 없는 오류');
-        await refresh();
-        return res.ok;
-      } finally {
-        inFlightRef.current = false;
-        setBusy(false);
-      }
-    },
-    [refresh],
+  /** 카운트다운은 표시용이다. 전환은 서버가 정한다 (I2) */
+  const { serverNow } = useServerClock();
+  const advance = useAdvancePhase(code, roomId);
+  const requestAdvance = useCallback(
+    (expectedSeq: number) => advance.mutateAsync({ expectedSeq }),
+    [advance],
   );
+  const remainMs = usePhaseCountdown(room, serverNow, requestAdvance);
 
-  if (error && !room) {
+  /** 쓰기 실패 배너. 성공하면 스스로 사라진다 (lib/store/room/reducer.ts) */
+  const error = useRoomUi(selectError);
+  const dispatch = useRoomDispatch();
+
+  /** 방을 떠날 때 초안·잠금을 지운다. 안 지우면 다음 방에 새어 나간다 */
+  useEffect(() => () => dispatch(roomActions.roomLeft()), [dispatch]);
+
+  /** 표시 규칙은 순수 함수로 뺐다 (lib/queries/derive.ts — 단위 테스트 대상) */
+  const question = useMemo(
+    () => (room ? currentQuestion(questions, room.phase, room.round) : null),
+    [questions, room],
+  );
+  const revealed = useMemo(() => revealedAnswers(questions, answerRows), [questions, answerRows]);
+
+  /**
+   * 방 자체를 못 읽은 경우만 전체 화면 오류다.
+   * 쓰기 실패(위 error)는 화면을 유지한 채 배너로 알린다.
+   */
+  const loadError = roomQuery.isError
+    ? roomQuery.error.message
+    : roomQuery.isSuccess && roomQuery.data === null
+      ? `그런 방이 없다: ${code.toUpperCase()}`
+      : null;
+
+  if (loadError) {
     return (
       <main className="mx-auto flex min-h-screen max-w-lg flex-col justify-center gap-5 px-6">
-        <p className="case border-signal/30 px-6 py-5 text-sm text-signal">{error}</p>
+        <p className="case border-signal/30 px-6 py-5 text-sm text-signal">{loadError}</p>
         <Link
           href="/main"
           className="stencil inline-flex items-center gap-2 text-[10px] text-grime transition-colors hover:text-tung"
@@ -415,15 +235,14 @@ export function RoomView({ code }: { code: string }) {
         )}
 
         <Panel
+          code={code}
           room={room}
           players={players}
           me={me}
           question={question}
-          answers={answers}
-          answerOf={answerOf}
+          answers={revealed.answers}
+          answerOf={revealed.question}
           votes={votes}
-          post={post}
-          busy={busy}
         />
 
         {error && (
@@ -514,7 +333,15 @@ function LobbyHero({
   );
 }
 
+/**
+ * 페이즈별 조작판.
+ *
+ * ★ 훅은 전부 여기 맨 위에서 부른다. 아래 분기 안에서 부르면 페이즈가 바뀔 때마다
+ *   훅 개수가 달라져 React 가 상태를 잘못 짝짓는다. 뮤테이션은 만들어 두기만 하고
+ *   실제 요청은 run() 을 부를 때 나가므로 미리 만들어도 비용이 없다.
+ */
 function Panel({
+  code,
   room,
   players,
   me,
@@ -522,24 +349,32 @@ function Panel({
   answers,
   answerOf,
   votes,
-  post,
-  busy,
 }: {
+  code: string;
   room: Room;
   players: PublicPlayer[];
-  me: Me | null;
+  me: MeResponse | null;
   question: Question | null;
   answers: AnswerRow[];
   /** answers가 어느 질문의 답인지. 직전 라운드 것일 수 있다. */
   answerOf: Question | null;
   votes: VoteRow[];
-  post: (path: string, body: unknown) => Promise<boolean>;
-  busy: boolean;
 }) {
-  const [text, setText] = useState('');
-  const [target, setTarget] = useState<string | null>(null);
-  const [reason, setReason] = useState('');
-  const nameOf = (id: string) => players.find((p) => p.id === id)?.nickname ?? '?';
+  const dispatch = useRoomDispatch();
+
+  const start = useStartRoom(code, room.id);
+  const answer = useSubmitAnswer(code, room.id);
+  const vote = useCastVote(code, room.id);
+
+  const text = useRoomUi(selectAnswerDraft);
+  const target = useRoomUi(selectVoteTarget);
+  const reason = useRoomUi(selectVoteReason);
+  const canAnswerNow = useRoomUi(selectCanSubmitAnswer);
+  const canVoteNow = useRoomUi(selectCanCastVote);
+  const busy = useRoomUi(selectIsBusy);
+  const starting = useRoomUi(selectIsPending(REQUEST.start));
+
+  const nameOf = (id: string) => nicknameOf(players, id);
 
   if (!me?.player) {
     return (
@@ -614,11 +449,11 @@ function Panel({
             <button
               type="button"
               disabled={busy}
-              onClick={() => void post('/api/room/start', { room_id: room.id })}
+              onClick={() => start.run()}
               className="stencil mt-4 flex w-full items-center justify-center gap-3 bg-signal/12 py-4 text-[11px] text-flare shadow-[inset_0_0_0_1px_rgba(255,51,32,0.45)] transition-all hover:bg-signal/20 hover:shadow-[inset_0_0_0_1px_rgba(255,51,32,0.7),0_0_30px_-8px_rgba(255,51,32,0.9)] disabled:cursor-default disabled:opacity-40"
             >
               <span className="h-1.5 w-1.5 rounded-full bg-signal shadow-[0_0_9px_2px] shadow-signal/70" />
-              {busy ? '시작하는 중…' : '게임 시작'}
+              {starting ? '시작하는 중…' : '게임 시작'}
             </button>
           </div>
         ) : (
@@ -668,17 +503,19 @@ function Panel({
             className="flex gap-1.5"
             onSubmit={(e) => {
               e.preventDefault();
-              void post('/api/answer', { room_id: room.id, text }).then((ok) => ok && setText(''));
+              // 입력칸은 **접수된 뒤에** 비운다 (useSubmitAnswer 의 onSuccess).
+              // 실패했는데 비우면 사람이 쓴 걸 잃는다.
+              answer.run(text);
             }}
           >
             <input
               value={text}
-              onChange={(e) => setText(e.target.value)}
+              onChange={(e) => dispatch(roomActions.answerChanged(e.target.value))}
               maxLength={300}
               placeholder="답을 쓴다"
               className={INPUT}
             />
-            <button type="submit" disabled={!text.trim()} className={PRIMARY_BUTTON}>
+            <button type="submit" disabled={!canAnswerNow} className={PRIMARY_BUTTON}>
               제출
             </button>
           </form>
@@ -731,7 +568,7 @@ function Panel({
             </ul>
           </Box>
         )}
-        <ChatPanel room={room} nameOf={nameOf} meId={me.player.id} post={post} />
+        <ChatPanel code={code} room={room} nameOf={nameOf} meId={me.player.id} />
       </>
     );
   }
@@ -748,7 +585,7 @@ function Panel({
             meId={me.player.id}
             selectable={!me.voted}
             selectedId={target}
-            onSelect={setTarget}
+            onSelect={(id) => dispatch(roomActions.voteTargetSelected(id))}
           />
         </div>
         {me.voted ? (
@@ -760,17 +597,18 @@ function Panel({
             className="flex gap-1.5"
             onSubmit={(e) => {
               e.preventDefault();
-              void post('/api/vote', { room_id: room.id, target_id: target, reason });
+              if (!target) return; // 셀렉터가 이미 막지만, 타입도 여기서 좁힌다
+              vote.run({ targetId: target, reason });
             }}
           >
             <input
               value={reason}
-              onChange={(e) => setReason(e.target.value)}
+              onChange={(e) => dispatch(roomActions.voteReasonChanged(e.target.value))}
               maxLength={200}
               placeholder="이유 (선택)"
               className={INPUT}
             />
-            <button type="submit" disabled={!target} className={DANGER_BUTTON}>
+            <button type="submit" disabled={!canVoteNow} className={DANGER_BUTTON}>
               지목
             </button>
           </form>
@@ -794,40 +632,24 @@ function Panel({
  *   대가는 최대 1.5초의 지연이다. 봇이 일부러 2~8초를 끄는 판에서 문제가 되지 않는다.
  */
 function ChatPanel({
+  code,
   room,
   meId,
   nameOf,
-  post,
 }: {
+  code: string;
   room: Room;
   meId: string;
   nameOf: (id: string) => string;
-  post: (path: string, body: unknown) => Promise<boolean>;
 }) {
-  const [messages, setMessages] = useState<{ id: string; player_id: string; text: string }[]>([]);
-  const [text, setText] = useState('');
+  const dispatch = useRoomDispatch();
+  const send = useSendMessage(code, room.id);
+
+  // 폴링 주기와 쿼리 키는 lib/queries 가 갖는다. 이 컴포넌트는 주기를 모른다.
+  const { data: messages = [] } = useMessages(room.id, true);
+  const text = useRoomUi(selectChatDraft);
+  const canSend = useRoomUi(selectCanSendChat);
   const bottomRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    const db = getBrowserClient();
-    let alive = true;
-
-    const pull = async () => {
-      const { data } = await db
-        .from('public_messages')
-        .select('id, player_id, text, visible_at')
-        .eq('room_id', room.id) // 방 필터 (I10)
-        .order('visible_at');
-      if (alive && data) setMessages(data);
-    };
-
-    void pull();
-    const id = setInterval(pull, 1500);
-    return () => {
-      alive = false;
-      clearInterval(id);
-    };
-  }, [room.id]);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -871,18 +693,20 @@ function ChatPanel({
           e.preventDefault();
           const t = text.trim();
           if (!t) return;
-          setText('');
-          void post('/api/message', { room_id: room.id, text: t });
+          // 채팅만 보내는 즉시 비운다 — 연달아 치는 것이라 입력칸이 안 비면 손이 멈춘다
+          // (reducer.ts 의 draft/chatSent 주석).
+          dispatch(roomActions.chatSent());
+          send.run(t);
         }}
       >
         <input
           value={text}
-          onChange={(e) => setText(e.target.value)}
+          onChange={(e) => dispatch(roomActions.chatChanged(e.target.value))}
           maxLength={200}
           placeholder="말한다"
           className={INPUT}
         />
-        <button type="submit" disabled={!text.trim()} aria-label="보내기" className={PRIMARY_BUTTON}>
+        <button type="submit" disabled={!canSend} aria-label="보내기" className={PRIMARY_BUTTON}>
           <SendIcon className="h-3.5 w-3.5" />
         </button>
       </form>
@@ -935,23 +759,18 @@ function RevealPanel({
   nameOf,
 }: {
   room: Room;
-  me: Me;
+  me: MeResponse;
   votes: VoteRow[];
   nameOf: (id: string) => string;
 }) {
-  const [data, setData] = useState<RevealData | null>(null);
-  const [failed, setFailed] = useState<string | null>(null);
+  // reveal·replay 에서만 이 컴포넌트가 그려지므로 enabled 는 true 다.
+  // 라우트가 페이즈와 참가 여부를 다시 확인한다 (I1) — 화면 조건에 기대지 않는다.
+  const { data, isError, error } = useReveal(room.id, true);
 
-  useEffect(() => {
-    void fetch(`/api/reveal?room_id=${room.id}`)
-      .then((r) => r.json())
-      .then((d) => (d.error ? setFailed(d.error) : setData(d as RevealData)));
-  }, [room.id]);
-
-  if (failed) {
+  if (isError) {
     return (
       <Box>
-        <p className="text-[13px] text-signal">{failed}</p>
+        <p className="text-[13px] text-signal">{error.message}</p>
       </Box>
     );
   }
