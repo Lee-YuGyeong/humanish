@@ -106,6 +106,31 @@ describe('parseOutput — 뭐가 오든 발화 가능한 모양으로 (§12.3)',
     }
   });
 
+  it('남의 말을 베낀 발화(에코)는 폴백으로 바뀐다 — 따라하기는 봇 티다', () => {
+    const c = ctx({
+      visibleHistory: [{ speaker: '익명2', text: '나는 무조건 엽떡 ㅋㅋ' }],
+      question: '요즘 제일 자주 시켜 먹는 야식이 뭐야?',
+    });
+    for (const echo of [
+      '나는 무조건 엽떡',           // 기록 문장 복사
+      '나는 무조건 엽떡 ㅋㅋㅋㅋ',   // 웃음만 바꾼 복사
+      '요즘 제일 자주 시켜 먹는 야식', // 질문 반복
+    ]) {
+      const out = parseOutput(JSON.stringify({ messages: [echo] }), c);
+      expect(FALLBACK_POOL).toContain(out.messages[0]);
+    }
+  });
+
+  it('짧은 맞장구와 새로 만든 문장은 에코가 아니다 — 오탐 확인', () => {
+    const c = ctx({
+      visibleHistory: [{ speaker: '익명2', text: '나는 무조건 엽떡 ㅋㅋ' }],
+    });
+    for (const fine of ['ㅇㅇ', '나도', '헐 나도 엽떡파야', '엽떡보단 치킨 아님?']) {
+      const out = parseOutput(JSON.stringify({ messages: [fine] }), c);
+      expect(out.messages[0]).toBe(fine);
+    }
+  });
+
   it('정상 발화는 금칙 필터를 통과한다 — 오탐 확인', () => {
     for (const fine of ['아 몰라 그냥 국밥', 'wait 뭐라고 ㅋㅋ', '메인은 엽떡이지']) {
       const out = parseOutput(JSON.stringify({ messages: [fine] }), ctx());
