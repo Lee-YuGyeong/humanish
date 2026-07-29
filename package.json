@@ -3,22 +3,26 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "next dev --turbopack",
     "build": "next build --turbopack",
+    "dev": "next dev --turbopack",
     "start": "next start",
     "lint": "eslint",
     "test": "vitest run",
     "test:watch": "vitest",
     "world:dev": "npm --prefix worker run dev",
-    "world:deploy": "npm --prefix worker run deploy",
+    "world:deploy": "node tools/deploy-world.mjs",
     "world:typecheck": "npm --prefix worker run typecheck",
     "world:smoke": "node tools/verify-worker.mjs",
-    "world:verify": "node tools/verify-world.mjs"
+    "world:verify": "node tools/verify-world.mjs",
+    "app:build": "opennextjs-cloudflare build",
+    "app:preview": "opennextjs-cloudflare build && opennextjs-cloudflare preview",
+    "app:deploy": "opennextjs-cloudflare build && opennextjs-cloudflare deploy"
   },
   "dependencies": {
     "@react-three/drei": "^10.7.7",
     "@react-three/fiber": "^9.6.1",
     "@supabase/supabase-js": "^2.110.8",
+    "@tanstack/react-query": "^5.101.4",
     "clsx": "^2.1.1",
     "motion": "^12.42.2",
     "next": "15.5.22",
@@ -30,6 +34,7 @@
   },
   "devDependencies": {
     "@eslint/eslintrc": "^3",
+    "@opennextjs/cloudflare": "^1.20.2",
     "@tailwindcss/postcss": "^4",
     "@testing-library/jest-dom": "^7.0.0",
     "@testing-library/react": "^16.3.2",
@@ -43,6 +48,7 @@
     "jsdom": "^26.1.0",
     "tailwindcss": "^4",
     "typescript": "^5",
-    "vitest": "^3.2.7"
+    "vitest": "^3.2.7",
+    "wrangler": "^4.115.0"
   }
 }

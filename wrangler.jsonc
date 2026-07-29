@@ -1,0 +1,41 @@
+// Next 앱을 Cloudflare Workers 에 올린다. 소유: A
+//
+//   npm run app:deploy     빌드 + 배포
+//   npm run app:preview    로컬에서 배포본 미리보기 (wrangler dev)
+//
+// ★ 워커가 둘이다. 헷갈리지 말 것.
+//     humanish        ← 이 파일. 화면 · API 라우트 · Supabase 접근 (Next 앱 전체)
+//     humanish-world  ← worker/wrangler.toml. 3D 좌표 릴레이 + 봇 아바타 (Durable Object)
+//   둘은 서로를 공개 주소로 부른다. 워커가 좌석 명단을 물어볼 주소가 NEXT_ORIGIN 이고,
+//   그 값은 `npm run world:deploy` 가 .env.local 에서 읽어 실어 보낸다.
+//
+// 비밀은 여기 적지 않는다. 넣는 법은 worker/README.md 참고.
+{
+	"$schema": "node_modules/wrangler/config-schema.json",
+	"name": "humanish",
+	"main": ".open-next/worker.js",
+	"compatibility_date": "2026-07-29",
+
+	// nodejs_compat              Next 런타임이 node:* 를 쓴다. 없으면 빌드가 아니라 요청이 죽는다.
+	// global_fetch_strictly_public  워커 안에서 자기 공개 주소로 fetch 할 때 엣지를 거치게 한다.
+	"compatibility_flags": ["nodejs_compat", "global_fetch_strictly_public"],
+
+	// next build 산출물. .open-next/ 는 gitignore 대상이다.
+	"assets": {
+		"directory": ".open-next/assets",
+		"binding": "ASSETS"
+	}
+
+	// 아래 둘은 어댑터 기본 템플릿에 있지만 이 앱엔 필요 없어서 뺐다.
+	//
+	// "services" WORKER_SELF_REFERENCE
+	//   ISR 캐시를 되살릴 때 워커가 자기 자신을 부르는 통로다. 이 앱은 ISR 을 쓰지 않는다
+	//   (라우트가 전부 static 아니면 force-dynamic). 첫 배포 때 아직 없는 서비스를
+	//   가리켜 실패할 여지만 남는다. 캐싱을 붙일 때 open-next.config.ts 와 같이 되살린다.
+	//   https://opennext.js.org/cloudflare/caching
+	//
+	// "images" IMAGES
+	//   Cloudflare Images 바인딩. next/image 로 그리는 게 SVG 뿐이고 Cloudflare Images 는
+	//   SVG 를 변환하지 못해서, next.config.ts 에서 images.unoptimized 로 껐다.
+	//   실제 아트(png/jpg)를 넣을 때 둘을 같이 되살린다.
+}

@@ -4,7 +4,8 @@
 # 배포:  npm run world:deploy
 #
 # 비밀은 여기에 적지 않는다:
-#   로컬  → worker/.dev.vars 에 WORLD_SHARED_SECRET=... (커밋 금지. README 참고)
+#   로컬  → 저장소 루트의 .env.local 을 그대로 읽는다 (package.json 의 --env-file).
+#           Next 와 워커가 같은 파일을 보므로 두 군데를 맞춰 둘 일이 없다.
 #   배포  → npx wrangler secret put WORLD_SHARED_SECRET
 
 name = "humanish-world"
@@ -27,6 +28,13 @@ new_sqlite_classes = ["RoomDO"]
 
 [vars]
 # 워커가 좌석 명단을 물어볼 Next 오리진 (app/api/internal/world-room).
-# 배포 시에는 Vercel 주소로 바꾼다. localhost가 아니라 127.0.0.1을 쓴다 —
-# wrangler dev의 컨테이너에서 localhost는 자기 자신을 가리킬 수 있다.
+#
+# ★ 여기 적힌 값은 **로컬 기본값일 뿐이다.** 이대로 배포하면 워커가 Cloudflare
+#   엣지에서 자기 자신의 127.0.0.1을 부르고, 좌석 명단을 못 받아 화면엔
+#   room_unavailable만 뜬다 (/health는 200이고 소켓도 열려서 원인이 안 보인다).
+#   배포는 `npm run world:deploy`가 .env.local의 NEXT_ORIGIN을 --var로 덮어쓴다.
+#   로컬도 .env.local에 NEXT_ORIGIN이 있으면 --env-file이 이 값을 덮는다.
+#
+# localhost가 아니라 127.0.0.1을 쓴다 — wrangler dev의 컨테이너에서
+# localhost는 자기 자신을 가리킬 수 있다.
 NEXT_ORIGIN = "http://127.0.0.1:3000"

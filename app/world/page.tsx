@@ -282,7 +282,7 @@ function errorMessage(code: string): string {
     case 'room_full':
       return '방이 가득 찼다';
     case 'room_unavailable':
-      return '방 정보를 읽지 못했다. 워커의 NEXT_ORIGIN·WORLD_SHARED_SECRET을 확인할 것';
+      return '워커가 좌석 명단을 못 받았다. NEXT_ORIGIN이 밖에서 닿는 주소인지 확인하고 다시 배포할 것 (npm run world:deploy)';
     case 'connection_failed':
       return '월드 서버에 붙지 못했다. 워커가 떠 있는지 확인할 것 (npm run world:dev)';
     default:

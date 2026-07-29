@@ -24,18 +24,128 @@ Supabase 스키마·RLS·Realtime은 **한 줄도 건드리지 않는다.**
 cd worker && npm install          # wrangler · workers-types
 ```
 
-비밀은 파일이 아니라 두 곳에 넣는다.
+**로컬은 따로 넣을 게 없다.** `npm run dev`가 `--env-file ../.env.local`로 저장소 루트의
+`.env.local`을 그대로 읽는다. 거기 `WORLD_SHARED_SECRET`만 있으면 된다
+(`openssl rand -hex 32`). Next와 워커가 **같은 파일**을 보므로 두 값이 갈릴 수 없다 —
+예전엔 `worker/.dev.vars`를 따로 만들어야 했고, 그걸 잊으면 워커가 `Bearer undefined`를
+보내 `/api/internal/world-room`이 404를 주고 화면엔 `room_unavailable`만 떴다.
+
+배포는 파일이 없으니 Cloudflare에 직접 넣는다. **한 번만** 하면 된다.
 
 ```bash
-# 로컬 — worker/.dev.vars 를 직접 만든다 (.gitignore 에 이미 있다)
-#   WORLD_SHARED_SECRET=<openssl rand -hex 32 로 뽑은 값>
-#   .env.local 의 WORLD_SHARED_SECRET 과 **같은 값**이어야 한다
-
-# 배포
-npx wrangler secret put WORLD_SHARED_SECRET
+npx wrangler secret put WORLD_SHARED_SECRET   # .env.local 과 같은 값
 ```
 
-`NEXT_ORIGIN`은 비밀이 아니라 `wrangler.toml`의 `[vars]`에 있다. 배포할 때 Vercel 주소로 바꾼다.
+`NEXT_ORIGIN`은 비밀이 아니다. `wrangler.toml`의 `[vars]`에 있는 값은 **로컬 기본값일 뿐**이고,
+배포할 때는 `npm run world:deploy`가 `.env.local`의 `NEXT_ORIGIN`을 `--var`로 덮어쓴다.
+
+## 다른 컴퓨터와 같이 하기
+
+세 주소가 **전부 공개**여야 한다. 하나라도 로컬이면 그 지점에서만 조용히 끊긴다.
+
+| 방향 | 값 | 안 맞으면 |
+|---|---|---|
+| 브라우저 → Next | 사람들이 여는 주소 | 애초에 화면이 안 뜬다 |
+| 브라우저 → 워커 | `NEXT_PUBLIC_WORLD_WS_URL` (`wss://`) | `connection_failed` |
+| **워커 → Next** | `NEXT_ORIGIN` | `room_unavailable` ← **여기서 제일 많이 막힌다** |
+
+세 번째가 잘 안 보이는 이유: 워커는 Cloudflare 엣지에서 돈다. 거기서 `127.0.0.1`은
+이 컴퓨터가 아니다. 그래도 `/health`는 200이고 소켓도 열려서 "워커는 멀쩡한데
+방만 비어 있는" 모양이 된다. 확인하는 법은 아래 한 줄이다.
+
+```bash
+curl https://<worker>.<계정>.workers.dev/rooms/<room_id>/info
+# {"capacity":0,...}  ← 0이면 워커가 NEXT_ORIGIN에 못 닿은 것이다
+```
+
+### 순서 — Cloudflare Workers (권장)
+
+Next 앱도 워커로 올린다. 그러면 대시보드에 워커가 **둘** 선다. 이 둘을 헷갈리면 아무것도
+안 맞는다.
+
+| 워커 | 설정 파일 | 하는 일 | 주소 |
+|---|---|---|---|
+| `humanish` | `wrangler.jsonc` (루트) | 화면 · API 라우트 · Supabase | `https://humanish.<계정>.workers.dev` |
+| `humanish-world` | `worker/wrangler.toml` | 좌표 릴레이 · 봇 아바타 | `wss://humanish-world.<계정>.workers.dev` |
+
+`<계정>`은 이미 아는 값이다 — 이미 배포된 `humanish-world` 주소에서 그대로 딴다.
+
+```bash
+# 1. 로그인 (처음 한 번)
+npx wrangler login
+
+# 2. .env.local 두 줄을 맞춘다. ★ 빌드가 여기서 값을 읽어 코드에 굳힌다 (아래 표 참고)
+#    NEXT_PUBLIC_WORLD_WS_URL=wss://humanish-world.<계정>.workers.dev
+#    NEXT_ORIGIN=https://humanish.<계정>.workers.dev
+
+# 3. 런타임 비밀을 humanish 워커에 넣는다 (한 번만). 값은 .env.local 과 같다
+npx wrangler secret put SUPABASE_SERVICE_ROLE_KEY
+npx wrangler secret put WORLD_SHARED_SECRET
+
+# 4. Next 앱 배포 — next build → OpenNext 번들 → wrangler deploy
+npm run app:deploy
+
+# 5. 월드 워커에도 같은 비밀을 넣고 (한 번만) 배포한다
+cd worker && npx wrangler secret put WORLD_SHARED_SECRET; cd ..
+npm run world:deploy
+
+# 6. 브라우저 없이 전체 왕복 확인 — 진짜 방을 하나 만든다
+NEXT_URL=https://humanish.<계정>.workers.dev npm run world:verify
+
+# 7. 다른 컴퓨터에서 https://humanish.<계정>.workers.dev/world
+```
+
+#### 무엇이 언제 들어가는가 — 여기서 헷갈리면 조용히 깨진다
+
+Next 는 `NEXT_PUBLIC_` 붙은 변수를 **빌드 시점에 코드로 치환한다. 브라우저 번들뿐 아니라
+서버 코드에서도 그렇다.** 그래서 `wrangler secret put NEXT_PUBLIC_WORLD_WS_URL` 은
+**아무 효과가 없다** — 이미 굳은 문자열을 덮어쓸 방법이 없다.
+
+빌드 산출물로 직접 확인할 수 있다. 런타임 조회로 남은 것만 secret 이 먹는다:
+
+```bash
+grep -rho 'process\.env\.[A-Z_]*' .next/server --include='*.js' | sort -u
+#   process.env.WORLD_SHARED_SECRET        ← 남았다 = secret 으로 넣는다
+#   process.env.SUPABASE_SERVICE_ROLE_KEY  ← 남았다 = secret 으로 넣는다
+#   (NEXT_PUBLIC_* 은 하나도 안 보인다 = 이미 굳었다)
+```
+
+| 변수 | 어디에 | 왜 |
+|---|---|---|
+| `SUPABASE_SERVICE_ROLE_KEY` | `wrangler secret put` | 런타임 조회로 남는다. 서버 라우트 전용 (I9) |
+| `WORLD_SHARED_SECRET` | `wrangler secret put` **워커 둘 다** | 런타임 조회. Next 가 티켓에 서명하고 월드 워커가 검증한다 — **두 값이 같아야 한다** |
+| `NEXT_PUBLIC_SUPABASE_URL` · `..._ANON_KEY` | `.env.local` (빌드 시점) | 빌드 때 굳는다. secret 으로 넣어도 안 먹는다 |
+| `NEXT_PUBLIC_WORLD_WS_URL` | `.env.local` (빌드 시점) | 위와 같다. **월드 워커 주소가 바뀌면 `npm run app:deploy` 로 다시 빌드해야 한다** |
+| `NEXT_ORIGIN` | `.env.local` (로컬 전용) | Next 는 안 읽는다. `next.config.ts` 의 dev 설정과, `world:deploy` 가 월드 워커에 `--var` 로 실어 보낼 때만 쓴다 |
+| `SUPABASE_DB_URL_DIRECT` | 넣지 않는다 | 마이그레이션 전용 (SPEC §12.2) |
+| `NVIDIA_NIM_*` | 선택 (`secret put`) | `/api/agent` 를 쓸 때만. 지금은 봇이 DB 문구 풀로 말한다 (SPEC §17) |
+
+#### 그 밖에 알아둘 것
+
+- **배포 순서.** `NEXT_ORIGIN` 은 `humanish` 가 이미 있다고 가정한다. 아주 처음이라면
+  4번(앱 배포)을 먼저 하고 5번(월드 워커)을 뒤에 한다. 위 순서가 그렇게 돼 있다.
+- **`npm run build` 는 배포에 쓰지 않는다.** 그건 Node 용 산출물이다. Workers 로 가는 건
+  `npm run app:build`(= `next build` + OpenNext 번들)뿐이다.
+- **크기 한도.** 무료 플랜의 워커 스크립트 상한은 gzip 3 MB 다. 지금 약 1.6 MB.
+  `npx wrangler deploy --dry-run --outdir /tmp/x` 로 배포 없이 재 볼 수 있다.
+- **이미지 최적화는 꺼져 있다** (`next.config.ts` 의 `images.unoptimized`).
+  이유와 되살리는 법은 그 파일 주석에 있다.
+
+### 순서 — 빠른 터널 (잠깐 띄워볼 때)
+
+계정을 만들기 싫거나 한 번만 같이 해볼 때. 주소가 **재시작할 때마다 바뀌고**, 내 노트북이
+켜져 있어야 한다.
+
+```bash
+cloudflared tunnel --url http://127.0.0.1:3000
+#    → https://<무작위>.trycloudflare.com
+
+# .env.local 의 NEXT_ORIGIN 을 그 주소로 바꾸고
+npm run world:deploy
+NEXT_URL=https://<무작위>.trycloudflare.com npm run world:verify
+```
+
+주소가 바뀌면 `.env.local` 수정 + `world:deploy`를 다시 한다(배포는 몇 초다).
 
 ## 실행
 

@@ -18,6 +18,9 @@ const eslintConfig = [
       "out/**",
       "build/**",
       "next-env.d.ts",
+      // OpenNext 가 Workers 용으로 다시 묶은 산출물 (npm run app:build).
+      // 남이 만든 번들이라 검사할 것도, 고칠 수도 없다.
+      ".open-next/**",
       // 워커는 Next가 아니라 Cloudflare 런타임이다. 자체 tsconfig로 검사한다
       // (worker/ 에서 npm run typecheck).
       "worker/**",

@@ -35,6 +35,17 @@ export async function POST(req: Request): Promise<Response> {
     if (!wsUrl) {
       throw new ApiError(503, 'NEXT_PUBLIC_WORLD_WS_URL이 없다. .env.local.example 참고');
     }
+    // https로 열린 화면에서 ws://는 브라우저가 mixed content로 막는다. 그대로 내려보내면
+    // 소켓이 조용히 죽고 화면엔 "월드 서버에 붙지 못했다"만 남아 원인이 안 보인다.
+    // 터널·프록시 뒤에서는 req.url이 http로 재구성되므로 x-forwarded-proto를 먼저 본다.
+    const proto = req.headers.get('x-forwarded-proto')?.split(',')[0].trim() ?? new URL(req.url).protocol.replace(':', '');
+    if (proto === 'https' && wsUrl.startsWith('ws://')) {
+      throw new ApiError(
+        503,
+        `화면은 https인데 NEXT_PUBLIC_WORLD_WS_URL이 ws://다 (${wsUrl}). ` +
+          '브라우저가 막는다 — 배포된 워커의 wss:// 주소를 쓸 것 (npm run world:deploy)',
+      );
+    }
 
     // 쿠키로 되찾는다. 클라이언트가 보낸 player_id는 쓰지 않는다 (I9).
     const me = await requirePlayer(roomId);

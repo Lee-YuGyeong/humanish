@@ -160,13 +160,34 @@ cd worker && npm install     # 준비 (한 번)
 npm run world:smoke
 
 # ② 전체 — 진짜 방을 만들고 게임을 시작해 봇까지 확인한다
-#  .env.local 에      WORLD_SHARED_SECRET, NEXT_PUBLIC_WORLD_WS_URL
-#  worker/.dev.vars 에 WORLD_SHARED_SECRET   ← 같은 값. 자세한 건 worker/README.md
+#  .env.local 하나만 채우면 된다. 워커도 --env-file 로 같은 파일을 읽는다.
+#    WORLD_SHARED_SECRET, NEXT_PUBLIC_WORLD_WS_URL, 그리고 Supabase 3종
+#    (Supabase 가 비어 있으면 좌석 명단이 500 → 화면엔 room_unavailable 만 뜬다)
 npm run dev            # 터미널 1 — Next
 npm run world:dev      # 터미널 2 — 워커
 npm run world:verify   # 터미널 3 — 소켓 2개 왕복 검증
 
 npm run world:typecheck  # 워커 타입 검사 (루트 tsc 는 worker/ 를 제외한다)
+```
+
+### 다른 컴퓨터와 같이 할 때
+
+로컬 왕복이 되면 남은 건 **주소 세 개를 전부 공개로 바꾸는 것뿐이다.**
+자세한 순서는 `worker/README.md`「다른 컴퓨터와 같이 하기」에 있고, 요점만 적으면:
+
+```
+브라우저 → Next    사람들이 여는 주소 (터널 또는 Vercel)
+브라우저 → 워커    NEXT_PUBLIC_WORLD_WS_URL — 반드시 wss://
+워커   → Next     NEXT_ORIGIN            — 여기서 제일 많이 막힌다
+```
+
+마지막 화살표가 함정이다. 배포된 워커는 Cloudflare 엣지에서 도니까 `127.0.0.1`은
+그 컴퓨터가 아니다. 그런데 `/health`는 200, 소켓도 열린다 — **워커는 멀쩡한데 방만
+비어 보인다.** 그래서 `npm run world:deploy`가 `.env.local`의 `NEXT_ORIGIN`을
+`--var`로 실어 보내고, 로컬 주소면 배포 자체를 막는다.
+
+```bash
+NEXT_URL=<공개 Next 주소> npm run world:verify   # 밖에서 본 전체 왕복
 ```
 
 **막히면 ①부터 본다.** ①이 통과하는데 ②가 안 되면 문제는 워커가 아니라
