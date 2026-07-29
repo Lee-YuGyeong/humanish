@@ -49,7 +49,7 @@ psql -q -d whois_test \
   -c "alter default privileges in schema public grant all on sequences to anon, authenticated, service_role;"
 
 echo "▸ SQL 적용"
-for f in schema.sql policies.sql seed.sql functions/advance_phase.sql functions/room.sql functions/chat.sql; do
+for f in schema.sql policies.sql seed.sql functions/advance_phase.sql functions/room.sql functions/chat.sql functions/lobby.sql; do
   psql -v ON_ERROR_STOP=1 -q -f "$ROOT/supabase/$f" >/dev/null 2>&1 \
     || { echo "  ✗ $f 적용 실패"; psql -v ON_ERROR_STOP=1 -f "$ROOT/supabase/$f" 2>&1 | tail -20; exit 1; }
   echo "  ✓ $f"

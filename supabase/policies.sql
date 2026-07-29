@@ -58,10 +58,26 @@ revoke all on players from anon, authenticated;
 -- (원래 그게 유일한 동작이었다) Supabase는 15 이상이라 명시해둔다.
 -- 버전을 나누는 이유는 로컬 Postgres에서도 이 파일이 돌아야 §14.2 침투 테스트를
 -- Supabase 없이 해볼 수 있기 때문이다.
+-- ★ 대기방 값(is_ready · lobby_line)은 **phase = 'lobby' 일 때만** 내려준다.
+--
+--   시작하면 shuffle_seats 가 네 컬럼을 다 비우므로 원래는 이 조건 없이도 안전하다.
+--   그런데 그건 "지우는 코드가 반드시 돈다"에 기대는 안전이고, I1 은 한 번 새면
+--   게임이 그 자리에서 끝난다. 지우기가 빠져도 뷰에서 다시 막히도록 두 겹으로 둔다.
+--
+--   왜 위험한가: 대기방에는 사람만 있다(봇은 fill_with_bots 로 시작할 때 앉는다).
+--   그래서 발화·준비 상태가 게임까지 따라가면 **값이 있는 자리 = 사람**이 되어
+--   봇 명단이 통째로 드러난다.
+--
+--   ☐ §15-3 에 "봇을 로비에서 채우는 안"이 열려 있다. 그쪽으로 가면 봇도 이 값을
+--     사람처럼 채워야 한다 — 준비 완료를 봇만 즉시 누르면 그게 곧 정답이다.
 drop view if exists public_players;
 do $$
 declare v_cols constant text :=
-  'select id, room_id, nickname, mask_id, seat, connected from players';
+  'select p.id, p.room_id, p.nickname, p.mask_id, p.seat, p.connected,
+          case when r.phase = ''lobby'' then p.is_ready else false end as is_ready,
+          case when r.phase = ''lobby'' then p.lobby_line end as lobby_line,
+          case when r.phase = ''lobby'' then p.lobby_line_at end as lobby_line_at
+     from players p join rooms r on r.id = p.room_id';
 begin
   if current_setting('server_version_num')::int >= 150000 then
     execute 'create view public_players with (security_invoker = off) as ' || v_cols;

@@ -68,6 +68,23 @@ export interface PublicPlayer {
   mask_id: string;
   seat: number;
   connected: boolean;
+
+  /**
+   * 대기방 값 (SPEC §15-3-결정). **lobby 페이즈에서만 채워진다** — 뷰가
+   * `phase = 'lobby'` 일 때만 내려주고, 시작할 때 shuffle_seats 가 원본을 비운다.
+   *
+   * 위의 질문("이걸로 봇을 골라낼 수 있나")을 통과한 근거: 대기방에는 사람만 있다.
+   * 봇은 시작 순간 fill_with_bots 로 앉는다. 그래서 대기방에서는 이 값이 누구도
+   * 가려내지 못하고, 게임이 시작되면 전원 빈 값이 된다.
+   *
+   * ☐ 봇을 로비에서 채우는 안(§15-3)으로 가면 이 판단을 다시 해야 한다.
+   *   그때는 봇도 사람처럼 이 값을 채워야 한다 — 준비 완료를 봇만 즉시 누르면
+   *   그게 곧 정답이다.
+   */
+  is_ready: boolean;
+  /** 지금 떠 있는 말풍선. 기록이 아니라 현재 한 줄이다 (순서가 신호가 되는 걸 막는다). */
+  lobby_line: string | null;
+  lobby_line_at: string | null;
 }
 
 export interface Question {

@@ -101,6 +101,25 @@ alter table players drop constraint if exists players_room_nickname_key;
 alter table players add constraint players_room_nickname_key
   unique (room_id, nickname) deferrable initially immediate;
 
+-- ── 대기방 프리셋 발화 · 준비 상태 (SPEC §15-3-결정) ──────────────────────────
+--
+-- 대기방은 자유 채팅을 열지 않는다. 정해진 문구만 누를 수 있고, 그 목록은
+-- lib/server/lobby-lines.ts 하나에 있다. 여기 있는 건 "지금 무슨 말풍선이 떠 있나"
+-- 뿐이다.
+--
+-- ★ 발화를 **기록으로 쌓지 않는다.** 사람마다 현재 한 줄만 들고 있다.
+--   로그로 쌓으면 순서 자체가 메시지가 되어(ㅋㅋㅋ 두 번 = 약속) 프리셋으로 좁힌
+--   의미가 사라진다. messages 테이블에 넣지 않는 이유이기도 하다 — 거기 player_id로
+--   남으면 shuffle_seats 가 끊어놓은 "로비의 그 사람 ↔ 게임의 이 자리"가 되살아난다.
+--
+-- ★ 넷 다 시작할 때 shuffle_seats 가 비운다. 안 비우면 봇만 null 이라
+--   그 자체로 봇 명단이 된다 (I1). public_players 도 lobby 일 때만 내려주지만,
+--   두 겹으로 막는다 — 한쪽이 빠져도 정체가 새면 게임이 즉시 끝난다.
+alter table players add column if not exists is_ready boolean not null default false;
+alter table players add column if not exists lobby_line text;
+alter table players add column if not exists lobby_line_at timestamptz;
+alter table players add column if not exists lobby_line_count int not null default 0;
+
 -- 절대 클라이언트에 노출되지 않는다 (SPEC §7.2 — 정책을 만들지 않는다)
 create table if not exists player_roles (
   player_id uuid primary key references players(id) on delete cascade,

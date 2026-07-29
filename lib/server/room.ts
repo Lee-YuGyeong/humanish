@@ -95,6 +95,10 @@ function toResult(row: SeatRow, room: Room): JoinResult {
       mask_id: `mask-${String(row.seat).padStart(2, '0')}`,
       seat: row.seat,
       connected: true,
+      // 갓 앉은 자리라 대기방 값은 비어 있다 (SPEC §15-3-결정).
+      is_ready: false,
+      lobby_line: null,
+      lobby_line_at: null,
     },
     token: row.player_token,
   };

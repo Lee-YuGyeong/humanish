@@ -25,6 +25,11 @@ function seatPlayers(n: number): PublicPlayer[] {
     mask_id: `mask-0${i + 1}`,
     seat: i + 1,
     connected: true,
+    // 대기방 값. 게임 중에는 전원 빈 값이다 — 시작할 때 shuffle_seats가 비운다.
+    // 여기 값이 남으면 값이 있는 자리 = 사람이 되어 봇이 드러난다 (I1, §15-3-결정).
+    is_ready: false,
+    lobby_line: null,
+    lobby_line_at: null,
   }));
 }
 

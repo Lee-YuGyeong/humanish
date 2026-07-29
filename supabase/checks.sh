@@ -41,7 +41,11 @@ schema_checks() {
 
   # ★ 컬럼 목록을 통째로 비교한다. "is_bot이 없다"만 보면 다음에 추가된 컬럼은 못 잡는다.
   #   created_at은 봇이 한꺼번에 만들어져서, token은 본인 확인용이라 빠져야 한다 (§7.2).
-  check "public_players 컬럼이 정확히 6개다" "id,room_id,nickname,mask_id,seat,connected" \
+  # is_ready·lobby_line·lobby_line_at 은 대기방 값이라 뷰가 phase='lobby' 일 때만
+  # 내려준다 (policies.sql). 대기방엔 사람만 있으므로 게임까지 따라가면
+  # **값이 있는 자리 = 사람**이 되어 봇 명단이 통째로 드러난다.
+  check "public_players 컬럼이 정확히 9개다" \
+    "id,room_id,nickname,mask_id,seat,connected,is_ready,lobby_line,lobby_line_at" \
     "$(q "select string_agg(column_name, ',' order by ordinal_position) from information_schema.columns where table_name='public_players';")"
 
   # 같은 이유로 채팅 뷰도 본다. created_at이 있으면 봇의 타이핑 지연이 드러난다 (I1).
@@ -50,6 +54,17 @@ schema_checks() {
 
   check "rooms에 capacity 컬럼이 있다 (§17.6)" "1" \
     "$(q "select count(*) from information_schema.columns where table_name='rooms' and column_name='capacity';")"
+
+  # 대기방 프리셋 발화 (§15-3-결정). 넷이 다 있어야 쿨다운·총량이 성립한다.
+  check "players에 대기방 컬럼 4개가 있다" "4" \
+    "$(q "select count(*) from information_schema.columns where table_name='players'
+           and column_name in ('is_ready','lobby_line','lobby_line_at','lobby_line_count');")"
+
+  # ★ 지우기가 shuffle_seats 안에 들어 있는가. 빠지면 게임이 시작된 뒤에도
+  #   사람 자리에만 발화가 남아 봇 명단이 드러난다 (I1). 함수의 존재만 보는
+  #   시그니처 검사로는 절대 못 잡는 자리다.
+  check "shuffle_seats가 대기방 흔적을 지운다 (I1)" "t" \
+    "$(q "select pg_get_functiondef(to_regprocedure('shuffle_seats(uuid)')) like '%lobby_line%';")"
 
   # ★ 함수만 있고 제약이 옛날이면 검사는 전부 초록인데 방 시작만 죽는다.
   #   shuffle_seats(§15-3-결정)는 전원의 자리를 한 순열로 다시 배정하므로 update 도중
@@ -127,6 +142,8 @@ schema_checks() {
     "fill_with_bots(uuid)" \
     "shuffle_seats(uuid)" \
     "send_message(uuid,uuid,text,int)" \
+    "say_lobby_line(uuid,uuid,text,int,int)" \
+    "set_lobby_ready(uuid,uuid,boolean)" \
     "room_capacity(uuid)" \
     "default_room_capacity()" \
     "server_now()"; do
@@ -163,6 +180,8 @@ schema_checks() {
     "join_room(text)" \
     "fill_with_bots(uuid)" \
     "shuffle_seats(uuid)" \
+    "say_lobby_line(uuid,uuid,text,int,int)" \
+    "set_lobby_ready(uuid,uuid,boolean)" \
     "server_now()" \
     "default_room_capacity()" \
     "room_capacity(uuid)" \

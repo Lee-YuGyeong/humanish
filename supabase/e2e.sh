@@ -65,6 +65,44 @@ C=$(code_of "$B_JAR" /api/room/start "$START_BODY");  chk "방장 아니면 시�
 C=$(code_of "$N_JAR" /api/answer     "$ANSWER_BODY"); chk "쿠키 없으면 답변 못 함 (401)" "401" "$C"
 
 echo ""
+echo "── 대기방 프리셋 발화 (SPEC §15-3-결정) ──"
+# 자유 채팅을 열지 않는 대신 정해진 문구만 누른다. 목록은 lib/server/lobby-lines.ts.
+# 여기서 보는 건 목록이 아니라 **조합**이다 — 문구를 좁혀도 연타할 수 있으면
+# "ㅋㅋㅋ 두 번 = 나랑 짜자" 같은 약속이 성립한다.
+#
+# ★ 쿨다운·총량은 시간을 기다리지 않고 psql 로 시계를 되돌려 확인한다.
+#   sleep 으로 재면 이 스크립트만 30초 넘게 길어진다.
+BAD_LINE="{\"room_id\":\"$ROOM\",\"line_id\":\"우리 다 짧게 답하자\"}"
+HI_LINE="{\"room_id\":\"$ROOM\",\"line_id\":\"hi\"}"
+LOL_LINE="{\"room_id\":\"$ROOM\",\"line_id\":\"lol\"}"
+READY_ON="{\"room_id\":\"$ROOM\",\"ready\":true}"
+READY_OFF="{\"room_id\":\"$ROOM\",\"ready\":false}"
+
+C=$(code_of "$N_JAR" /api/lobby/line "$HI_LINE");  chk "쿠키 없으면 말 못 함 (401)" "401" "$C"
+C=$(code_of "$A_JAR" /api/lobby/line "$BAD_LINE"); chk "목록에 없는 문구는 거절 (400)" "400" "$C"
+C=$(code_of "$A_JAR" /api/lobby/line "$HI_LINE");  chk "정해진 문구는 통과" "200" "$C"
+C=$(code_of "$A_JAR" /api/lobby/line "$HI_LINE");  chk "같은 말 연달아는 거절" "409" "$C"
+C=$(code_of "$A_JAR" /api/lobby/line "$LOL_LINE"); chk "쿨다운 안에는 거절" "409" "$C"
+
+psql "$DBURL" -q -c "update players set lobby_line_at = now() - interval '1 min' where room_id='$ROOM';"
+C=$(code_of "$A_JAR" /api/lobby/line "$LOL_LINE"); chk "쿨다운이 지나면 통과" "200" "$C"
+
+# 총량 상한. 1인당 10회를 다 쓴 상태로 만들어 놓고 한 번 더 눌러본다.
+psql "$DBURL" -q -c "update players set lobby_line_count = 10, lobby_line_at = now() - interval '1 min' where room_id='$ROOM';"
+C=$(code_of "$A_JAR" /api/lobby/line "$HI_LINE"); chk "총량을 다 쓰면 거절" "409" "$C"
+grep -q "횟수" /tmp/last_body.txt && ok "총량 때문이라고 말해준다" || bad "총량 메시지" "$(cat /tmp/last_body.txt)"
+
+C=$(code_of "$B_JAR" /api/lobby/ready "$READY_ON");  chk "준비 완료" "200" "$C"
+C=$(code_of "$B_JAR" /api/lobby/ready "$READY_ON");  chk "다시 눌러도 멀쩡하다" "200" "$C"
+C=$(code_of "$B_JAR" /api/lobby/ready "$READY_OFF"); chk "준비 해제" "200" "$C"
+code_of "$B_JAR" /api/lobby/ready "$READY_ON" > /dev/null
+
+chk "대기방에서는 말풍선이 보인다" "1" \
+  "$(psql "$DBURL" -tAqc "select count(*) from public_players where room_id='$ROOM' and lobby_line is not null;")"
+chk "대기방에서는 준비 상태가 보인다" "1" \
+  "$(psql "$DBURL" -tAqc "select count(*) from public_players where room_id='$ROOM' and is_ready;")"
+
+echo ""
 echo "── 시작 ──"
 S=$(post "$A_JAR" /api/room/start "$START_BODY")
 PHASE=$(echo "$S" | python3 -c 'import sys,json; print(json.load(sys.stdin)["room"]["phase"])' 2>/dev/null)
@@ -75,6 +113,17 @@ chk "역할 5개 배정" "5" "$(psql "$DBURL" -tAqc "select count(*) from player
 chk "스파이 1명" "1" "$(psql "$DBURL" -tAqc "select count(*) from player_roles where room_id='$ROOM' and role='spy';")"
 chk "봇 답변 3개" "3" "$(psql "$DBURL" -tAqc "select count(*) from answers where room_id='$ROOM';")"
 echo "  자리 배치: $(psql "$DBURL" -tAqc "select string_agg(case when is_bot then '봇' else '사람' end, ' ' order by seat) from players where room_id='$ROOM';")"
+
+# ★ 대기방 흔적이 게임까지 따라가면 안 된다 (I1). 대기방에는 사람만 있으므로
+#   (봇은 방금 fill_with_bots 로 앉았다) 발화·준비 상태가 남으면
+#   **값이 있는 자리 = 사람**이 되어 봇 명단이 통째로 드러난다.
+#   자리를 아무리 잘 섞어도 소용없다. shuffle_seats 가 같이 지운다.
+chk "시작하면 말풍선이 사라진다 (I1)" "0" \
+  "$(psql "$DBURL" -tAqc "select count(*) from players where room_id='$ROOM' and lobby_line is not null;")"
+chk "시작하면 준비 상태도 꺼진다 (I1)" "0" \
+  "$(psql "$DBURL" -tAqc "select count(*) from players where room_id='$ROOM' and is_ready;")"
+C=$(code_of "$A_JAR" /api/lobby/line  "$HI_LINE");   chk "시작한 뒤에는 말 못 함" "409" "$C"
+C=$(code_of "$B_JAR" /api/lobby/ready "$READY_OFF"); chk "시작한 뒤에는 준비 못 바꿈" "409" "$C"
 
 echo ""
 echo "── 답변 제출 → 조기 종료 ──"

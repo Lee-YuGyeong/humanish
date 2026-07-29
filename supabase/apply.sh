@@ -103,7 +103,8 @@ if [ "$MODE" != check ]; then
   #   로컬 검증만 초록색이었다. 새 SQL 파일을 만들면 여기에도 반드시 더한다.
   echo ""
   for f in schema.sql policies.sql seed.sql \
-           functions/advance_phase.sql functions/room.sql functions/chat.sql; do
+           functions/advance_phase.sql functions/room.sql functions/chat.sql \
+           functions/lobby.sql; do
     printf '  %-32s' "$f"
     if out="$(psql "$DB_URL" -v ON_ERROR_STOP=1 -q -f "$ROOT/supabase/$f" 2>&1)"; then
       echo "✓"

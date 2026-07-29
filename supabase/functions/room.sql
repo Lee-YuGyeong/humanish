@@ -218,10 +218,20 @@ begin
     from players p
     where p.room_id = p_room_id
   )
+  -- ★ 대기방 흔적(발화·준비 상태)을 여기서 같이 지운다. 자리를 섞는 것과 같은 일이다 —
+  --   둘 다 "대기실에서 본 정체가 게임까지 이어지는 것"을 끊는다.
+  --
+  --   지우지 않으면 봇만 lobby_line 이 null 이라 **값이 있는 자리 = 사람**이 되어
+  --   봇 명단이 통째로 드러난다 (I1). 자리를 아무리 잘 섞어도 소용없다.
+  --   public_players 도 lobby 일 때만 내려주지만(policies.sql) 두 겹으로 둔다.
   update players p
-     set seat     = s.new_seat,
-         nickname = '익명' || s.new_seat,
-         mask_id  = 'mask-' || lpad(s.new_seat::text, 2, '0')
+     set seat             = s.new_seat,
+         nickname         = '익명' || s.new_seat,
+         mask_id          = 'mask-' || lpad(s.new_seat::text, 2, '0'),
+         is_ready         = false,
+         lobby_line       = null,
+         lobby_line_at    = null,
+         lobby_line_count = 0
     from shuffled s
    where p.id = s.id;
 
