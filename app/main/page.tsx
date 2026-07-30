@@ -431,7 +431,6 @@ function RoomList({
   onEnter: (code: string) => void;
 }) {
   const loading = rooms === null;
-  const total = rooms?.length ?? 0;
 
   return (
     <section className="flex-1 overflow-y-auto px-8 py-7">
@@ -439,13 +438,6 @@ function RoomList({
         <div>
           <p className="stencil text-[10px] text-signal/70">waiting rooms</p>
           <h2 className="engraved mt-2 text-3xl font-black">시작을 기다리는 방</h2>
-          <p className="mt-1.5 text-[13px] text-grime">
-            {loading
-              ? "불러오는 중…"
-              : query
-                ? `${total}개 중 ${visible.length}개가 “${query}”와 맞는다.`
-                : `${total}개가 열려 있다. 이미 시작한 방은 목록에 없다.`}
-          </p>
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
@@ -532,14 +524,6 @@ function RoomList({
           </span>
         </button>
       </div>
-
-      {!loading && visible.length === 0 && (
-        <p className="mt-6 max-w-md text-[13px] leading-relaxed text-grime">
-          {query
-            ? `“${query}”와 맞는 방이 목록에 없다. 코드가 정확하면 위의 “이 코드로 입장”으로 바로 들어갈 수 있다.`
-            : "기다리는 방이 없다. 새로 만들면 첫 방이 된다."}
-        </p>
-      )}
     </section>
   );
 }
@@ -692,11 +676,10 @@ function CreateRoomDialog({
           ))}
         </div>
 
-        {/* ★ 빈자리를 "무엇이" 채우는지 말하지 않는다. 그 사실은 공개되지 않는다 (I1). */}
-        <p className="mt-5 text-[12px] leading-relaxed text-grime">
-          빈자리는 시작할 때 채워진다. 몇 자리가 채워졌는지는 아무에게도 보이지 않는다.
-        </p>
-
+        {/*
+          빈자리 이야기는 여기서 하지 않는다. /intro 와 방 안의 「방 규칙」이 같은 말을
+          더 정확하게 한다 — 세 군데로 갈리면 문구가 서로 어긋난다.
+        */}
         {error && (
           <p role="alert" className="cut mt-5 px-4 py-3 text-[13px] text-signal">
             {error}

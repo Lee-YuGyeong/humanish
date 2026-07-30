@@ -25,7 +25,6 @@ import {
   ArrowLeftIcon,
   CheckIcon,
   ChipIcon,
-  CrownIcon,
   InfoIcon,
   SendIcon,
   SpyIcon,
@@ -237,7 +236,7 @@ export function RoomView({ code }: { code: string }) {
             <SpyIcon className="h-4 w-4 shrink-0 text-signal" />
             <span className="text-[13px] leading-relaxed text-bone">
               <span className="stencil mr-2 text-[9px] text-signal">너는 스파이다</span>
-              기계인 척해서 표를 끌어와라. 이건 너에게만 보인다.
+              기계인 척해서 표를 끌어와라.
             </span>
           </p>
         )}
@@ -256,11 +255,6 @@ export function RoomView({ code }: { code: string }) {
         {error && (
           <p className="case border-signal/30 px-5 py-4 text-[13px] text-signal">{error}</p>
         )}
-
-        <p className="mt-auto flex items-center gap-2 pt-3 text-[10px] text-ash">
-          <InfoIcon className="h-3 w-3 shrink-0" />
-          계기판은 표시용이다. 페이즈 전환은 서버가 정한다 (SPEC I2).
-        </p>
       </main>
     </div>
   );
@@ -398,9 +392,6 @@ function LobbySay({
   return (
     <Box>
       <Label>말하기</Label>
-      <p className="text-[11px] leading-relaxed text-grime">
-        대기실에서는 정해진 말만 할 수 있다. 시작 전에 미리 짜지 못하게 하려는 것이다.
-      </p>
 
       <div className="flex flex-wrap gap-1.5">
         {(cfg?.lines ?? []).map((l) => (
@@ -558,15 +549,11 @@ function Panel({
 
         {me.is_host ? (
           <div className="case riveted px-6 py-5">
-            <p className="flex items-center gap-2 text-[11px] text-grime">
-              <CrownIcon className="h-3.5 w-3.5 text-tung" />
-              방장이다. 사람이 다 모이지 않아도 시작할 수 있다.
-            </p>
             <button
               type="button"
               disabled={busy}
               onClick={() => start.run()}
-              className="stencil mt-4 flex w-full items-center justify-center gap-3 bg-signal/12 py-4 text-[11px] text-flare shadow-[inset_0_0_0_1px_rgba(255,51,32,0.45)] transition-all hover:bg-signal/20 hover:shadow-[inset_0_0_0_1px_rgba(255,51,32,0.7),0_0_30px_-8px_rgba(255,51,32,0.9)] disabled:cursor-default disabled:opacity-40"
+              className="stencil flex w-full items-center justify-center gap-3 bg-signal/12 py-4 text-[11px] text-flare shadow-[inset_0_0_0_1px_rgba(255,51,32,0.45)] transition-all hover:bg-signal/20 hover:shadow-[inset_0_0_0_1px_rgba(255,51,32,0.7),0_0_30px_-8px_rgba(255,51,32,0.9)] disabled:cursor-default disabled:opacity-40"
             >
               <span className="h-1.5 w-1.5 rounded-full bg-signal shadow-[0_0_9px_2px] shadow-signal/70" />
               {starting ? '시작하는 중…' : '게임 시작'}
@@ -637,9 +624,7 @@ function Panel({
           </form>
         ) : (
           <p className="cut px-5 py-3.5 text-[12px] text-grime">
-            {me.answered
-              ? '제출했다. 시간이 끝나면 전부 공개된다.'
-              : '지목받은 사람이 답하는 중…'}
+            {me.answered ? '제출했다.' : '지목받은 사람이 답하는 중…'}
           </p>
         )}
 
@@ -705,9 +690,7 @@ function Panel({
           />
         </div>
         {me.voted ? (
-          <p className="cut px-5 py-3.5 text-[12px] text-grime">
-            투표했다. 결과는 전원이 마치면 공개된다.
-          </p>
+          <p className="cut px-5 py-3.5 text-[12px] text-grime">투표했다.</p>
         ) : (
           <form
             className="flex gap-1.5"
@@ -774,9 +757,6 @@ function ChatPanel({
   return (
     <Box>
       <Label>자유 채팅</Label>
-      <p className="text-[12px] text-grime">
-        누가 기계 같은지 얘기해본다. 시간이 지나면 투표로 넘어간다.
-      </p>
 
       <ul className="cut flex max-h-72 flex-col gap-2.5 overflow-y-auto p-4">
         {messages.length === 0 && (
@@ -842,9 +822,7 @@ function MachineCount({ n }: { n: number }) {
       <ChipIcon className="h-4 w-4 shrink-0 text-bounce" />
       <p className="stencil text-[9px] text-ash">이 방의 기계</p>
       <p className="readout text-xl text-bounce">{n}</p>
-      <p className="ml-auto text-[11px] text-grime">
-        {n === 0 ? '전부 사람이다' : '어느 자리인지는 끝까지 알려주지 않는다'}
-      </p>
+      {n === 0 && <p className="ml-auto text-[11px] text-grime">전부 사람이다</p>}
     </div>
   );
 }
@@ -992,10 +970,12 @@ function RevealPanel({
           </ul>
         )}
 
+        {/*
+          채점 규칙은 SPEC에 없다. 정하면 app/api/reveal/route.ts와 lib/game/rules.ts를 고친다.
+          — 화면에는 규칙만 띄우고, 이 메모는 코드에 둔다.
+        */}
         <p className="border-t border-bone/5 pt-4 text-[11px] leading-relaxed text-ash">
           채점: {data.rule.join(' · ')}
-          <br />이 규칙은 SPEC에 없다. 정하면 app/api/reveal/route.ts와 lib/game/rules.ts를
-          고친다.
         </p>
 
         <Link
