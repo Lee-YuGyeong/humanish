@@ -64,3 +64,7 @@ next-env.d.ts
 .wrangler
 .dev.vars*
 !.dev.vars.example
+
+# 3D 원본 모델 (각 75MB). 저장소에 넣지 않는다 — 웹에 쓰는 것은
+# public/world/office-*.glb 이고, 만드는 순서는 app/world/avatar.tsx 머리말에 있다.
+/3d_model/

@@ -15,9 +15,10 @@
 
 import { Html, PointerLockControls } from '@react-three/drei';
 import { Canvas, useFrame, useThree } from '@react-three/fiber';
-import { Suspense, memo, useEffect, useMemo, useRef } from 'react';
+import { Suspense, memo, useEffect, useMemo, useRef, useState } from 'react';
 import * as THREE from 'three';
 
+import { Avatar, avatarVariant } from './avatar';
 import { Furniture, Lights, Warehouse, groundHeightAt, resolveColliders } from './warehouse';
 import {
   EYE_HEIGHT,
@@ -267,7 +268,6 @@ const RemoteAvatar = memo(function RemoteAvatar({
   bubbleTick: number;
 }) {
   const group = useRef<THREE.Group>(null);
-  const body = useRef<THREE.Group>(null);
   const shadow = useRef<THREE.Mesh>(null);
   const pose = useRef<Pose>({
     x: player.pose.x,
@@ -276,6 +276,16 @@ const RemoteAvatar = memo(function RemoteAvatar({
     heading: player.pose.heading,
   });
   const color = useMemo(() => seatColor(player.seat), [player.seat]);
+  /** 어떤 캐릭터인가. id 해시라 모두의 화면에서 같다 (avatar.tsx) */
+  const variant = useMemo(() => avatarVariant(player.id), [player.id]);
+
+  /*
+   * 공중 여부만 상태로 올린다. 좌표는 useFrame 안에서 직접 만지고 리렌더하지 않는다 —
+   * 8명 × 10Hz 를 setState 로 돌리면 초당 80번 다시 그린다 (store.ts 머리말과 같은 이유).
+   * 점프는 초당 몇 번이 아니라 몇 초에 한 번이라 상태로 둬도 싸다.
+   */
+  const [airborne, setAirborne] = useState(false);
+  const airborneRef = useRef(false);
 
   const bubble = player.bubbleUntil > performance.now() ? player.bubbleText : '';
   void bubbleTick;
@@ -296,14 +306,17 @@ const RemoteAvatar = memo(function RemoteAvatar({
     g.position.set(player.pose.x, player.pose.y, player.pose.z);
     g.rotation.y = player.pose.heading;
 
-    // 공중이면 걸음 흔들림을 멈춘다. 뛰는 중에 발을 구르면 우스꽝스럽다.
-    // 별도 anim 값을 만들지 않고 높이로만 판단한다 (protocol.ts의 ANIM_STATES 주석)
+    /*
+     * 공중인지는 높이로만 판단한다 (protocol.ts의 ANIM_STATES 주석).
+     * 예전에는 여기서 몸통을 위아래로 흔들어 걸음을 흉내 냈다. 이제는 뼈대가 있는
+     * 클립(walk/run/jump)이 그 일을 하므로 **흔들지 않는다** — 같이 하면 두 번 튄다.
+     */
     const airborne = player.pose.y > 0.02;
-    if (body.current) {
-      const moving = !airborne && (player.anim === 'walk' || player.anim === 'run');
-      const rate = player.anim === 'run' ? 16 : 9;
-      body.current.position.y = moving ? Math.abs(Math.sin(state.clock.elapsedTime * rate)) * 0.06 : 0;
+    if (airborne !== airborneRef.current) {
+      airborneRef.current = airborne;
+      setAirborne(airborne);
     }
+    void state;
 
     // 그림자는 아바타를 따라 올라가지 않는다 — 늘 바닥에 붙어 있고 멀어질수록 작아진다.
     // 이게 없으면 점프가 "위로 간 것"인지 "커진 것"인지 구분이 안 된다.
@@ -316,23 +329,13 @@ const RemoteAvatar = memo(function RemoteAvatar({
 
   return (
     <group ref={group}>
-      <group ref={body}>
-        {/* 몸 */}
-        <mesh position={[0, 0.62, 0]}>
-          <capsuleGeometry args={[0.28, 0.7, 6, 14]} />
-          <meshStandardMaterial color={color} roughness={0.65} metalness={0.05} />
-        </mesh>
-        {/* 머리 */}
-        <mesh position={[0, 1.42, 0]}>
-          <sphereGeometry args={[0.24, 20, 16]} />
-          <meshStandardMaterial color="#e6ddd2" roughness={0.8} />
-        </mesh>
-        {/* 앞을 알려주는 챙. 로컬 +z가 정면이다 */}
-        <mesh position={[0, 1.44, 0.22]}>
-          <boxGeometry args={[0.3, 0.05, 0.16]} />
-          <meshStandardMaterial color={color} roughness={0.6} />
-        </mesh>
-      </group>
+      {/*
+        아바타. 모델이 늦게 와도 방은 돌아야 하므로 Suspense 로 감싸고, 그동안에는
+        발밑 그림자만 떠 있게 둔다 — 자리에 아무것도 없는 것보다 낫다.
+      */}
+      <Suspense fallback={null}>
+        <Avatar variant={variant} anim={player.anim} airborne={airborne} />
+      </Suspense>
 
       {/* 바닥 그림자 대용 — 실제 그림자는 8명이면 비싸다. 높이는 useFrame이 잡는다 */}
       <mesh ref={shadow} rotation-x={-Math.PI / 2} position={[0, 0.02, 0]}>
