@@ -21,7 +21,6 @@ import type { Role } from '@/lib/game/types';
 import { WorldConnection, type WorldEvents } from './net/connection';
 import {
   getVolume as getMusicVolume,
-  isPlaying as isMusicPlaying,
   setVolume as setMusicVolume,
   subscribe as musicSubscribe,
 } from './music';
@@ -67,6 +66,8 @@ export default function WorldPage() {
   const [ticket, setTicket] = useState<Ticket | null>(null);
   const [locked, setLocked] = useState(false);
   const [draft, setDraft] = useState('');
+  /** ESC 로 마우스를 푼 뒤에만 보이는 판들. 채팅은 기본으로 열어 둔다 */
+  const [chatOpen, setChatOpen] = useState(true);
 
   const status = useWorldStore((s) => s.status);
   const errorText = useWorldStore((s) => s.errorText);
@@ -128,19 +129,39 @@ export default function WorldPage() {
 
   useEffect(() => () => conn.close(), [conn]);
 
-  // 잠금 중에 Enter를 누르면 마우스를 풀고 입력창으로 보낸다.
+  // Enter를 누르면 마우스를 풀고 입력창으로 보낸다.
   // 포인터 락 상태에서는 input에 포커스를 줄 수 없다.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.code !== 'Enter' || !locked) return;
+      if (e.code !== 'Enter') return;
+      // 이미 입력창 안이면 그건 '전송'이다 — ChatDock 의 onKeyDown 이 처리한다.
+      // 여기서 가로채면 preventDefault 로 전송이 막힌다.
+      const el = e.target as HTMLElement | null;
+      if (el?.tagName === 'INPUT' || el?.tagName === 'TEXTAREA' || el?.isContentEditable) return;
+
       e.preventDefault();
-      document.exitPointerLock();
-      // 락 해제가 끝난 뒤에 포커스를 준다
-      setTimeout(() => inputRef.current?.focus(), 0);
+      // 채팅 판이 접혀 있었다면 같이 편다 — Enter 를 눌렀는데 아무 일도 없으면 안 된다
+      setChatOpen(true);
+
+      // ★ exitPointerLock() 은 비동기다. setTimeout(0) 으로 바로 focus() 하면 아직
+      //   락이 살아 있어 브라우저가 포커스를 무시한다 — 그러면 키 입력이 창으로 가
+      //   캐릭터만 걷고 글이 안 써진다. 락이 '실제로' 풀린 뒤에 포커스를 준다.
+      if (document.pointerLockElement) {
+        const focusWhenUnlocked = () => {
+          if (document.pointerLockElement) return; // 아직 락 중이면 다음 이벤트를 기다린다
+          document.removeEventListener('pointerlockchange', focusWhenUnlocked);
+          inputRef.current?.focus();
+        };
+        document.addEventListener('pointerlockchange', focusWhenUnlocked);
+        document.exitPointerLock();
+      } else {
+        // 락이 아니었으면 바로 포커스를 준다
+        inputRef.current?.focus();
+      }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [locked]);
+  }, []);
 
   const send = useCallback(() => {
     const text = draft.trim();
@@ -183,12 +204,8 @@ export default function WorldPage() {
             </p>
           ) : null}
         </div>
-        {live ? (
-          <div className="flex flex-col items-end gap-2">
-            <StatusChip />
-            <MusicVolume />
-          </div>
-        ) : null}
+        {/* 볼륨은 ESC 로 마우스를 푼 뒤 아래 도크에서 바로 조절한다 (창 없음) */}
+        {live ? <StatusChip /> : null}
       </header>
 
       {/* 입장 패널 */}
@@ -236,61 +253,237 @@ export default function WorldPage() {
         </div>
       ) : null}
 
-      {/* 채팅 */}
+      {/*
+        ┌─ 걸을 때와 만질 때를 나눈다 ─────────────────────────────────────────┐
+        │ 마우스가 잠긴 동안(걷는 중)에는 판을 띄우지 않는다. 판이 떠 있으면    │
+        │ 시야를 가리고, 무엇보다 **클릭이 판에 먹혀** 다시 걸을 수가 없다.     │
+        │ ESC 로 마우스를 풀면(locked=false) 그때 아이콘이 나오고, 거기서 채팅과 │
+        │ 소리를 만진다. 화면을 다시 클릭하면 판이 접히고 걷기로 돌아간다.      │
+        │ 즉 ESC 한 번이 '조작 ↔ 설정' 스위치다 — 따로 배울 게 없다.           │
+        └──────────────────────────────────────────────────────────────────────┘
+      */}
       {live ? (
-        <div className="absolute inset-x-0 bottom-0 flex flex-col gap-2 p-5">
-          <div className="pointer-events-none flex max-h-40 flex-col justify-end gap-1 overflow-hidden">
-            {messages.slice(-6).map((m) => (
-              <p key={m.key} className="text-[12px] text-neutral-300 drop-shadow-[0_1px_4px_rgba(0,0,0,0.9)]">
-                <span className="font-bold text-amber-300">{m.nickname}</span>{' '}
-                <span className="text-neutral-200">{m.text}</span>
-              </p>
-            ))}
-          </div>
+        <>
+          {/* 걷는 중에도 남의 말은 보여야 한다. 판이 아니라 글자만 흐른다 */}
+          {locked && messages.length > 0 ? (
+            <div className="pointer-events-none absolute inset-x-0 bottom-24 flex flex-col items-start gap-1 px-6">
+              {messages.slice(-5).map((m) => (
+                <p
+                  key={m.key}
+                  className="text-[12px] text-neutral-300 drop-shadow-[0_1px_4px_rgba(0,0,0,0.9)]"
+                >
+                  <span className="font-bold text-[#d4a373]">{m.nickname}</span>{' '}
+                  <span className="text-neutral-200">{m.text}</span>
+                </p>
+              ))}
+            </div>
+          ) : null}
 
-          <div className="flex items-center gap-2">
-            <input
-              ref={inputRef}
-              value={draft}
-              onChange={(e) => setDraft(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key !== 'Enter') return;
-                e.preventDefault();
-                send();
-              }}
-              maxLength={200}
-              placeholder={locked ? 'Enter — 말하기' : '메시지를 입력하고 Enter'}
-              className="max-w-md flex-1 rounded-full bg-black/60 px-4 py-2 text-[13px] text-neutral-100 ring-1 ring-white/15 outline-none backdrop-blur focus:ring-amber-500/50"
-            />
-            <p className="rounded-full bg-black/40 px-3 py-1.5 text-[11px] text-neutral-400 backdrop-blur">
-              {locked
-                ? 'WASD 이동 · Shift 달리기 · Space 점프 · ESC 마우스 풀기'
-                : '화면을 클릭하면 걸어다닙니다'}
-            </p>
+          {/* 마우스를 푼 동안의 판들 (볼륨은 창이 아니라 아래 도크에서 바로 조절한다) */}
+          {!locked ? (
+            <div className="pointer-events-none absolute inset-0 z-20 flex items-end justify-start gap-6 p-6 pb-24 pt-28">
+              {chatOpen ? (
+                <ChatPanel
+                  messages={messages}
+                  draft={draft}
+                  inputRef={inputRef}
+                  onDraft={setDraft}
+                  onSend={send}
+                  onClose={() => setChatOpen(false)}
+                />
+              ) : null}
+            </div>
+          ) : null}
+
+          {/* 아래 가운데 — 상태와 스위치 */}
+          <div className="absolute inset-x-0 bottom-6 z-30 flex justify-center">
+            {locked ? (
+              <p className="rounded-full border border-white/10 bg-black/60 px-5 py-2.5 text-[12px] text-neutral-300 backdrop-blur">
+                WASD 이동 · Shift 달리기 · Space 점프 · <span className="text-[#d4a373]">Enter 말하기</span>{' '}
+                · <span className="text-[#d4a373]">ESC 설정</span>
+              </p>
+            ) : (
+              <div className="pointer-events-auto flex items-center gap-2 rounded-full border border-white/10 bg-black/60 p-1.5 backdrop-blur">
+                <DockButton
+                  active={chatOpen}
+                  onClick={() => setChatOpen((v) => !v)}
+                  label="방 채팅"
+                  badge={messages.length > 0 ? messages.length : undefined}
+                >
+                  <ChatIcon />
+                </DockButton>
+                <VolumeControl />
+                <span className="px-3 text-[12px] text-neutral-400">화면을 클릭하면 걸어다닙니다</span>
+              </div>
+            )}
           </div>
-        </div>
+        </>
       ) : null}
     </main>
   );
 }
 
-/**
- * 음악 볼륨. 음악은 스크린 영상이 끝난 뒤에 시작한다 (app/world/music.ts).
- *
- * ★ 슬라이더는 영상이 도는 동안에도 보인다. 시작하면 조용해지는 게 아니라
- *   **아직 안 나온다**는 걸 알려야, 소리가 안 난다고 볼륨을 끝까지 올리지 않는다.
- * ★ pointer-events-auto 를 명시한다 — 이 헤더는 통째로 pointer-events-none 이라
- *   그냥 두면 슬라이더가 안 잡힌다.
- */
-function MusicVolume() {
-  const volume = useSyncExternalStore(musicSubscribe, getMusicVolume, () => 0.45);
-  const playing = useSyncExternalStore(musicSubscribe, isMusicPlaying, () => false);
+/* ─────────────────────────────── 아래 스위치 ─────────────────────────────── */
+
+function DockButton({
+  active,
+  onClick,
+  label,
+  badge,
+  children,
+}: {
+  active: boolean;
+  onClick: () => void;
+  label: string;
+  badge?: number;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-label={label}
+      aria-pressed={active}
+      className={`relative flex h-9 w-9 items-center justify-center rounded-full transition-colors ${
+        active ? 'bg-[#d4a373] text-black' : 'text-neutral-400 hover:bg-white/10 hover:text-white'
+      }`}
+    >
+      {children}
+      {badge ? (
+        <span className="absolute -right-0.5 -top-0.5 min-w-4 rounded-full bg-[#d4a373] px-1 text-[9px] font-bold leading-4 text-black">
+          {badge > 99 ? '99+' : badge}
+        </span>
+      ) : null}
+    </button>
+  );
+}
+
+/* ─────────────────────────────── 채팅 판 ─────────────────────────────── */
+
+const PANEL = 'pointer-events-auto flex flex-col overflow-hidden rounded-xl border border-white/10 bg-[rgba(28,24,22,0.85)] shadow-2xl backdrop-blur-md';
+
+function ChatPanel({
+  messages,
+  draft,
+  inputRef,
+  onDraft,
+  onSend,
+  onClose,
+}: {
+  messages: { key: string; nickname: string; text: string }[];
+  draft: string;
+  inputRef: React.RefObject<HTMLInputElement | null>;
+  onDraft: (v: string) => void;
+  onSend: () => void;
+  onClose: () => void;
+}) {
+  const scroll = useRef<HTMLDivElement>(null);
+
+  // 새 말이 오면 아래로 붙인다. 위를 읽고 있었어도 방금 온 말은 봐야 한다
+  useEffect(() => {
+    const el = scroll.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [messages.length]);
 
   return (
-    <div className="pointer-events-auto flex items-center gap-2 rounded-full bg-black/50 px-3 py-1.5 backdrop-blur">
-      <span className="font-mono text-[10px] tracking-wider text-neutral-400">
-        {playing ? '음악' : '영상 후 음악'}
-      </span>
+    <div className={`${PANEL} h-[420px] w-full max-w-md`}>
+      <header className="flex items-center justify-between border-b border-white/10 bg-black/20 px-5 py-3.5">
+        <div className="flex items-center gap-3">
+          <span className="text-[#d4a373]">
+            <ChatIcon />
+          </span>
+          <h2 className="text-[15px] font-bold text-white">방 채팅</h2>
+        </div>
+        <button
+          type="button"
+          onClick={onClose}
+          aria-label="채팅 닫기"
+          className="text-neutral-500 transition-colors hover:text-white"
+        >
+          <CloseIcon />
+        </button>
+      </header>
+
+      <div ref={scroll} className="flex-1 overflow-y-auto p-5">
+        {messages.length === 0 ? (
+          <div className="flex h-full flex-col items-center justify-center text-center opacity-60">
+            <span className="mb-3 text-neutral-500">
+              <ChatIcon size={34} />
+            </span>
+            <p className="text-[13px] text-neutral-400">아직 메시지가 없어요.</p>
+            <p className="text-[13px] text-neutral-400">같은 방 사람들과 이야기해 보세요.</p>
+          </div>
+        ) : (
+          <div className="flex flex-col gap-4">
+            {messages.map((m) => (
+              <div key={m.key} className="flex items-start gap-3">
+                <span className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-white/10 bg-black/40 text-[11px] font-bold text-neutral-400">
+                  {m.nickname.slice(-1)}
+                </span>
+                <div className="min-w-0">
+                  <p className="mb-1 text-[11px] text-neutral-500">{m.nickname}</p>
+                  <div className="rounded-lg rounded-tl-none border border-white/5 bg-black/40 px-3 py-2 text-[13px] leading-relaxed text-neutral-100">
+                    {m.text}
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      <div className="border-t border-white/10 bg-black/30 p-4">
+        <div className="relative">
+          <input
+            ref={inputRef}
+            value={draft}
+            onChange={(e) => onDraft(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key !== 'Enter') return;
+              e.preventDefault();
+              onSend();
+            }}
+            maxLength={200}
+            placeholder="메시지를 입력하고 Enter"
+            className="w-full rounded-lg border border-white/10 bg-black/50 py-3 pl-4 pr-11 text-[13px] text-white outline-none transition-colors placeholder:text-neutral-600 focus:border-[#d4a373]"
+          />
+          <button
+            type="button"
+            onClick={onSend}
+            aria-label="보내기"
+            className="absolute right-3 top-1/2 -translate-y-1/2 text-neutral-500 transition-colors hover:text-[#d4a373]"
+          >
+            <SendIcon />
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ─────────────────────────────── 볼륨 ─────────────────────────────── */
+
+/**
+ * 도크에 바로 붙는 볼륨 조절기. **창을 열지 않는다** — 곡이 하나뿐이라
+ * 목록·재생상태를 보여줄 판이 필요 없다. 음소거 토글 + 슬라이더가 전부다.
+ * (곡이 여러 개가 되면 그때 판을 되살린다. music.ts 가 파일을 쥔다.)
+ *
+ * 볼륨은 useSyncExternalStore 로 music.ts 에서 직접 읽는다 — React 상태로
+ * 복제하지 않아 다른 곳에서 setVolume 해도 여기 슬라이더가 같이 움직인다.
+ */
+function VolumeControl() {
+  const volume = useSyncExternalStore(musicSubscribe, getMusicVolume, () => 0.45);
+
+  return (
+    <div className="flex items-center gap-2 pl-1.5 pr-1">
+      <button
+        type="button"
+        onClick={() => setMusicVolume(volume > 0 ? 0 : 0.45)}
+        aria-label={volume > 0 ? '음소거' : '소리 켜기'}
+        className="flex h-9 w-9 items-center justify-center rounded-full text-neutral-400 transition-colors hover:bg-white/10 hover:text-white"
+      >
+        {volume > 0 ? <VolumeIcon /> : <MuteIcon />}
+      </button>
       <input
         type="range"
         min={0}
@@ -298,12 +491,59 @@ function MusicVolume() {
         value={Math.round(volume * 100)}
         aria-label="음악 볼륨"
         onChange={(e) => setMusicVolume(Number(e.target.value) / 100)}
-        className="h-1 w-24 cursor-pointer appearance-none rounded-full bg-white/20 accent-amber-400"
+        className="h-1.5 w-24 cursor-pointer appearance-none rounded-full bg-white/15 accent-[#d4a373]"
       />
-      <span className="w-7 text-right font-mono text-[10px] text-neutral-500">
-        {Math.round(volume * 100)}
-      </span>
     </div>
+  );
+}
+
+/* ─────────────────────────────── 아이콘 ─────────────────────────────── */
+/* CDN(font-awesome) 대신 인라인 SVG — 배포본에서 외부 요청이 나가지 않는다 */
+
+function ChatIcon({ size = 16 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 16 16" fill="none" aria-hidden>
+      <path
+        d="M14 9.5a2 2 0 01-2 2H5l-3 2.5V4a2 2 0 012-2h8a2 2 0 012 2v5.5z"
+        stroke="currentColor"
+        strokeWidth="1.3"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
+function VolumeIcon() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden>
+      <path d="M3 6h2.5L9 3v10L5.5 10H3z" stroke="currentColor" strokeWidth="1.3" strokeLinejoin="round" />
+      <path d="M11.5 5.5a3.5 3.5 0 010 5M13.4 3.6a6 6 0 010 8.8" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+function MuteIcon() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden>
+      <path d="M3 6h2.5L9 3v10L5.5 10H3z" stroke="currentColor" strokeWidth="1.3" strokeLinejoin="round" />
+      <path d="M11.5 6l3 4M14.5 6l-3 4" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+function CloseIcon() {
+  return (
+    <svg width="13" height="13" viewBox="0 0 13 13" aria-hidden>
+      <path d="M1 1l11 11M12 1L1 12" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+function SendIcon() {
+  return (
+    <svg width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden>
+      <path d="M15 1L7.5 8.5M15 1l-5 14-2.5-6.5L1 6l14-5z" stroke="currentColor" strokeWidth="1.3" strokeLinejoin="round" />
+    </svg>
   );
 }
 

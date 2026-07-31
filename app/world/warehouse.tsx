@@ -21,7 +21,7 @@ import { RoundedBox, useTexture } from "@react-three/drei";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import * as THREE from "three";
 
-import { startMusic, stopMusic } from "./music";
+import { pauseMusic, startMusic, stopMusic } from "./music";
 
 /* ─────────────────────────── 창고 치수 (월드 단위 ≈ m) ─────────────────────────── */
 
@@ -318,34 +318,48 @@ function Screen() {
   );
 }
 
-/** 영사되는 영상. public/world/screen.mp4 (1280×720, 15초) */
+/** 영사되는 영상. public/world/screen.mp4 (720p, 43초) */
 const SCREEN_VIDEO = '/world/screen.mp4';
 
+/** 들어와서 상영까지의 준비 시간(초). 자리 잡고 둘러볼 틈을 넉넉히 준다 */
+const COUNTDOWN_SEC = 20;
+
 /**
- * 스크린에 영상을 튼다.
+ * 스크린 — 카운트다운 → 영상.
+ *
+ * ┌─ 순서 ─────────────────────────────────────────────────────────────────┐
+ * │ 들어오는 즉시 음악이 깔린다(낮은 볼륨). 스크린에는 20 → 0 이 흐른다.    │
+ * │ 0 이 되면 영상이 시작되고 **음악은 잠시 멈춘다** — 둘이 같이 나면 둘 다  │
+ * │ 안 들린다. 영상이 끝나면 음악이 멈춘 자리에서 이어진다.                 │
+ * └────────────────────────────────────────────────────────────────────────┘
  *
  * ★ **소리 없이 시작한다.** 브라우저는 사용자가 뭔가 누르기 전에는 소리 있는
- *   자동재생을 막는다(막지 않으면 방에 들어오자마자 소리가 난다). muted 로 시작하고,
- *   화면을 클릭해 조작을 시작하는 순간(포인터 잠금 = 사용자 제스처) 소리를 켠다.
+ *   자동재생을 막는다. muted 로 시작하고, 화면을 클릭해 조작을 시작하는 순간
+ *   (포인터 잠금 = 사용자 제스처) 소리를 켠다.
  *
  * ★ 영상이 안 열려도 방은 그대로 돌아야 한다. 실패하면 아무것도 그리지 않고,
  *   원래의 흰 스크린이 그대로 남는다 — 콘솔에만 남긴다.
  *
- * ★ 비율은 **가로세로를 지킨 채 안쪽에 맞춘다**(contain). 스크린은 11×4.3(≈2.56:1)
- *   이고 영상은 16:9 라, 늘리면 사람 얼굴이 옆으로 퍼진다.
+ * ★ 비율은 **가로세로를 지킨 채 안쪽에 맞춘다**(contain). 스크린이 16:9 라
+ *   지금 영상은 꼭 맞지만, 다른 비율로 갈아끼워도 얼굴이 옆으로 퍼지지 않는다.
  */
 function ScreenVideo() {
   const [texture, setTexture] = useState<THREE.VideoTexture | null>(null);
   const [size, setSize] = useState<[number, number]>([SCREEN.h * (16 / 9), SCREEN.h]);
+  /** null 이면 상영이 시작됐다는 뜻. 숫자면 남은 초 */
+  const [remain, setRemain] = useState<number | null>(COUNTDOWN_SEC);
+  const videoRef = useRef<HTMLVideoElement | null>(null);
 
   useEffect(() => {
     const video = document.createElement('video');
+    videoRef.current = video;
     video.src = SCREEN_VIDEO;
-    // ★ 반복하지 않는다. 끝나야 음악이 시작된다 (app/world/music.ts)
+    // ★ 반복하지 않는다. 끝나야 음악이 이어진다 (app/world/music.ts)
     video.loop = false;
     video.muted = true; // 자동재생의 전제조건이다
     video.playsInline = true;
     video.crossOrigin = 'anonymous';
+    // 카운트다운 동안 미리 받아 둔다 — 0 이 되자마자 나와야 한다
     video.preload = 'auto';
 
     const tex = new THREE.VideoTexture(video);
@@ -364,23 +378,37 @@ function ScreenVideo() {
     const onError = () => {
       console.warn('[world] 스크린 영상을 열지 못했다:', SCREEN_VIDEO, video.error?.message);
     };
-
-    // 영상이 끝나면 음악으로 바통을 넘긴다. 마지막 프레임은 화면에 그대로 남는다
+    // 영상이 끝나면 음악이 이어받는다. 마지막 프레임은 화면에 그대로 남는다
     const onEnded = () => startMusic();
 
     video.addEventListener('loadedmetadata', onReady);
     video.addEventListener('error', onError);
     video.addEventListener('ended', onEnded);
-    void video.play().catch(onError);
+
+    // 음악은 **지금 바로** 시작한다. 입장 버튼을 누른 직후라 소리가 허용된다
+    startMusic();
+
+    // 10 → 0. 0 에서 음악을 비키고 영상을 튼다
+    const timer = setInterval(() => {
+      setRemain((prev) => {
+        if (prev === null) return null;
+        if (prev > 1) return prev - 1;
+        clearInterval(timer);
+        pauseMusic();
+        void video.play().catch(onError);
+        return null;
+      });
+    }, 1000);
 
     // 클릭 한 번이 있어야 소리를 켤 수 있다. 한 번만 듣고 스스로 떨어진다
     const unmute = () => {
       video.muted = false;
-      void video.play().catch(() => {});
+      if (!video.paused) void video.play().catch(() => {});
     };
     window.addEventListener('pointerdown', unmute, { once: true });
 
     return () => {
+      clearInterval(timer);
       video.removeEventListener('loadedmetadata', onReady);
       video.removeEventListener('error', onError);
       video.removeEventListener('ended', onEnded);
@@ -393,6 +421,7 @@ function ScreenVideo() {
     };
   }, []);
 
+  if (remain !== null) return <ScreenCountdown remain={remain} size={size} />;
   if (!texture) return null;
 
   return (
@@ -402,6 +431,50 @@ function ScreenVideo() {
         영사막은 스스로 빛나는 면이다. 조명을 받는 재질(standard)로 두면 이 어두운
         창고에서 거의 안 보인다. toneMapped 를 끄는 것도 같은 이유다.
       */}
+      <meshBasicMaterial map={texture} toneMapped={false} />
+    </mesh>
+  );
+}
+
+/**
+ * 상영 전 카운트다운. 스크린에 직접 그린다 — HUD 로 띄우면 시야를 가리고,
+ * 무엇보다 **어디서 시작되는지**를 못 알려준다. 화면을 보고 있으면 저절로 눈이 간다.
+ *
+ * ★ 글자는 2D 캔버스에 그려 텍스처로 올린다. 3D 폰트(troika 등)를 새로 들이지 않으려는
+ *   것이다 — 숫자 한 글자에 폰트 로더를 붙일 이유가 없다.
+ */
+function ScreenCountdown({ remain, size }: { remain: number; size: [number, number] }) {
+  const texture = useMemo(() => {
+    const canvas = document.createElement('canvas');
+    canvas.width = 1024;
+    canvas.height = 576;
+    const ctx = canvas.getContext('2d');
+    if (ctx) {
+      ctx.fillStyle = '#0b0906';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+
+      ctx.fillStyle = '#d4a373';
+      ctx.font = 'bold 300px ui-sans-serif, system-ui, sans-serif';
+      ctx.fillText(String(remain), canvas.width / 2, canvas.height / 2 - 10);
+
+      ctx.fillStyle = 'rgba(226,226,226,0.55)';
+      ctx.font = '34px ui-sans-serif, system-ui, sans-serif';
+      ctx.fillText('잠시 후 시작합니다', canvas.width / 2, canvas.height / 2 + 190);
+    }
+    const tex = new THREE.CanvasTexture(canvas);
+    tex.colorSpace = THREE.SRGBColorSpace;
+    return tex;
+  }, [remain]);
+
+  // 숫자가 바뀔 때마다 새 텍스처가 나오므로 이전 것은 바로 버린다
+  useEffect(() => () => texture.dispose(), [texture]);
+
+  return (
+    <mesh position={[0, 0, 0.03]}>
+      <planeGeometry args={size} />
       <meshBasicMaterial map={texture} toneMapped={false} />
     </mesh>
   );

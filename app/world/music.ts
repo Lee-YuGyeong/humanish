@@ -21,8 +21,11 @@
 
 const SRC = '/world/music.m4a';
 
-/** 기본 볼륨. 0.5 면 대화(말풍선 읽기)를 방해하지 않는 정도다 */
-const DEFAULT_VOLUME = 0.45;
+/**
+ * 기본 볼륨. **낮게 시작한다** — 들어오자마자 깔리는 소리라 크면 놀란다.
+ * 더 듣고 싶은 사람은 「노래」 판에서 올린다 (app/world/page.tsx).
+ */
+const DEFAULT_VOLUME = 0.18;
 
 let audio: HTMLAudioElement | null = null;
 let volume = DEFAULT_VOLUME;
@@ -44,7 +47,10 @@ function element(): HTMLAudioElement {
   return audio;
 }
 
-/** 스크린 영상이 끝났다. 이제 음악을 켠다 */
+/**
+ * 음악을 켠다. 방에 들어오는 순간(카운트다운과 함께) 한 번, 영상이 끝난 뒤 한 번.
+ * pause 로 멈춘 뒤에 다시 부르면 **멈춘 자리에서** 이어진다 (currentTime 을 안 건드린다).
+ */
 export function startMusic(): void {
   const el = element();
   el.volume = volume;
@@ -61,7 +67,18 @@ export function startMusic(): void {
   );
 }
 
-/** 방을 나갈 때. 다음에 들어오면 다시 영상부터 시작한다 */
+/**
+ * 영상이 나오는 동안 잠깐 비킨다. 둘이 같이 나면 둘 다 안 들린다.
+ * 끄는 게 아니라 **멈추는** 것이라 영상이 끝나면 이어서 튼다.
+ */
+export function pauseMusic(): void {
+  if (!audio) return;
+  audio.pause();
+  playing = false;
+  emit();
+}
+
+/** 방을 나갈 때. 다음에 들어오면 처음부터 다시 시작한다 */
 export function stopMusic(): void {
   if (!audio) return;
   audio.pause();
