@@ -17,8 +17,20 @@ import { FALLBACK_POOL, type AgentContext, type AgentOutput } from '@/lib/agent/
 import { getServiceClient } from '@/lib/server/supabase';
 import type { Phase } from '@/lib/game/types';
 
-/** self-fetch 대상. 로컬 개발 기본값 — 배포에서 쓰게 되면 env로 넘긴다. */
-const AGENT_SELF_URL = process.env.AGENT_SELF_URL ?? 'http://127.0.0.1:3000';
+/** self-fetch 대상. 로컬 개발 기본값 — 배포에서 쓰게 되면 env로 넘긴다. chat-reply.ts와 공유. */
+export const AGENT_SELF_URL = process.env.AGENT_SELF_URL ?? 'http://127.0.0.1:3000';
+
+/**
+ * self-fetch 헤더. 프로덕션 /api/agent는 내부 Bearer(AGENT_SHARED_SECRET)로만 열린다 —
+ * world-room 규약과 같다. 비밀이 없으면(개발) 그냥 간다. chat-reply.ts와 공유.
+ * LLM API 키가 아니다 — 그건 여전히 라우트만 안다 (I4).
+ */
+export function agentHeaders(): Record<string, string> {
+  const headers: Record<string, string> = { 'content-type': 'application/json' };
+  const secret = process.env.AGENT_SHARED_SECRET;
+  if (secret) headers.authorization = `Bearer ${secret}`;
+  return headers;
+}
 
 /** 투표 이유 상한 — app/api/vote/route.ts의 MAX_REASON_LEN과 같은 값. */
 const MAX_REASON_LEN = 200;
@@ -148,7 +160,7 @@ export async function regenerateBotAnswers(roomId: string): Promise<void> {
     // LLM 호출 — 병렬·8초 컷·agent_logs 기록은 /api/agent가 담당한다 (I4)
     const res = await fetch(`${AGENT_SELF_URL}/api/agent`, {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: agentHeaders(),
       body: JSON.stringify({
         room_id: roomId,
         bots: buildPrefillJobs(targets, room.phase, question.text, humanTexts),
@@ -269,7 +281,7 @@ async function regenerateBotVoteReasons(
     // LLM 호출 — 병렬·8초 컷·agent_logs 기록은 /api/agent가 담당한다 (I4)
     const res = await fetch(`${AGENT_SELF_URL}/api/agent`, {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: agentHeaders(),
       body: JSON.stringify({
         room_id: roomId,
         bots: buildVoteReasonJobs(botVotes, visibleHistory, humanTexts),
