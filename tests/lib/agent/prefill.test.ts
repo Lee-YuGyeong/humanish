@@ -5,7 +5,7 @@
  * 않는다(CLAUDE.md). 그건 로컬 실플레이와 supabase 검사의 몫이다.
  */
 import { describe, expect, it } from 'vitest';
-import { buildPrefillJobs } from '@/lib/agent/prefill';
+import { buildPrefillJobs, buildVoteReasonJobs } from '@/lib/agent/prefill';
 import { personaForSeat } from '@/lib/agent/persona';
 import { DEFAULT_STYLE } from '@/lib/agent/disguise';
 
@@ -46,5 +46,33 @@ describe('buildPrefillJobs — 봇마다 다른 페르소나로 요청을 만든
 
     const empty = buildPrefillJobs(BOTS, 'question', 'q', []);
     expect(empty[0].context.styleProfile).toEqual(DEFAULT_STYLE);
+  });
+});
+
+describe('buildVoteReasonJobs — 봇 투표마다 대상에 맞는 이유 요청을 만든다 (§17.5)', () => {
+  const VOTES = [
+    { voter_id: 'b1', seat: 2, targetNickname: '익명1' },
+    { voter_id: 'b2', seat: 4, targetNickname: '익명3' },
+  ];
+
+  it('투표 수만큼 만들고 voter_id를 보존한다', () => {
+    const jobs = buildVoteReasonJobs(VOTES, [], []);
+    expect(jobs.map((j) => j.player_id)).toEqual(['b1', 'b2']);
+  });
+
+  it('phase는 vote, voteTarget은 SQL이 정한 대상 닉네임 그대로다 — 대상을 바꾸지 않는다', () => {
+    const jobs = buildVoteReasonJobs(VOTES, [], []);
+    for (let i = 0; i < VOTES.length; i++) {
+      expect(jobs[i].context.phase).toBe('vote');
+      expect(jobs[i].context.voteTarget).toBe(VOTES[i].targetNickname);
+      expect(jobs[i].context.persona.id).toBe(personaForSeat(VOTES[i].seat).id);
+    }
+  });
+
+  it('vote는 답변이 전부 공개된 시점이라 기록을 그대로 싣는다 (question과 다르다)', () => {
+    const history = [{ speaker: '익명1', text: '나는 엽떡 ㅋㅋ' }];
+    const jobs = buildVoteReasonJobs(VOTES, history, ['나는 엽떡 ㅋㅋ']);
+    expect(jobs[0].context.visibleHistory).toEqual(history);
+    expect(jobs[0].context.styleProfile.markers).toContain('ㅋㅋ');
   });
 });
