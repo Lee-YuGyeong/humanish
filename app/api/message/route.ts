@@ -10,12 +10,15 @@
  *   - 한 메시지에 반응하는 봇은 최대 1명
  *   - 반응은 즉시 insert하되 visible_at을 미래로 박는다 (타이핑 지연)
  *
- * LLM을 붙일 때 바뀌는 곳은 여기 한 줄이다 — bot_reply RPC 대신 에이전트를 부르고,
- * 실패하거나 8초를 넘기면 bot_reply로 떨어진다 (SPEC §12.3, §17.5).
+ * LLM 배선 (SPEC §12.3, §17.5): bot_reply RPC는 그대로 두고 — 봇 선택·쿨다운·
+ * 타이핑 지연의 유일한 주인 — 그 결과로 남은 공개 전 행을 응답 반환 뒤
+ * regenerateBotChatReply(B 소유)가 LLM 텍스트로 덮는다. 실패하면 풀 문구가 남는다.
  */
 
+import { after } from 'next/server';
 import { getServiceClient } from '@/lib/server/supabase';
 import { ApiError, apiError, readJson, requirePlayer } from '@/lib/server/auth';
+import { regenerateBotChatReply } from '@/lib/agent/chat-reply';
 
 interface Body {
   room_id?: string;
@@ -55,6 +58,15 @@ export async function POST(req: Request): Promise<Response> {
     if (sendErr) {
       if (sendErr.code === 'P0001') throw new ApiError(409, sendErr.message);
       throw new ApiError(500, `메시지 저장 실패: ${sendErr.message}`);
+    }
+
+    // bot_reply가 넣은 공개 전 봇 반응을 응답 반환 뒤 LLM으로 덮는다 (SPEC §17.5).
+    // lib/server/phase.ts의 regenerateBotAnswers 배선과 같은 골격이다.
+    try {
+      after(() => regenerateBotChatReply(roomId));
+    } catch {
+      // 요청 컨텍스트 밖(테스트·스크립트)에서는 after가 없다 — 그냥 발사한다
+      void regenerateBotChatReply(roomId);
     }
 
     return Response.json({ ok: true });
