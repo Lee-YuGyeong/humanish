@@ -60,6 +60,36 @@ async function postJson<T>(url: string, body: unknown): Promise<T> {
   return data;
 }
 
+/**
+ * 마우스를 잡는다. 실패하면 잠시 뒤 다시 두드린다.
+ *
+ * ★ 크롬은 **ESC 로 사용자가 직접 푼 잠금**을 곧바로 다시 잡아주지 않는다
+ *   (대략 1.25초). 그 사이 요청은 pointerlockerror 로 조용히 튕긴다. 한 번만
+ *   요청하면 "ESC 를 눌렀는데 안 돌아간다"가 되므로, 튕길 때마다 간격을 두고
+ *   두 번 더 시도한다. 그래도 안 되면 화면은 이미 걷기 모드고(키 조작은 된다)
+ *   시야만 안 돌아간다 — 그때는 「게임으로」를 한 번 더 누르면 된다.
+ */
+function requestLock(tries = 3, delayMs = 1400): void {
+  const canvas = document.querySelector('canvas');
+  if (!canvas) return;
+
+  const onError = () => {
+    document.removeEventListener('pointerlockchange', onSettled);
+    if (tries > 1) window.setTimeout(() => requestLock(tries - 1, delayMs), delayMs);
+  };
+  const onSettled = () => document.removeEventListener('pointerlockerror', onError);
+  document.addEventListener('pointerlockerror', onError, { once: true });
+  document.addEventListener('pointerlockchange', onSettled, { once: true });
+
+  try {
+    // 최신 크롬은 Promise 를 준다. 거절은 위 이벤트로도 오므로 여기선 삼킨다
+    const p = canvas.requestPointerLock() as unknown;
+    if (p instanceof Promise) p.catch(() => {});
+  } catch {
+    /* 이벤트 쪽에서 재시도한다 */
+  }
+}
+
 export default function WorldPage() {
   const [code, setCode] = useState('');
   const [busy, setBusy] = useState(false);
@@ -68,6 +98,15 @@ export default function WorldPage() {
   const [draft, setDraft] = useState('');
   /** ESC 로 마우스를 푼 뒤에만 보이는 판들. 채팅은 기본으로 열어 둔다 */
   const [chatOpen, setChatOpen] = useState(true);
+  /**
+   * 설정판을 띄울 것인가. **잠금 상태와 따로 둔다.**
+   *
+   * 예전엔 `!locked` 로 판을 그렸는데, 크롬은 ESC 로 푼 잠금을 **1.25초쯤 다시
+   * 잡아주지 않는다.** 그래서 ESC 를 한 번 더 눌러도 잠금이 거절돼 locked 가
+   * false 로 남았고, 판이 화면에 붙어 있었다. 이제 판은 이 상태만 보고,
+   * 잠금은 뒤에서 재시도한다 (requestLock).
+   */
+  const [settingsOpen, setSettingsOpen] = useState(false);
 
   const status = useWorldStore((s) => s.status);
   const errorText = useWorldStore((s) => s.errorText);
@@ -136,7 +175,7 @@ export default function WorldPage() {
    * 대화는 **ESC 로 연다**(마우스 잠금이 풀리면 판이 뜬다). Enter 로는 열지 않는다 —
    * 걷는 중 Enter 가 창을 여닫으면 조작과 섞여 헷갈린다.
    *
-   * 대화가 열리면(=locked=false, chatOpen) 입력창에 **바로 포커스**를 준다. 두 가지가
+   * 대화가 열리면(=settingsOpen, chatOpen) 입력창에 **바로 포커스**를 준다. 두 가지가
    * 한꺼번에 해결된다:
    *   1) 클릭하지 않고 곧장 타이핑한다 — 판 옆 빈 곳을 잘못 눌러 다시 잠기는 일이 없다.
    *   2) 포커스가 입력창에 있으면 LocalRig 의 typing 가드가 이동키를 무시한다.
@@ -146,10 +185,28 @@ export default function WorldPage() {
    * 끝난 다음에 focus() 해야 브라우저가 무시하지 않는다.
    */
   useEffect(() => {
-    if (!(live && !locked && chatOpen)) return;
+    if (!(live && settingsOpen && chatOpen)) return;
     const id = requestAnimationFrame(() => inputRef.current?.focus());
     return () => cancelAnimationFrame(id);
-  }, [live, locked, chatOpen]);
+  }, [live, settingsOpen, chatOpen]);
+
+  /*
+   * 브라우저가 잠금을 **풀었다** = 사용자가 ESC 를 눌렀다 = 설정을 열라는 뜻이다.
+   * (잠금 해제는 ESC 말고는 일어나지 않는다 — 클릭으로 잡지도, 풀지도 않는다.)
+   *
+   * '잠긴 적이 있다가 풀렸을 때'만 연다. 그냥 `!locked` 로 열면 입장 직후
+   * 아직 한 번도 안 잠긴 순간에 판이 번쩍 떴다 사라진다.
+   */
+  const wasLocked = useRef(false);
+  useEffect(() => {
+    if (locked) {
+      wasLocked.current = true;
+      setSettingsOpen(false);
+    } else if (wasLocked.current) {
+      wasLocked.current = false;
+      setSettingsOpen(true);
+    }
+  }, [locked]);
 
   const send = useCallback(() => {
     const text = draft.trim();
@@ -159,20 +216,16 @@ export default function WorldPage() {
   }, [conn, draft]);
 
   /**
-   * 말하기를 끝내고 걷기로 돌아간다.
+   * 설정을 닫고 걷기로 돌아간다.
    *
-   * ★ 마우스 잡기는 **사용자 제스처 안에서만** 받아준다. 지금은 키 입력(Enter/ESC)
-   *   처리 중이라 허용된다. 그래도 브라우저가 거절할 수 있어(ESC 로 푼 직후에는
-   *   잠깐 잠금이 막힌다) 실패는 조용히 삼킨다 — 그때는 화면을 한 번 클릭하면 된다.
+   * **판은 즉시 사라진다.** 잠금이 잡히는지와 상관없이 닫는다 — 예전엔 잠금이
+   * 걸려야 판이 사라지는 구조라, 크롬이 거절하는 동안 판이 화면에 남았다.
+   * 잠금은 requestLock 이 뒤에서 몇 번 더 두드린다.
    */
   const backToWalking = useCallback(() => {
     inputRef.current?.blur();
-    const canvas = document.querySelector('canvas');
-    try {
-      void canvas?.requestPointerLock();
-    } catch {
-      /* 다음 클릭에서 잡으면 된다 */
-    }
+    setSettingsOpen(false);
+    requestLock();
   }, []);
 
   const spawn = useMemo(
@@ -197,21 +250,25 @@ export default function WorldPage() {
   }, [live, backToWalking]);
 
   /*
-   * ESC 는 스위치다. 브라우저가 잠금을 풀어 주는 게 '설정 열기'이고,
-   * 풀린 상태에서 한 번 더 누르면 걷기로 돌아간다. 입력창 안에서 누른 ESC 는
-   * 그 입력창이 처리한다(보내지 않고 나가기) — 여기서 겹쳐 잡지 않는다.
+   * ESC 는 스위치다.
+   *   잠긴 상태  → 브라우저가 알아서 푼다. 그 해제를 위 효과가 '설정 열기'로 받는다.
+   *   설정 열림  → 닫고 걷기로. (판은 잠금과 무관하게 **바로** 사라진다)
+   *   둘 다 아님 → 입장 직후 잠금이 거절된 경우다. 여기서라도 설정을 열어 준다.
+   * 입력창 안에서 누른 ESC 는 그 입력창이 처리한다 — 여기서 겹쳐 잡지 않는다.
    */
   useEffect(() => {
-    if (!live || locked) return;
+    if (!live) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== 'Escape') return;
       const el = e.target as HTMLElement | null;
       if (el?.tagName === 'INPUT' || el?.tagName === 'TEXTAREA' || el?.isContentEditable) return;
-      backToWalking();
+      if (locked) return;
+      if (settingsOpen) backToWalking();
+      else setSettingsOpen(true);
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [live, locked, backToWalking]);
+  }, [live, locked, settingsOpen, backToWalking]);
 
   return (
     <main className="relative h-screen w-full overflow-hidden bg-[#07050a]">
@@ -300,7 +357,7 @@ export default function WorldPage() {
         ┌─ 걸을 때와 만질 때를 나눈다 ─────────────────────────────────────────┐
         │ 마우스가 잠긴 동안(걷는 중)에는 판을 띄우지 않는다. 판이 떠 있으면    │
         │ 시야를 가리고, 무엇보다 **클릭이 판에 먹혀** 다시 걸을 수가 없다.     │
-        │ ESC 로 마우스를 풀면(locked=false) 그때 아이콘이 나오고, 거기서 채팅과 │
+        │ ESC 로 마우스를 풀면 그때 아이콘이 나오고, 거기서 채팅과 소리를      │
         │ 소리를 만진다. ESC 를 한 번 더 누르거나 「게임으로」를 누르면 걷기로   │
         │ 돌아간다 — **화면 클릭으로는 돌아가지 않는다.** 설정을 만지는 클릭과   │
         │ 겹쳤기 때문이다. 즉 ESC 하나가 '조작 ↔ 설정' 스위치다.               │
@@ -309,7 +366,7 @@ export default function WorldPage() {
       {live ? (
         <>
           {/* 걷는 중에도 남의 말은 보여야 한다. 판이 아니라 글자만 흐른다 */}
-          {locked && messages.length > 0 ? (
+          {!settingsOpen && messages.length > 0 ? (
             <div className="pointer-events-none absolute inset-x-0 bottom-24 flex flex-col items-start gap-1 px-6">
               {messages.slice(-5).map((m) => (
                 <p
@@ -324,7 +381,7 @@ export default function WorldPage() {
           ) : null}
 
           {/* 마우스를 푼 동안의 판들 (볼륨은 창이 아니라 아래 도크에서 바로 조절한다) */}
-          {!locked ? (
+          {settingsOpen ? (
             <div className="pointer-events-none absolute inset-0 z-20 flex items-end justify-start gap-6 p-6 pb-24 pt-28">
               {chatOpen ? (
                 <ChatPanel
@@ -342,7 +399,7 @@ export default function WorldPage() {
 
           {/* 아래 가운데 — 상태와 스위치 */}
           <div className="absolute inset-x-0 bottom-6 z-30 flex justify-center">
-            {locked ? (
+            {!settingsOpen ? (
               <p className="rounded-full border border-white/10 bg-black/60 px-5 py-2.5 text-[12px] text-neutral-300 backdrop-blur">
                 WASD 이동 · Shift 달리기 · Space 점프 ·{' '}
                 <span className="text-[#d4a373]">ESC 로 대화 · 설정</span>
