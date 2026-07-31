@@ -39,7 +39,18 @@ import type { LlmChatMessage, Phase } from '@/lib/game/types';
 import { ApiError, apiError, readJson } from '@/lib/server/auth';
 import { getServiceClient } from '@/lib/server/supabase';
 
-export const runtime = 'edge';
+/*
+ * ★ `runtime = 'edge'` 를 쓰지 않는다.
+ *
+ *   OpenNext(Cloudflare)로 배포하면 edge 런타임 라우트가 워커에 제대로 붙지 않아
+ *   **이 경로만 500** 이 된다. 이 저장소에서 edge 를 선언한 라우트가 여기 하나뿐이었고,
+ *   실제로 운영에서 /api/agent 만 500 이었다 (다른 라우트는 전부 200).
+ *   증상이 고약한 이유: LLM 이 죽어도 봇은 풀 문구로 말하므로 **화면은 멀쩡해 보인다.**
+ *   운영에서 봇이 계속 풀 문구만 말한다면 제일 먼저 여기를 의심할 것.
+ *
+ *   이 라우트는 fetch 와 service role 클라이언트만 쓰므로 기본(워커) 런타임으로 충분하다.
+ */
+export const dynamic = 'force-dynamic';
 
 // ── NVIDIA NIM 어댑터 — 공급자 의존부는 전부 이 블록 안 ─────────────────────
 
