@@ -20,10 +20,13 @@
  *   병렬 — Promise.allSettled · 8초 컷 — AbortController · 재시도 0 — fetch 기본엔
  *   재시도가 없다(SDK를 들이게 되면 그 순간 재시도 설정부터 확인할 것) · 폴백 — FALLBACK_POOL
  *
- * ★ 지금은 개발 환경에서만 열린다 (프로덕션 404). 선생성 층(§12.3, §17.5)이 이
- *   라우트를 부르기 시작할 때 world-room 라우트처럼 내부 Bearer 인증으로 바꾼다.
+ * ★ 프로덕션은 내부 Bearer(AGENT_SHARED_SECRET)로만 열린다 — world-room과 같은 규약.
+ *   비밀이 없거나 틀리면 404. "있는데 못 들어간다"는 것조차 알리지 않는다.
+ *   선생성 층(lib/agent/prefill.ts · chat-reply.ts)이 같은 비밀을 헤더에 실어 부른다.
+ *   probe · lab · 모델 오버라이드는 개발 도구라 프로덕션에서는 실전 모드만 연다.
  */
 
+import { timingSafeEqual } from '@/lib/mp/ticket';
 import {
   generate,
   fallbackOutput,
@@ -190,14 +193,26 @@ function labJobs(body: Body): BotJob[] {
 
 export async function POST(req: Request): Promise<Response> {
   try {
-    // 선생성 층이 붙기 전까지는 개발 전용이다. 열어두면 남의 지갑으로 쓰는 LLM 프록시가 된다.
-    if (process.env.NODE_ENV === 'production') {
-      return new Response(null, { status: 404 });
+    // 프로덕션은 내부 Bearer로만 연다 (world-room과 같은 규약). 열어두면 남의 지갑으로
+    // 쓰는 LLM 프록시가 된다. 비밀 미설정 = 예전 그대로 통째로 404 (fail-closed).
+    const isProd = process.env.NODE_ENV === 'production';
+    if (isProd) {
+      const secret = process.env.AGENT_SHARED_SECRET;
+      if (!secret) return new Response(null, { status: 404 });
+      const auth = req.headers.get('authorization') ?? '';
+      const bearer = auth.startsWith('Bearer ') ? auth.slice(7) : '';
+      if (!timingSafeEqual(bearer, secret)) return new Response(null, { status: 404 });
     }
 
     const body = await readJson<Body>(req);
+
+    // probe · lab · 모델 오버라이드는 개발 도구다 — 프로덕션은 실전 모드(room_id·bots)만.
+    if (isProd && (body.probe || body.lab || body.model)) {
+      return new Response(null, { status: 404 });
+    }
+
     const baseCfg = nimConfig();
-    // 모델 오버라이드는 이 라우트가 개발 전용(위의 404)이라서만 허용된다.
+    // 모델 오버라이드는 개발 환경(위 가드)에서만 허용된다 — /lab 비교용 (§15-1-결정).
     const cfg =
       baseCfg && body.model ? { ...baseCfg, model: body.model.slice(0, 100) } : baseCfg;
 
