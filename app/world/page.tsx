@@ -170,6 +170,23 @@ export default function WorldPage() {
     setDraft('');
   }, [conn, draft]);
 
+  /**
+   * 말하기를 끝내고 걷기로 돌아간다.
+   *
+   * ★ 마우스 잡기는 **사용자 제스처 안에서만** 받아준다. 지금은 키 입력(Enter/ESC)
+   *   처리 중이라 허용된다. 그래도 브라우저가 거절할 수 있어(ESC 로 푼 직후에는
+   *   잠깐 잠금이 막힌다) 실패는 조용히 삼킨다 — 그때는 화면을 한 번 클릭하면 된다.
+   */
+  const backToWalking = useCallback(() => {
+    inputRef.current?.blur();
+    const canvas = document.querySelector('canvas');
+    try {
+      void canvas?.requestPointerLock();
+    } catch {
+      /* 다음 클릭에서 잡으면 된다 */
+    }
+  }, []);
+
   const spawn = useMemo(
     () => (ticket ? spawnFor(ticket.self.seat, ticket.room.capacity) : { x: 0, z: 0 }),
     [ticket],
@@ -297,6 +314,7 @@ export default function WorldPage() {
                   onDraft={setDraft}
                   onSend={send}
                   onClose={() => setChatOpen(false)}
+                  onLeave={backToWalking}
                 />
               ) : null}
             </div>
@@ -376,6 +394,7 @@ function ChatPanel({
   onDraft,
   onSend,
   onClose,
+  onLeave,
 }: {
   messages: { key: string; nickname: string; text: string }[];
   draft: string;
@@ -383,6 +402,8 @@ function ChatPanel({
   onDraft: (v: string) => void;
   onSend: () => void;
   onClose: () => void;
+  /** 말하기를 끝내고 다시 걷기로 (Enter 전송 · ESC 취소) */
+  onLeave: () => void;
 }) {
   const scroll = useRef<HTMLDivElement>(null);
 
@@ -446,12 +467,24 @@ function ChatPanel({
             value={draft}
             onChange={(e) => onDraft(e.target.value)}
             onKeyDown={(e) => {
-              if (e.key !== 'Enter') return;
-              e.preventDefault();
-              onSend();
+              /*
+                Enter 로 들어와 Enter 로 나간다 — 보내고 나서 마우스를 다시 잡아
+                **손을 떼지 않고** 걷기로 돌아간다. 예전엔 화면을 한 번 클릭해야 했다.
+                ESC 는 보내지 않고 나간다.
+              */
+              if (e.key === 'Enter') {
+                e.preventDefault();
+                onSend();
+                onLeave();
+                return;
+              }
+              if (e.key === 'Escape') {
+                e.preventDefault();
+                onLeave();
+              }
             }}
             maxLength={200}
-            placeholder="메시지를 입력하고 Enter"
+            placeholder="메시지를 입력하고 Enter · ESC 로 돌아가기"
             className="w-full rounded-lg border border-white/10 bg-black/50 py-3 pl-4 pr-11 text-[13px] text-white outline-none transition-colors placeholder:text-neutral-600 focus:border-[#d4a373]"
           />
           <button

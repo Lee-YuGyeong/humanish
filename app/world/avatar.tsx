@@ -134,59 +134,22 @@ export function Avatar({
     return TARGET_HEIGHT / h;
   }, [scene]);
 
-  /**
-   * 팔 내리기 보정.
-   *
-   * ┌─ 왜 필요한가 ────────────────────────────────────────────────────────┐
-   * │ 자동 리깅(Higgsfield→Meshy)이 준 클립은 **상체를 바인드 포즈 그대로**  │
-   * │ 둔다. 프레임마다 LeftArm 의 쿼터니언을 찍어보면 파일에 적힌 바인드 값  │
-   * │ (0.163,0.178,-0.003,0.970) 근처만 오간다. 원본 메시가 T 자세라, 그대로 │
-   * │ 두면 걷든 서든 팔을 벌리고 다닌다.                                    │
+  /*
+   * ┌─ 팔은 손대지 않는다 ──────────────────────────────────────────────────┐
+   * │ 한동안 '팔 내리기 보정'(어깨에 고정 쿼터니언을 매 프레임 곱하기)을 넣어 │
+   * │ 뒀는데, 그게 팔이 이상해 보인 **원인**이었다. 클립을 직접 재보면 이미   │
+   * │ 팔을 내리고 있다 — office-man.glb 의 walk 에서 위팔은 수직에서 27~31°, │
+   * │ 아래팔은 31~33° 로 몸 옆에 붙어 있고 한 걸음마다 21° 씩 앞뒤로 흔든다.  │
+   * │ (뼈대 원본은 T 자세라 **바인드 포즈만 보면** 팔을 벌린 것처럼 보인다 —  │
+   * │  거기에 속아서 보정을 넣었다.)                                        │
    * │                                                                      │
-   * │ 그래서 어깨 공간에서 **한 번만** 계산한 고정 보정을 매 프레임 앞에      │
-   * │ 곱한다(premultiply). 고정값이라 클립이 만드는 흔들림은 그대로 남고,    │
-   * │ 팔의 기준 자세만 아래로 내려온다. 축을 손으로 찍지 않고 '지금 팔이     │
-   * │ 향한 방향 → 원하는 방향'으로 구해서, 리그가 바뀌어도 따라간다.        │
+   * │ 그 위에 보정을 또 얹으면 (1) 팔이 몸에 파묻히고 (2) 클립의 앞뒤 스윙이  │
+   * │ 고정축에 눌려 사라지며 (3) 첫 프레임이 아직 바인드 자세일 때 계산되면   │
+   * │ 축이 통째로 어긋나 **한쪽 팔이 하늘로 뻗는다**. 실제로 그 장면을 봤다.  │
+   * │                                                                      │
+   * │ 결론: 클립이 이미 맞다. 팔 자세가 어색하면 코드가 아니라 클립을 고친다. │
    * └──────────────────────────────────────────────────────────────────────┘
    */
-  const armFixRef = useRef<{ bone: THREE.Object3D; corr: THREE.Quaternion }[] | null>(null);
-
-  /*
-   * ★ 이 계산은 **첫 프레임에** 한다. 마운트 시점에는 이 씬이 아직 R3F 트리에
-   *   붙기 전이라 부모(그룹·스케일·회전)의 월드 행렬이 없다. 그때 계산하면
-   *   '아래'가 엉뚱한 축으로 잡혀서 팔이 위로 올라간다 — 실제로 그랬다.
-   */
-  const computeArmFix = (root: THREE.Object3D) => {
-    const out: { bone: THREE.Object3D; corr: THREE.Quaternion }[] = [];
-    root.updateMatrixWorld(true);
-
-    for (const name of ['LeftArm', 'RightArm'] as const) {
-      const bone = root.getObjectByName(name);
-      const child = bone?.children[0];
-      if (!bone || !child) continue;
-
-      // 어깨(부모) 공간에서 본 현재 팔 방향
-      const bindDir = child.position.clone().normalize().applyQuaternion(bone.quaternion);
-
-      // 원하는 방향: 아래로, 몸에서 아주 살짝만 벌려서. 벌리는 쪽은 지금 팔이 향한 쪽을 따른다.
-      // 0.22 는 팔이 뜨게 벌어져 걷을 때 어색했다 — 0.12 면 팔이 몸에 붙어 자연스럽다.
-      const world = new THREE.Vector3();
-      child.getWorldPosition(world).sub(bone.getWorldPosition(new THREE.Vector3()));
-      const outward = Math.sign(world.x) || 1;
-      const wanted = new THREE.Vector3(outward * 0.12, -1, 0.02).normalize();
-
-      const parentQuat = bone.parent
-        ? bone.parent.getWorldQuaternion(new THREE.Quaternion())
-        : new THREE.Quaternion();
-      const wantedInParent = wanted.clone().applyQuaternion(parentQuat.clone().invert());
-
-      out.push({
-        bone,
-        corr: new THREE.Quaternion().setFromUnitVectors(bindDir, wantedInParent),
-      });
-    }
-    return out;
-  };
 
   const mixer = useMemo(() => new THREE.AnimationMixer(scene), [scene]);
   const actions = useMemo(() => {
@@ -266,10 +229,6 @@ export function Avatar({
 
   useFrame((state, delta) => {
     mixer.update(delta);
-
-    // 믹서가 팔을 바인드 자세로 되돌린 **다음에** 보정을 얹는다 (순서가 뒤집히면 지워진다)
-    if (armFixRef.current === null) armFixRef.current = computeArmFix(scene);
-    for (const { bone, corr } of armFixRef.current) bone.quaternion.premultiply(corr);
 
     const idle = !airborne && anim === 'idle';
 
