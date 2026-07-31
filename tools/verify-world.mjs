@@ -201,20 +201,24 @@ async function main() {
     clientA.waitFor((m) => m.t === 'player_joined' && m.player.id === clientB.selfId, 3000, 'player_joined'),
   );
 
-  await check('A가 움직이면 B가 받는다', async () => {
-    clientA.send({ t: 'move', x: 1.25, z: -2.5, heading: 0.75, anim: 'walk' });
+  await check('A가 움직이면 B가 받는다 (점프 높이 포함)', async () => {
+    clientA.send({ t: 'move', x: 1.25, z: -2.5, y: 0.8, heading: 0.75, anim: 'walk' });
     const got = await clientB.waitFor(
       (m) => m.t === 'player_moved' && m.id === clientA.selfId,
       3000,
       'player_moved',
     );
     if (Math.abs(got.x - 1.25) > 1e-6) throw new Error(`x가 ${got.x}로 왔다`);
+    // y가 빠지면 남의 점프가 바닥에 붙어 보인다. 타입체크로는 안 잡힌다
+    if (Math.abs((got.y ?? 0) - 0.8) > 1e-6) throw new Error(`y가 ${got.y}로 왔다`);
   });
 
   await check('월드 밖 좌표는 거절된다', async () => {
     const before = clientB.messages.length;
-    clientA.send({ t: 'move', x: 9999, z: 0, heading: 0, anim: 'walk' });
-    clientA.send({ t: 'move', x: Number.NaN, z: 0, heading: 0, anim: 'walk' });
+    clientA.send({ t: 'move', x: 9999, z: 0, y: 0, heading: 0, anim: 'walk' });
+    clientA.send({ t: 'move', x: Number.NaN, z: 0, y: 0, heading: 0, anim: 'walk' });
+    // 천장 위를 떠다니는 아바타도 같은 문으로 막힌다
+    clientA.send({ t: 'move', x: 0, z: 0, y: 50, heading: 0, anim: 'walk' });
     await new Promise((r) => setTimeout(r, 500));
     const relayed = clientB.messages
       .slice(before)

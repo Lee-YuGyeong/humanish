@@ -22,7 +22,7 @@ export interface WorldEvents {
   onWelcome(selfId: string, players: PlayerSnapshot[]): void;
   onJoined(player: PlayerSnapshot): void;
   onLeft(id: string): void;
-  onMoved(id: string, x: number, z: number, heading: number, anim: AnimState): void;
+  onMoved(id: string, x: number, z: number, y: number, heading: number, anim: AnimState): void;
   onChat(id: string, nickname: string, text: string, ts: number): void;
   onError(code: ErrorCode | 'connection_failed'): void;
   onClose(): void;
@@ -84,7 +84,8 @@ export class WorldConnection {
           events.onLeft(msg.id);
           break;
         case 'player_moved':
-          events.onMoved(msg.id, msg.x, msg.z, msg.heading, msg.anim);
+          // y는 나중에 붙은 필드다. 구 워커·구 클라이언트는 안 보낸다 → 바닥으로 읽는다
+          events.onMoved(msg.id, msg.x, msg.z, msg.y ?? 0, msg.heading, msg.anim);
           break;
         case 'chat':
           events.onChat(msg.id, msg.nickname, msg.text, msg.ts);
@@ -99,8 +100,8 @@ export class WorldConnection {
     };
   }
 
-  sendMove(x: number, z: number, heading: number, anim: AnimState): void {
-    this.send({ t: 'move', x, z, heading, anim });
+  sendMove(x: number, z: number, y: number, heading: number, anim: AnimState): void {
+    this.send({ t: 'move', x, z, y, heading, anim });
   }
 
   sendChat(text: string): void {

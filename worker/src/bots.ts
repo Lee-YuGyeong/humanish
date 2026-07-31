@@ -20,8 +20,12 @@ import {
   BOT_CHAT_MIN_MS,
   BOT_IDLE_MAX_MS,
   BOT_IDLE_MIN_MS,
+  BOT_JUMP_MAX_MS,
+  BOT_JUMP_MIN_MS,
   BOT_SPEED_MAX,
   BOT_SPEED_MIN,
+  GRAVITY,
+  JUMP_SPEED,
   MOVE_THROTTLE_MS,
   WORLD,
 } from '../../lib/mp/constants';
@@ -43,6 +47,10 @@ export interface BotState {
 
   x: number;
   z: number;
+  /** 발 높이. 봇은 바닥에서만 뛴다(가구에 올라서지 않는다) */
+  y: number;
+  /** 수직 속도 (m/s). y > 0 인 동안에만 의미가 있다 */
+  vy: number;
   heading: number;
   anim: AnimState;
 
@@ -56,9 +64,13 @@ export interface BotState {
   /** 마지막으로 내보낸 값. 사람의 lastSent와 같은 역할이다 */
   sentX: number;
   sentZ: number;
+  sentY: number;
   sentHeading: number;
   sentAnim: AnimState;
   sentAt: number;
+
+  /** 다음에 한 번 뛸 시각 (epoch ms) */
+  nextJumpAt: number;
 
   /** 다음에 한마디 할 시각 (epoch ms) */
   nextChatAt: number;
@@ -99,6 +111,8 @@ export function createBot(
     ...seed,
     x: start.x,
     z: start.z,
+    y: 0,
+    vy: 0,
     heading: start.heading,
     anim: 'idle',
     tx: target.x,
@@ -108,10 +122,13 @@ export function createBot(
     speed: rand(BOT_SPEED_MIN, BOT_SPEED_MAX),
     sentX: start.x,
     sentZ: start.z,
+    sentY: 0,
     sentHeading: start.heading,
     sentAnim: 'idle',
     sentAt: 0,
     nextChatAt: now + rand(BOT_CHAT_MIN_MS, BOT_CHAT_MAX_MS),
+    // 첫 점프도 흩뿌린다. 안 그러면 봇 셋이 같은 초에 같이 뛴다
+    nextJumpAt: now + rand(BOT_JUMP_MIN_MS, BOT_JUMP_MAX_MS),
   };
 }
 
@@ -153,20 +170,47 @@ export function stepBot(bot: BotState, now: number, dt: number): boolean {
     }
   }
 
+  stepJump(bot, now, dt);
+
   const changed =
     bot.anim !== bot.sentAnim ||
     Math.abs(bot.x - bot.sentX) > 0.001 ||
     Math.abs(bot.z - bot.sentZ) > 0.001 ||
+    Math.abs(bot.y - bot.sentY) > 0.001 ||
     Math.abs(bot.heading - bot.sentHeading) > 0.001;
 
   if (!changed || now - bot.sentAt < MOVE_THROTTLE_MS) return false;
 
   bot.sentX = bot.x;
   bot.sentZ = bot.z;
+  bot.sentY = bot.y;
   bot.sentHeading = bot.heading;
   bot.sentAnim = bot.anim;
   bot.sentAt = now;
   return true;
+}
+
+/**
+ * 점프 한 틱. 사람 클라이언트(LocalRig)와 **같은 상수·같은 적분**을 쓴다 —
+ * 중력이 다르면 체공 시간이 달라지고, 그 차이가 곧 봇 표식이 된다 (I1).
+ *
+ * 봇은 걷는 중에도 뛴다(사람도 그렇다). 대신 가구 위에는 올라서지 않으므로
+ * 착지 높이는 항상 0이다.
+ */
+function stepJump(bot: BotState, now: number, dt: number): void {
+  if (bot.y <= 0 && bot.vy === 0) {
+    if (now < bot.nextJumpAt) return;
+    bot.nextJumpAt = now + rand(BOT_JUMP_MIN_MS, BOT_JUMP_MAX_MS);
+    bot.vy = JUMP_SPEED;
+  }
+
+  bot.vy -= GRAVITY * dt;
+  bot.y += bot.vy * dt;
+
+  if (bot.y <= 0) {
+    bot.y = 0;
+    bot.vy = 0;
+  }
 }
 
 /**
@@ -187,6 +231,7 @@ export function botSnapshot(bot: BotState): PlayerSnapshot {
     maskId: bot.maskId,
     x: bot.x,
     z: bot.z,
+    y: bot.y,
     heading: bot.heading,
     anim: bot.anim,
   };

@@ -17,6 +17,12 @@ export interface MoveSample {
   t: number;
   x: number;
   z: number;
+  /**
+   * 발 높이. 점프 궤적은 포물선인데 100ms 간격을 직선으로 이으면 최고점이 조금
+   * 깎인다(≈2cm). 눈에 안 보이는 오차라 x·z와 같은 선형 보간을 쓴다 —
+   * 여기서 외삽·2차 보간을 하면 착지 순간 발이 바닥을 뚫는다.
+   */
+  y: number;
   heading: number;
 }
 
@@ -24,6 +30,7 @@ export interface MoveSample {
 export interface Pose {
   x: number;
   z: number;
+  y: number;
   heading: number;
 }
 
@@ -62,6 +69,7 @@ export function sampleAt(buffer: MoveSample[], renderTime: number, out: Pose): b
   if (renderTime <= first.t) {
     out.x = first.x;
     out.z = first.z;
+    out.y = first.y;
     out.heading = first.heading;
     return true;
   }
@@ -70,6 +78,7 @@ export function sampleAt(buffer: MoveSample[], renderTime: number, out: Pose): b
   if (renderTime >= last.t) {
     out.x = last.x;
     out.z = last.z;
+    out.y = last.y;
     out.heading = last.heading;
     return true;
   }
@@ -84,6 +93,7 @@ export function sampleAt(buffer: MoveSample[], renderTime: number, out: Pose): b
       const k = span <= 0 ? 1 : (renderTime - a.t) / span;
       out.x = a.x + (b.x - a.x) * k;
       out.z = a.z + (b.z - a.z) * k;
+      out.y = a.y + (b.y - a.y) * k;
       out.heading = lerpAngle(a.heading, b.heading, k);
       return true;
     }
@@ -91,6 +101,7 @@ export function sampleAt(buffer: MoveSample[], renderTime: number, out: Pose): b
 
   out.x = last.x;
   out.z = last.z;
+  out.y = last.y;
   out.heading = last.heading;
   return true;
 }

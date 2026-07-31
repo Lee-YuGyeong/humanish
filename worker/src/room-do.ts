@@ -179,6 +179,7 @@ export class RoomDO {
       maskId: ticket.mask,
       x: start.x,
       z: start.z,
+      y: 0, // 바닥에서 시작한다. 공중 스폰은 없다
       heading: 0,
       anim: 'idle',
     };
@@ -242,13 +243,22 @@ export class RoomDO {
 
         snap.x = move.x;
         snap.z = move.z;
+        snap.y = move.y;
         snap.heading = move.heading;
         snap.anim = move.anim;
         // 새로 들어오는 사람의 welcome에 반영되도록 attachment를 갱신한다.
         ws.serializeAttachment(snap);
 
         this.broadcast(
-          { t: 'player_moved', id: snap.id, x: snap.x, z: snap.z, heading: snap.heading, anim: snap.anim },
+          {
+            t: 'player_moved',
+            id: snap.id,
+            x: snap.x,
+            z: snap.z,
+            y: snap.y,
+            heading: snap.heading,
+            anim: snap.anim,
+          },
           ws,
         );
         return;
@@ -379,6 +389,7 @@ export class RoomDO {
           id: bot.id,
           x: bot.x,
           z: bot.z,
+          y: bot.y,
           heading: bot.heading,
           anim: bot.anim,
         });

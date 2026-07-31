@@ -13,7 +13,13 @@
  *   스트림을 탄다. 클라이언트는 누가 봇인지 구분할 정보를 한 조각도 받지 않는다.
  */
 
-/** 아바타 애니메이션 상태. 서버가 화이트리스트로 검증한다. */
+/**
+ * 아바타 애니메이션 상태. 서버가 화이트리스트로 검증한다.
+ *
+ * ★ 여기에 'jump'를 넣지 않는다. 이 목록은 **서버가 거르는 화이트리스트**라,
+ *   값을 늘리면 구 워커가 새 클라의 move를 통째로 버린다 — 뛰는 동안 그 사람이
+ *   남의 화면에서 얼어붙는다. 공중인지는 `y > 0`으로 받는 쪽이 판단한다.
+ */
 export type AnimState = 'idle' | 'walk' | 'run' | 'sit';
 
 export const ANIM_STATES: readonly AnimState[] = ['idle', 'walk', 'run', 'sit'];
@@ -35,6 +41,11 @@ export interface PlayerSnapshot {
   maskId: string;
   x: number;
   z: number;
+  /**
+   * 발 높이. 0이 바닥이고 점프·가구 위에서만 >0이다.
+   * 나중에 붙은 필드라 **구 클라이언트는 보내지 않는다** — 없으면 0으로 읽는다.
+   */
+  y: number;
   /** y축 회전(rad). 아바타가 보는 방향. */
   heading: number;
   anim: AnimState;
@@ -42,7 +53,7 @@ export interface PlayerSnapshot {
 
 /** 클라이언트 → 서버 */
 export type C2SMessage =
-  | { t: 'move'; x: number; z: number; heading: number; anim: AnimState }
+  | { t: 'move'; x: number; z: number; y: number; heading: number; anim: AnimState }
   | { t: 'chat'; text: string };
 
 /** 접속이 거절되는 이유. 클라이언트가 이걸 보고 재시도할지 정한다. */
@@ -58,7 +69,16 @@ export type S2CMessage =
   | { t: 'welcome'; selfId: string; players: PlayerSnapshot[] }
   | { t: 'player_joined'; player: PlayerSnapshot }
   | { t: 'player_left'; id: string }
-  | { t: 'player_moved'; id: string; x: number; z: number; heading: number; anim: AnimState }
+  | {
+      t: 'player_moved';
+      id: string;
+      x: number;
+      z: number;
+      /** 발 높이. 0이 바닥이다 (PlayerSnapshot.y와 같은 값) */
+      y: number;
+      heading: number;
+      anim: AnimState;
+    }
   | { t: 'chat'; id: string; nickname: string; text: string; ts: number }
   | { t: 'error'; code: ErrorCode };
 

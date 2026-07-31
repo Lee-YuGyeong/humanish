@@ -26,9 +26,22 @@ export function isInsideWorld(x: number, z: number): boolean {
   );
 }
 
+/**
+ * 발 높이가 말이 되는가. 바닥(0)과 점프·발판 사이여야 한다.
+ *
+ * x·z와 달리 여유(POS_MARGIN)를 크게 주지 않는다 — 높이는 클라이언트 충돌 처리가
+ * 튈 여지가 없는 값이고, 여기가 헐거우면 천장 위를 떠다니는 아바타가 생긴다.
+ * 아래로는 살짝 음수를 허용한다(착지 프레임에서 -0.001쯤 스친다).
+ */
+export function isValidHeight(y: number): boolean {
+  return y >= -0.5 && y <= WORLD.maxY;
+}
+
 export interface MoveInput {
   x: number;
   z: number;
+  /** 발 높이. 구 클라이언트가 안 보내면 0이다 */
+  y: number;
   heading: number;
   anim: AnimState;
 }
@@ -44,7 +57,16 @@ export function parseMove(msg: unknown): MoveInput | null {
   if (!isInsideWorld(m.x, m.z)) return null;
   if (typeof m.anim !== 'string' || !ANIM_SET.has(m.anim)) return null;
 
-  return { x: m.x, z: m.z, heading: m.heading, anim: m.anim as AnimState };
+  // y는 나중에 붙은 필드다. 없으면 바닥으로 읽는다 — 구 클라이언트를 끊지 않는다.
+  // 있는데 이상하면 **메시지 전체를 버린다.** 높이만 0으로 고쳐 통과시키면
+  // 그 사람은 남의 화면에서 계속 바닥을 기고, 왜 그런지 아무도 모른다.
+  let y = 0;
+  if (m.y !== undefined) {
+    if (!isFiniteNumber(m.y) || !isValidHeight(m.y)) return null;
+    y = m.y;
+  }
+
+  return { x: m.x, z: m.z, y, heading: m.heading, anim: m.anim as AnimState };
 }
 
 /** JSON.parse 결과가 우리가 아는 메시지 모양인가. 타입 좁히기용. */

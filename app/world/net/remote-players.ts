@@ -38,8 +38,9 @@ export function createRemote(snap: PlayerSnapshot, now: number): RemotePlayer {
     maskId: snap.maskId,
     anim: snap.anim,
     // 첫 샘플을 미리 넣어 둔다. 비어 있으면 원점에서 한 번 튄다.
-    buffer: [{ t: now, x: snap.x, z: snap.z, heading: snap.heading }],
-    pose: { x: snap.x, z: snap.z, heading: snap.heading },
+    // y는 나중에 붙은 필드라 구 워커의 welcome에는 없다 → 바닥으로 읽는다.
+    buffer: [{ t: now, x: snap.x, z: snap.z, y: snap.y ?? 0, heading: snap.heading }],
+    pose: { x: snap.x, z: snap.z, y: snap.y ?? 0, heading: snap.heading },
     bubbleText: '',
     bubbleUntil: 0,
   };
@@ -49,12 +50,13 @@ export function pushMove(
   player: RemotePlayer,
   x: number,
   z: number,
+  y: number,
   heading: number,
   anim: AnimState,
   now: number,
 ): void {
   player.anim = anim;
-  pushSample(player.buffer, { t: now, x, z, heading });
+  pushSample(player.buffer, { t: now, x, z, y, heading });
 }
 
 /** 말풍선 수명. 채팅 최소 간격(600ms)보다 충분히 길다 */

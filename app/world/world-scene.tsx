@@ -18,10 +18,12 @@ import { Canvas, useFrame, useThree } from '@react-three/fiber';
 import { Suspense, memo, useEffect, useMemo, useRef } from 'react';
 import * as THREE from 'three';
 
-import { Furniture, Lights, Warehouse, resolveColliders } from './warehouse';
+import { Furniture, Lights, Warehouse, groundHeightAt, resolveColliders } from './warehouse';
 import {
   EYE_HEIGHT,
+  GRAVITY,
   INTERP_DELAY_MS,
+  JUMP_SPEED,
   MOVE_THROTTLE_MS,
   RUN_SPEED,
   WALK_SPEED,
@@ -93,14 +95,19 @@ const UP = new THREE.Vector3(0, 1, 0);
 function LocalRig({ conn, spawn }: { conn: WorldConnection; spawn: { x: number; z: number } }) {
   const { camera } = useThree();
   const keys = useRef<Record<string, boolean>>({});
-  const pos = useRef(new THREE.Vector3(spawn.x, EYE_HEIGHT, spawn.z));
+  // ★ pos.y 는 **발 높이**다(눈높이가 아니다). 카메라만 EYE_HEIGHT를 더해 올린다 —
+  //   네트워크로 나가는 값도, 가구 충돌이 보는 값도 발 높이라 여기서 갈리면 안 된다.
+  const pos = useRef(new THREE.Vector3(spawn.x, 0, spawn.z));
+  /** 수직 속도 (m/s). 발이 땅에 있으면 0 */
+  const vy = useRef(0);
+  const grounded = useRef(true);
   const forward = useRef(new THREE.Vector3());
   const right = useRef(new THREE.Vector3());
   // NaN으로 시작해 첫 프레임에 무조건 한 번 보내게 한다 (내 자리를 남에게 알린다)
-  const lastSent = useRef({ at: 0, x: NaN, z: NaN, heading: NaN, anim: 'idle' as AnimState });
+  const lastSent = useRef({ at: 0, x: NaN, z: NaN, y: NaN, heading: NaN, anim: 'idle' as AnimState });
 
   useEffect(() => {
-    camera.position.copy(pos.current);
+    camera.position.set(spawn.x, EYE_HEIGHT, spawn.z);
 
     // 방 가운데를 보고 시작한다. 좌석 스폰은 원 위에 흩어져 있어서, 기본 방향(-z)으로
     // 두면 사람에 따라 벽만 보이고 **다른 사람이 화면에 아예 없다.** 처음 3초가 곧
@@ -116,7 +123,18 @@ function LocalRig({ conn, spawn }: { conn: WorldConnection; spawn: { x: number; 
   }, [camera, spawn.x, spawn.z]);
 
   useEffect(() => {
+    // 채팅창에 타이핑하는 동안은 조작키가 아니다. 이 가드가 없으면 "왜"를 치다가
+    // 걸어다니고, Space를 칠 때마다 뛴다.
+    const typing = (e: KeyboardEvent) => {
+      const el = e.target as HTMLElement | null;
+      const tag = el?.tagName;
+      return tag === 'INPUT' || tag === 'TEXTAREA' || el?.isContentEditable === true;
+    };
+
     const down = (e: KeyboardEvent) => {
+      if (typing(e)) return;
+      // Space는 브라우저가 스크롤·마지막 버튼 재클릭에 쓴다. 여기선 점프다
+      if (e.code === 'Space') e.preventDefault();
       keys.current[e.code] = true;
     };
     const up = (e: KeyboardEvent) => {
@@ -157,15 +175,39 @@ function LocalRig({ conn, spawn }: { conn: WorldConnection; spawn: { x: number; 
       anim = running ? 'run' : 'walk';
     }
 
+    // 점프. **땅에 있을 때만** 받는다 — 누른 채로 있어도 공중에서 다시 뛰지 않는다.
+    if ((k.Space || k.KeyE) && grounded.current) {
+      vy.current = JUMP_SPEED;
+      grounded.current = false;
+    }
+
     // 가구. 배경이 빈 상자가 아니라 라운지가 됐으므로 소파·랙을 뚫고 지나가지 않게 막는다.
-    // 발 높이는 항상 0이다 — 이 씬에는 점프가 없다.
-    resolveColliders(pos.current, 0);
+    // 발이 윗면보다 높으면 막히지 않는다 — 그래서 뛰어넘고, 위에 올라선다.
+    resolveColliders(pos.current, pos.current.y);
 
     // 벽. 서버는 범위 밖을 **거절**만 하므로(보정하지 않는다) 클라가 먼저 막는다
     pos.current.x = Math.min(Math.max(pos.current.x, WORLD.minX + 0.4), WORLD.maxX - 0.4);
     pos.current.z = Math.min(Math.max(pos.current.z, WORLD.minZ + 0.4), WORLD.maxZ - 0.4);
-    pos.current.y = EYE_HEIGHT;
-    camera.position.copy(pos.current);
+
+    // 수직. 지금 발밑이 무엇인지 먼저 묻고(바닥 0 또는 가구 윗면) 그 다음에 떨어뜨린다.
+    const ground = groundHeightAt(pos.current.x, pos.current.z, pos.current.y);
+    if (grounded.current && pos.current.y > ground + 0.02) {
+      // 발판 밖으로 걸어 나갔다. 뛰지 않았으니 초기 속도는 0이다
+      grounded.current = false;
+    }
+    if (grounded.current) {
+      pos.current.y = ground;
+    } else {
+      vy.current -= GRAVITY * Math.min(delta, 0.1);
+      pos.current.y += vy.current * Math.min(delta, 0.1);
+      if (vy.current <= 0 && pos.current.y <= ground) {
+        pos.current.y = ground;
+        vy.current = 0;
+        grounded.current = true;
+      }
+    }
+
+    camera.position.set(pos.current.x, pos.current.y + EYE_HEIGHT, pos.current.z);
 
     // 아바타의 앞면은 로컬 +z다. 봇(stepBot)과 같은 규칙이어야 방향이 맞는다
     const heading = Math.atan2(forward.current.x, forward.current.z);
@@ -176,15 +218,17 @@ function LocalRig({ conn, spawn }: { conn: WorldConnection; spawn: { x: number; 
       s.anim !== anim ||
       Math.abs(s.x - pos.current.x) > 0.001 ||
       Math.abs(s.z - pos.current.z) > 0.001 ||
+      Math.abs(s.y - pos.current.y) > 0.001 ||
       Math.abs(s.heading - heading) > 0.001 ||
       Number.isNaN(s.x);
 
     // 가만히 서 있으면 패킷이 0이다. changed 검사를 빼면 8명 방에서 초당 80패킷을 낭비한다
     if (changed && now - s.at >= MOVE_THROTTLE_MS) {
-      conn.sendMove(pos.current.x, pos.current.z, heading, anim);
+      conn.sendMove(pos.current.x, pos.current.z, pos.current.y, heading, anim);
       s.at = now;
       s.x = pos.current.x;
       s.z = pos.current.z;
+      s.y = pos.current.y;
       s.heading = heading;
       s.anim = anim;
     }
@@ -224,7 +268,13 @@ const RemoteAvatar = memo(function RemoteAvatar({
 }) {
   const group = useRef<THREE.Group>(null);
   const body = useRef<THREE.Group>(null);
-  const pose = useRef<Pose>({ x: player.pose.x, z: player.pose.z, heading: player.pose.heading });
+  const shadow = useRef<THREE.Mesh>(null);
+  const pose = useRef<Pose>({
+    x: player.pose.x,
+    z: player.pose.z,
+    y: player.pose.y,
+    heading: player.pose.heading,
+  });
   const color = useMemo(() => seatColor(player.seat), [player.seat]);
 
   const bubble = player.bubbleUntil > performance.now() ? player.bubbleText : '';
@@ -239,16 +289,28 @@ const RemoteAvatar = memo(function RemoteAvatar({
     if (sampleAt(player.buffer, now - INTERP_DELAY_MS, pose.current)) {
       player.pose.x = pose.current.x;
       player.pose.z = pose.current.z;
+      player.pose.y = pose.current.y;
       player.pose.heading = pose.current.heading;
     }
 
-    g.position.set(player.pose.x, 0, player.pose.z);
+    g.position.set(player.pose.x, player.pose.y, player.pose.z);
     g.rotation.y = player.pose.heading;
 
+    // 공중이면 걸음 흔들림을 멈춘다. 뛰는 중에 발을 구르면 우스꽝스럽다.
+    // 별도 anim 값을 만들지 않고 높이로만 판단한다 (protocol.ts의 ANIM_STATES 주석)
+    const airborne = player.pose.y > 0.02;
     if (body.current) {
-      const moving = player.anim === 'walk' || player.anim === 'run';
+      const moving = !airborne && (player.anim === 'walk' || player.anim === 'run');
       const rate = player.anim === 'run' ? 16 : 9;
       body.current.position.y = moving ? Math.abs(Math.sin(state.clock.elapsedTime * rate)) * 0.06 : 0;
+    }
+
+    // 그림자는 아바타를 따라 올라가지 않는다 — 늘 바닥에 붙어 있고 멀어질수록 작아진다.
+    // 이게 없으면 점프가 "위로 간 것"인지 "커진 것"인지 구분이 안 된다.
+    if (shadow.current) {
+      shadow.current.position.y = 0.02 - player.pose.y;
+      const s = Math.max(0.45, 1 - player.pose.y * 0.35);
+      shadow.current.scale.set(s, s, 1);
     }
   });
 
@@ -272,8 +334,8 @@ const RemoteAvatar = memo(function RemoteAvatar({
         </mesh>
       </group>
 
-      {/* 바닥 그림자 대용 — 실제 그림자는 8명이면 비싸다 */}
-      <mesh rotation-x={-Math.PI / 2} position={[0, 0.02, 0]}>
+      {/* 바닥 그림자 대용 — 실제 그림자는 8명이면 비싸다. 높이는 useFrame이 잡는다 */}
+      <mesh ref={shadow} rotation-x={-Math.PI / 2} position={[0, 0.02, 0]}>
         <circleGeometry args={[0.34, 20]} />
         <meshBasicMaterial color="#000000" transparent opacity={0.35} />
       </mesh>

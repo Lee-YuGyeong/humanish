@@ -27,6 +27,12 @@ export const WORLD = {
   maxX: 10.4,
   minZ: -13.4,
   maxZ: 5.4,
+  /**
+   * 발 높이 상한. 0이 바닥이고, 점프와 "가구 위에 올라섬"으로만 올라간다.
+   * 가장 높은 발판(장비 케이스 1.3) + 점프(≈1.05)보다 넉넉히 위에 둔다 —
+   * 여기까지가 정상이고, 넘어가면 버그이거나 위조다.
+   */
+  maxY: 4,
 } as const;
 
 /**
@@ -116,5 +122,27 @@ export const BOT_PERSIST_MS = 5_000;
 
 export const WALK_SPEED = 2.6;
 export const RUN_SPEED = 5.0;
-/** 아바타 눈높이. 카메라가 여기 붙는다. */
+/** 아바타 눈높이. 카메라가 **발 높이 + 이만큼**에 붙는다 (점프 중에는 같이 올라간다). */
 export const EYE_HEIGHT = 1.62;
+
+/**
+ * 점프. 최고점 = JUMP_SPEED² / (2·GRAVITY) ≈ 1.05m, 체공 ≈ 0.75초.
+ *
+ * 이 값을 낮추면 **소파 윗면(0.99)에 못 올라간다** — 가구 위에 서는 게 점프의
+ * 유일한 쓸모라 그 순간 점프는 그냥 화면 흔들기가 된다. 올리면 붕 뜬다.
+ * 중력만 키우면(예: 20) 최고점이 낮아지니 둘을 같이 본다.
+ */
+export const JUMP_SPEED = 5.6;
+export const GRAVITY = 15;
+/** 바닥에서 뛰었을 때의 최고점. 서버 검증·문서가 같이 읽는다. */
+export const JUMP_MAX_Y = (JUMP_SPEED * JUMP_SPEED) / (2 * GRAVITY);
+
+/**
+ * 봇이 한 번 뛰는 간격 (ms).
+ *
+ * ★ I1 — 봇에게 점프를 주지 않으면 "한 번도 안 뛴 아바타"가 곧 봇 후보 명단이 된다.
+ *   사람은 30분에 한 번이라도 뛴다. 그래서 봇도 뛰되, 채팅과 같은 이유로
+ *   사람보다 잦지 않게 잡는다 — 너무 자주 뛰면 그게 다시 표식이다.
+ */
+export const BOT_JUMP_MIN_MS = 20_000;
+export const BOT_JUMP_MAX_MS = 90_000;

@@ -3,16 +3,34 @@
  */
 
 import { describe, expect, it } from 'vitest';
-import { WORLD } from '@/lib/mp/constants';
+import { JUMP_MAX_Y, WORLD } from '@/lib/mp/constants';
 import { spawnFor } from '@/lib/mp/spawn';
 import { signTicket, timingSafeEqual, verifyTicket } from '@/lib/mp/ticket';
-import { isInsideWorld, parseMove, seatColor } from '@/lib/mp/validate';
+import { isInsideWorld, isValidHeight, parseMove, seatColor } from '@/lib/mp/validate';
 
 describe('parseMove', () => {
-  const base = { t: 'move', x: 0, z: 0, heading: 0, anim: 'walk' };
+  const base = { t: 'move', x: 0, z: 0, y: 0, heading: 0, anim: 'walk' };
 
   it('정상 메시지를 통과시킨다', () => {
-    expect(parseMove(base)).toEqual({ x: 0, z: 0, heading: 0, anim: 'walk' });
+    expect(parseMove(base)).toEqual({ x: 0, z: 0, y: 0, heading: 0, anim: 'walk' });
+  });
+
+  it('점프 높이를 그대로 통과시킨다', () => {
+    expect(parseMove({ ...base, y: JUMP_MAX_Y })).toMatchObject({ y: JUMP_MAX_Y });
+  });
+
+  it('y가 없으면 바닥으로 읽는다 (구 클라이언트)', () => {
+    // y는 나중에 붙은 필드다. 없다고 끊으면 구 탭이 열려 있는 사람이 통째로 멈춘다
+    const { y: _drop, ...noY } = base;
+    expect(parseMove(noY)).toEqual({ x: 0, z: 0, y: 0, heading: 0, anim: 'walk' });
+  });
+
+  it('말이 안 되는 높이를 막는다', () => {
+    // 천장 위를 떠다니는 아바타. 높이만 0으로 고쳐 통과시키면 원인을 못 찾는다
+    expect(parseMove({ ...base, y: 50 })).toBeNull();
+    expect(parseMove({ ...base, y: -5 })).toBeNull();
+    expect(parseMove({ ...base, y: Number.NaN })).toBeNull();
+    expect(parseMove({ ...base, y: '1' })).toBeNull();
   });
 
   it('NaN·Infinity를 막는다', () => {
@@ -44,6 +62,20 @@ describe('isInsideWorld', () => {
     // 클라 충돌 처리가 경계에서 조금 튀는 걸 매번 거절하면 그 사람만 화면이 멈춘다
     expect(isInsideWorld(WORLD.maxX + 1, 0)).toBe(true);
     expect(isInsideWorld(WORLD.maxX + 10, 0)).toBe(false);
+  });
+});
+
+describe('isValidHeight', () => {
+  it('바닥 · 점프 최고점 · 가장 높은 발판까지는 허용한다', () => {
+    expect(isValidHeight(0)).toBe(true);
+    expect(isValidHeight(JUMP_MAX_Y)).toBe(true);
+    // 장비 케이스(1.3) 위에서 뛴 높이. 여기까지가 정상이다
+    expect(isValidHeight(1.3 + JUMP_MAX_Y)).toBe(true);
+  });
+
+  it('점프로 닿을 수 없는 높이를 막는다', () => {
+    expect(isValidHeight(WORLD.maxY + 0.01)).toBe(false);
+    expect(isValidHeight(-1)).toBe(false);
   });
 });
 

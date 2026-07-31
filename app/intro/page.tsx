@@ -1,186 +1,439 @@
 /**
- * 인트로 — 게임 제목 · 역할 소개. 소유: 원상
+ * 인트로 — 게임 제목 · 역할 소개. 소유: 원상 (app/intro/)
  *
- * 문구는 실제 규칙(SPEC §5.1 · §8 · §15-3 · §17.6)을 따른다. **고정 숫자를 적지 않는다.**
- *  - 정원은 방마다 3~8에서 정한다 (§17.6). "8명"이라고 쓰면 3인 방에서 거짓말이 된다
- *  - 기계가 **몇 대인지는 공개한다** (§15-3-결정). 다만 방마다 다르고 0일 수도 있으므로
- *    "AI 1명"처럼 못 박지 않는다 — 사람이 정원을 다 채운 방에는 기계가 없다
- *  - **어느 자리가 기계인지는 끝까지 숨긴다** (I1). 시작할 때 전원의 자리가 다시 섞인다
- *  - 스파이만 수가 정해져 있다 — 사람이 2명 이상이면 그중 정확히 1명 (§8)
+ * ┌─ 시안과 달라진 점 ──────────────────────────────────────────────────────┐
+ * │ 화면(형광 초록 취조실 · Space Grotesk · 카드형 규칙)은 시안 그대로다.   │
+ * │ **문구만 실제 규칙에 맞췄다.** 시안에는 "5명 중 단 1명이 AI" 라고 적혀  │
+ * │ 있었는데 이 게임에서는 셋 다 틀린 말이다:                               │
+ * │   - 정원은 방마다 3~8이다 (§17.6). 5는 기본값일 뿐이다                  │
+ * │   - 기계는 여러 대일 수도, 한 대도 없을 수도 있다 (빈자리를 채운다)     │
+ * │   - 사람 중 한 명은 기계인 척하는 스파이다 (§8)                         │
+ * │ 첫 화면에 적힌 숫자가 방에 들어가서 틀리면 그 뒤 화면을 전부 의심하게   │
+ * │ 되므로, 고정 숫자 대신 범위와 기호(N · ?)로 적는다.                     │
+ * │                                                                        │
+ * │ 시안이 물고 있던 CDN 세 개(tailwind 런타임 · font-awesome · Google      │
+ * │ Fonts)는 전부 뺐다. 폰트는 next/font 가 빌드 때 받아 자체 호스팅하고,   │
+ * │ 아이콘은 인라인 SVG 다 — 배포본(Workers)에서 외부 요청이 나가지 않는다. │
+ * │                                                                        │
+ * │ 사진 두 장(스톡 이미지)도 뺐다. 위에서 떨어지는 취조등 하나를 CSS       │
+ * │ 그라디언트로 세웠다 (intro.module.css 의 .heroLight).                   │
+ * └────────────────────────────────────────────────────────────────────────┘
  *
- * 이미지는 public/roles/*.svg 자리표시자다. 실제 아트로 교체하면 된다.
- *
- * ★ 옛 씬의 레퍼런스 사진(public/textures/room-bg.png)을 더 이상 깔지 않는다.
- *   씬이 지하 라운지에서 창고 시네마로 바뀌었으므로 그 사진은 다른 방이다.
- *   대신 제목을 영사막 위에 띄운다 — 방에서 유일하게 밝은 면이 스크린이라
- *   타이틀 카드가 거기 걸리는 게 이 공간의 문법이다.
+ * 규칙 카드는 상단 "규칙" 을 눌렀을 때 열린다 → ./rules.tsx
  */
-import Link from "next/link";
-import {
-  AnimatedTestimonials,
-  type Testimonial,
-} from "@/components/ui/animated-testimonials";
 
-const roles: Testimonial[] = [
-  {
-    name: "진짜 AI",
-    designation: "몇 대인지는 알려준다. 어느 자리인지는 아니다",
-    quote:
-      "나는 사람이 아니다. 그리고 그게 들키면 진다. 이 방에 나 같은 것이 몇인지는 모두가 안다 — 그건 숨겨주지 않는다. 다만 **어느 자리인지**는 아무도 모른다. 시작하는 순간 모두의 자리가 다시 섞였기 때문이다. 나는 그 틈에 숨어 사람의 말버릇을 훔치면 된다. 마지막 투표에서 표를 한 장도 받지 않으면 승리.",
-    src: "/roles/ai.svg",
-  },
-  {
-    name: "스파이",
-    designation: "사람이 둘 이상이면 그중 정확히 한 명 · 사람이다. AI인 척한다",
-    quote:
-      "사람이면서 기계인 척한다. 이 방에 진짜 기계가 몇 대인지는 나도 안다 — 한 대도 없을 수도 있다. 그래서 더 위험하다. 기계가 없는 판이면 사람들이 찾는 건 결국 나 하나다. 너무 어설프면 연기가 들키고, 너무 완벽하면 진짜가 편해진다. 사람들이 나를 지목하는 순간 그들은 오답을 고른 것이다.",
-    src: "/roles/spy.svg",
-  },
-  {
-    name: "인간",
-    designation: "시민 — 스파이를 뺀 나머지 사람 전원 · 진짜를 찾는 쪽",
-    quote:
-      "질문을 던지고 답을 읽는다. 기계가 몇 대인지는 알려준다 — 그게 유일한 단서다. 여럿일 수도, 하나일 수도, 아예 없을 수도 있다. 없는 판이라면 지목할 기계 자체가 없다. 게다가 우리 중 한 명은 기계인 척 연기하는 중이다. 어설픈 연기와 진짜 비인간성을 구분해야 한다. 진짜 AI를 지목하면 승리, 사람을 지목하면 패배.",
-    src: "/roles/human.svg",
-  },
-  {
-    name: "승패",
-    designation: "마지막 투표 한 번으로 갈린다",
-    quote:
-      "사람을 찾는 쪽은 진짜 AI를 지목하면 이긴다. 스파이는 그 표가 자기에게 쏠리면 이긴다. 진짜 AI는 표를 한 장도 받지 않으면 이긴다. 스파이와 AI는 같은 편이지만 서로가 누군지 모르고, 애초에 AI가 한 대도 없는 판일 수도 있다.",
-    src: "/roles/victory.svg",
-  },
-  {
-    name: "한 판의 흐름",
-    designation: "공통 질문 2라운드 → 지목 질문 → 자유 채팅 → 투표",
-    quote:
-      "시작하는 순간 모두의 자리가 다시 섞인다 — 대기실에서 본 것은 여기서 소용이 없다. 같은 질문이 모두에게 동시에 던져진다. 60초씩 두 번, 답은 시간이 끝나야 한꺼번에 펼쳐진다. 다음은 지목 질문 30초, 한 사람만 답한다. 이어지는 자유 채팅 120초 동안 서로를 흔든다. 마지막 30초에 한 명을 지목한다. 정체는 그때 전부 공개된다.",
-    src: "/roles/flow.svg",
-  },
-];
+import Image from "next/image";
+import Link from "next/link";
+import { Space_Grotesk } from "next/font/google";
+import styles from "./intro.module.css";
+import { RulesProvider, RulesTrigger } from "./rules";
 
 /**
- * ★ 물음표의 자리가 바뀌었다 (SPEC §15-3-결정).
- *
- * 예전에는 "기계가 몇인가?"가 비밀이었다. 이제 수는 알려주고 **누구인가**만 숨긴다.
- * 그래서 MACHINES에는 N(시작하면 알려주는 값), WHO에 물음표가 온다.
- * 여기에 고정 숫자를 박지 않는다 — 정원이 방마다 다르고(§17.6) 0일 수도 있다.
+ * 라틴 전용이다. 한글은 layout.tsx 의 IBM Plex Sans KR 로 떨어진다
+ * (.root 의 font-family 순서 참고). 한글 글자가 없는 서체를 앞에 세우는 건
+ * 의도한 것이다 — 이 화면의 큰 글자는 대부분 라틴이다.
  */
-const composition = [
-  { label: "SEATS", value: "3–8", note: "방마다 정한다", tone: "text-bone" },
-  { label: "MACHINES", value: "N", note: "수는 알려준다", tone: "lit-tung" },
-  { label: "SPY", value: "1", note: "사람 중 한 명", tone: "lit-signal" },
-  { label: "WHO", value: "?", note: "이건 끝까지 모른다", tone: "text-dust" },
+const space = Space_Grotesk({
+  variable: "--font-space",
+  subsets: ["latin"],
+  weight: ["300", "400", "500", "600", "700"],
+  display: "swap",
+});
+
+/**
+ * 한 판이 짜이는 순서. 숫자표 대신 **자리를 그려서** 보여준다.
+ *
+ * ★ 예시는 5인 방이다. 정원은 방마다 3~8이라(§17.6) 그림 하나로 다 담을 수 없어
+ *   "예: 5명으로 만든 방"이라고 밝히고 하나만 그린다. 그림에 붙은 5는 규칙이 아니다.
+ */
+const HUMANS_IN_EXAMPLE = 5;
+
+/** 동그라미 한 개 = 자리 하나. `plus` 만 자리가 아니라 기호다 */
+type Seat = "human" | "ai" | "unknown" | "plus";
+
+const seatsOf = (n: number, kind: Seat): Seat[] => Array.from({ length: n }, () => kind);
+
+const setup: { index: string; title: string; body: string; seats: Seat[] }[] = [
+  {
+    index: "01",
+    title: "방을 만들고 사람이 모인다",
+    body: `정원은 3~8명 중에 고른다. ${HUMANS_IN_EXAMPLE}명으로 만들면 ${HUMANS_IN_EXAMPLE}자리가 생긴다.`,
+    seats: seatsOf(HUMANS_IN_EXAMPLE, "human"),
+  },
+  {
+    index: "02",
+    title: "시작하면 AI가 한 명 더 앉는다",
+    body: "방 인원 +1. 사람인 척하며 사람들 사이에 섞여 앉는다.",
+    seats: [...seatsOf(HUMANS_IN_EXAMPLE, "human"), "plus", "ai"],
+  },
+  {
+    index: "03",
+    title: "자리가 섞이고, 추리가 시작된다",
+    body: "누가 어디 앉았는지 아무도 모른다. 게다가 사람 중 한 명은 AI인 척 연기하는 중이다.",
+    seats: seatsOf(HUMANS_IN_EXAMPLE + 1, "unknown"),
+  },
 ];
 
-/** 한 판의 흐름. 진행 순서가 곧 시간축이라 가로 눈금으로 읽힌다 (SPEC §5.1) */
+/** 배역 — 한 줄씩. 승리 조건만 적는다 */
+const roles = [
+  { tag: "AI", name: "AI", line: "사람인 척한다. 표를 한 장도 받지 않으면 승리." },
+  { tag: "Actor", name: "연기자", line: "사람이면서 AI인 척한다. 표가 자기에게 쏠리면 승리." },
+  { tag: "Human", name: "사람", line: "질문하고 의심한다. 진짜 AI를 지목하면 승리." },
+];
+
+/** 한 판의 흐름. 자세한 내용은 규칙 카드에 있다 (§5.1) */
 const flow = [
-  { name: "공통 질문", sec: "60초 ×2" },
-  { name: "지목 질문", sec: "30초" },
-  { name: "자유 채팅", sec: "120초" },
-  { name: "투표", sec: "30초" },
+  { name: "공통 질문", sec: "60s ×2" },
+  { name: "지목 질문", sec: "30s" },
+  { name: "자유 채팅", sec: "120s" },
+  { name: "투표", sec: "30s" },
   { name: "공개", sec: "—" },
 ];
 
 export default function IntroPage() {
   return (
-    <main className="min-h-screen">
-      <div className="mx-auto max-w-5xl px-6 pb-24 pt-10">
-        {/* 개발용 링크다. 실제 진입 화면이라 눈에 덜 띄게 둔다 */}
-        <Link href="/" className="stencil text-[10px] text-ash transition-colors hover:text-tung">
-          ← manifest
-        </Link>
+    <RulesProvider>
+      <div className={`${space.variable} ${styles.root}`}>
+        <div aria-hidden className={styles.backdrop} />
+        <div aria-hidden className={styles.scanline} />
+        <div aria-hidden className={styles.noise} />
 
-        {/* ── 영사막에 걸린 타이틀 카드 ────────────────────────────────── */}
-        <section className="screen mt-6 overflow-hidden px-8 py-14 sm:px-14 sm:py-20">
-          {/* 위에서 때리는 스포트 세 갈래. 씬의 Spot ×3과 같은 자리다 */}
-          <div
-            aria-hidden
-            className="pointer-events-none absolute inset-0"
-            style={{
-              backgroundImage:
-                "radial-gradient(38% 60% at 22% -10%, rgba(255,227,189,.09), transparent 70%)," +
-                "radial-gradient(38% 60% at 50% -14%, rgba(255,227,189,.11), transparent 70%)," +
-                "radial-gradient(38% 60% at 78% -10%, rgba(255,227,189,.09), transparent 70%)",
-            }}
-          />
+        {/* ── 내비 ──────────────────────────────────────────────────────── */}
+        {/* 스크롤하면 내용이 내비 밑을 지난다. 흐림을 얹어 글자끼리 겹쳐 읽히지 않게 한다 */}
+        <nav className="fixed left-0 top-0 z-50 flex w-full items-center justify-between bg-gradient-to-b from-[#080808f2] to-transparent px-6 py-6 backdrop-blur-[6px] sm:px-10 lg:px-16">
+          <Link
+            href="#hero"
+            className="text-[0.95rem] font-bold uppercase tracking-[0.15em] text-[#e8e8e8] no-underline"
+          >
+            Who is AI
+          </Link>
+          <div className="flex items-center gap-6 sm:gap-10">
+            <a href="#about" className={`${styles.navLink} hidden sm:inline`}>
+              게임 소개
+            </a>
+            <a href="#roles" className={`${styles.navLink} hidden sm:inline`}>
+              배역
+            </a>
+            {/* ★ 규칙은 링크가 아니라 버튼이다 — 눌러야 카드가 열린다 */}
+            <RulesTrigger className={styles.navLink}>규칙</RulesTrigger>
+            <span className="hidden items-center gap-2 md:flex">
+              <span aria-hidden className={styles.glowDot} />
+              <span className="text-[0.6rem] uppercase tracking-[0.25em] text-[#00ff66]">Live</span>
+            </span>
+          </div>
+        </nav>
 
-          <div className="relative">
-            <p className="stencil text-[10px] text-signal/80">now showing</p>
+        {/* ── 히어로 ────────────────────────────────────────────────────── */}
+        <section
+          id="hero"
+          // 세로 900px 노트북에서도 버튼이 'scroll' 표시와 겹치지 않게 아래를 비워 둔다
+          className="relative flex min-h-screen flex-col items-center justify-center overflow-hidden px-6 pb-28 pt-32 text-center"
+        >
+          <div aria-hidden className={styles.heroBg} />
+          <div aria-hidden className={styles.heroLight} />
 
-            <h1 className="engraved mt-5 text-[clamp(3rem,11vw,7.5rem)] font-black leading-[0.85]">
-              기계인 척
-            </h1>
-
-            {/*
-              ★ §15-3 이전에는 "빈자리를 AI가 채운다"조차 쓰지 않았다. 이제는 쓴다 —
-                수를 공개하기로 했고, 어느 자리인지는 시작할 때 전원을 다시 섞어서 지킨다.
-                대신 **고정 숫자를 적지 않는다.** 정원이 방마다 다르고 0일 수도 있다.
-            */}
-            <p className="mt-8 max-w-lg text-[17px] leading-[1.75] text-dust">
-              셋에서 여덟. 자리 수는 방을 만들 때 정한다.
-              <br />
-              빈자리는 기계가 채운다. <span className="text-bone">몇 대인지는 알려준다</span> —
-              한 대도 없을 수도 있다.
-              <br />
-              <span className="text-bone">어느 자리인지는 끝까지 알려주지 않는다.</span>
-              <br />
-              그리고 사람 중 한 명은{" "}
-              <span className="lit-signal font-semibold">AI인 척해야 한다.</span>
+          <div className="relative z-10 max-w-3xl">
+            <p className={`${styles.fadeUp} mb-8`}>
+              <span className={styles.tag}>Social Deduction Game</span>
             </p>
 
-            <div className="mt-12 flex flex-wrap items-center gap-x-8 gap-y-4">
-              <Link
-                href="/main"
-                className="case case-live group inline-flex items-center gap-4 px-9 py-4"
-              >
-                <span className="stencil text-xs text-flare">입장</span>
-                <span
-                  aria-hidden
-                  className="h-1.5 w-1.5 rounded-full bg-signal shadow-[0_0_10px_2px] shadow-signal/70 transition-transform group-hover:scale-125"
-                />
+            <h1
+              className={`${styles.fadeUp} ${styles.d1} mb-9 text-[clamp(3.2rem,9.5vw,9rem)] font-bold leading-[0.88] tracking-[-0.03em]`}
+            >
+              Who is
+              <br />
+              <span className="text-[#00ff66]">
+                AI?<span className={styles.blink}>_</span>
+              </span>
+            </h1>
+
+            <p
+              className={`${styles.fadeUp} ${styles.d2} mx-auto mb-11 max-w-md text-[0.95rem] font-light leading-[1.95] text-[#777]`}
+            >
+              사람들 사이에 <span className="text-[#e8e8e8]">AI가 한 명</span> 섞여 있다.
+              <br />
+              사람 중 한 명은 <span className="text-[#e8e8e8]">AI인 척 연기한다.</span>
+              <br />
+              <span className="font-semibold text-[#00ff66]">진짜 AI를 찾아내면 이긴다.</span>
+            </p>
+
+            <div className={`${styles.fadeUp} ${styles.d3} flex flex-wrap justify-center gap-4`}>
+              <Link href="/main" className={styles.btnPrimary}>
+                게임 접속하기
+                <span aria-hidden className="h-1.5 w-1.5 rounded-full bg-[#080808]" />
               </Link>
-              <p className="max-w-xs text-xs leading-relaxed text-grime">
-                {/* 봇을 채우는 "시점"은 여전히 시작 버튼이다 (§15-3). 문구로 못 박지 않는다 */}
-                역할은 시작할 때 무작위로 배정된다. 아무도 남의 역할을 모른다.
+              <RulesTrigger className={styles.btnGhost}>게임 규칙 보기</RulesTrigger>
+            </div>
+          </div>
+
+          <div
+            aria-hidden
+            className="absolute bottom-10 left-1/2 z-10 flex -translate-x-1/2 flex-col items-center gap-2 opacity-30"
+          >
+            <span className="text-[0.55rem] uppercase tracking-[0.4em]">Scroll</span>
+            <svg width="10" height="7" viewBox="0 0 10 7">
+              <path
+                d="M1 1l4 4 4-4"
+                stroke="currentColor"
+                strokeWidth="1.2"
+                fill="none"
+                strokeLinecap="round"
+              />
+            </svg>
+          </div>
+        </section>
+
+        {/* ── 001 게임 소개 ─────────────────────────────────────────────── */}
+        <section id="about" className="mx-auto max-w-6xl scroll-mt-24 px-6 py-16 sm:px-10 lg:py-24">
+          <div className="grid items-center gap-20 lg:grid-cols-2 lg:gap-28">
+            <div>
+              <span className={`${styles.numberLabel} block`}>001 — 게임 소개</span>
+              <h2 className="mt-8 text-[clamp(2.2rem,5vw,3.2rem)] font-bold leading-[1.1] tracking-[-0.03em]">
+                인간인 척하는
+                <br />
+                기계를 찾아라.
+              </h2>
+
+              {/*
+                ★ 짧게 쓴다. 시안의 소개 문단은 "참가자 5명 중 1명의 AI" 였고, 그걸
+                  고치겠다고 규칙을 다 풀어 썼더니 아무도 안 읽을 길이가 됐다.
+                  세 줄이면 이 게임은 설명된다: 섞인 AI · 흉내 내는 사람 · 찾아내면 승리.
+                  나머지(시간·순서)는 '규칙' 카드에 있다.
+              */}
+              <div className="mt-10 flex flex-col gap-5 text-[1rem] font-light leading-[1.9] text-[#777]">
+                <p>
+                  사람들 사이에 <span className="text-[#e8e8e8]">AI가 한 명</span> 섞여 앉는다. AI는
+                  사람인 척한다.
+                </p>
+                <p>
+                  그리고 사람 중 한 명은 반대로{" "}
+                  <span className="text-[#e8e8e8]">AI인 척 연기한다.</span>
+                </p>
+                <p>
+                  사람 · 연기자 · 진짜 AI —{" "}
+                  <span className="text-[#00ff66]">이 셋 중에서 진짜 AI를 찾아내면 이긴다.</span>
+                </p>
+              </div>
+
+              <div className="mt-12 flex flex-col gap-6">
+                <div className="flex items-start gap-5">
+                  <span aria-hidden className="mt-1 h-10 w-px shrink-0 bg-[rgba(0,255,102,0.3)]" />
+                  <div>
+                    <div className="mb-1.5 text-[0.68rem] uppercase tracking-[0.2em] text-[#00ff66]">
+                      One Of Us Is Acting
+                    </div>
+                    <p className="text-[0.8rem] leading-[1.8] text-[#555]">
+                      연기자는 AI처럼 말하려 한다. &lsquo;AI 같은 답&rsquo;이 곧 함정이다.
+                    </p>
+                  </div>
+                </div>
+                <div className="flex items-start gap-5">
+                  <span aria-hidden className="mt-1 h-10 w-px shrink-0 bg-[rgba(0,255,102,0.3)]" />
+                  <div>
+                    <div className="mb-1.5 text-[0.68rem] uppercase tracking-[0.2em] text-[#00ff66]">
+                      Human Imperfection
+                    </div>
+                    <p className="text-[0.8rem] leading-[1.8] text-[#555]">
+                      감정, 모순, 즉흥성이 무기다. 너무 매끄러운 문장은 의심을 산다.
+                    </p>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/*
+              시안의 인물 사진 자리. 원본의 회색 배경은 지우고 인물만 남겼다 —
+              틀도 배경색도 주지 않는다 (styles.figure 주석 참고).
+            */}
+            <div className="relative">
+              <div className={styles.figure}>
+                <Image
+                  src="/intro/machine.webp"
+                  alt="어둠 속에서 이쪽을 보고 있는 기계"
+                  width={762}
+                  height={779}
+                  className={styles.figureImg}
+                  priority={false}
+                />
+                <div aria-hidden className={styles.figureVeil} />
+              </div>
+
+              {/*
+                시안에는 "1,204 agents online" 이 있었다. 지어낸 숫자는 넣지 않는다 —
+                접속자 수를 세는 곳이 아직 없다. 대신 이 방의 구성을 같은 자리에 놓는다.
+              */}
+              <div className={styles.figureBadge}>
+                <div className="mb-2 text-[0.6rem] uppercase tracking-[0.3em] text-[#00ff66]">
+                  In This Room
+                </div>
+                <div className="text-3xl font-bold tracking-[-0.03em]">AI + 1</div>
+                <div className="mt-1 text-[0.65rem] text-[#555]">누구인지는 끝까지 모른다</div>
+              </div>
+            </div>
+          </div>
+
+          {/*
+            ★ 여기 있던 숫자표(SEATS 3–8 / AI +1 / ACTOR 1 / WHO ?)를 걷어냈다.
+              규칙을 이미 아는 사람에게만 읽히는 표였다. 처음 온 사람에게 필요한 건
+              "몇 명인데 AI가 몇이지?"가 아니라 **자리가 어떻게 채워지는가**다.
+              그래서 자리를 동그라미로 그려서 세 걸음으로 보여준다.
+          */}
+          <div className="mt-24 overflow-hidden rounded-3xl border border-white/[0.07]">
+            <div className="flex flex-wrap items-baseline justify-between gap-3 border-b border-white/[0.06] px-7 py-5">
+              <p className="text-[0.6rem] uppercase tracking-[0.3em] text-[#00ff66]">How It Works</p>
+              <p className="text-[0.7rem] text-[#555]">
+                예: 정원을 {HUMANS_IN_EXAMPLE}명으로 만든 방
               </p>
+            </div>
+
+            {setup.map((s) => (
+              <div
+                key={s.index}
+                className="flex flex-col gap-6 border-b border-white/[0.06] px-7 py-8 last:border-b-0 lg:flex-row lg:items-center lg:gap-10"
+              >
+                <span className="text-[0.7rem] tracking-[0.2em] text-[#3d3d3d] lg:w-10">
+                  {s.index}
+                </span>
+                <div className="lg:flex-1">
+                  <p className="text-[1.05rem] font-semibold tracking-tight text-[#e8e8e8]">
+                    {s.title}
+                  </p>
+                  <p className="mt-2 text-[0.82rem] font-light leading-[1.8] text-[#666]">
+                    {s.body}
+                  </p>
+                </div>
+                <div className={styles.seatRow}>
+                  {s.seats.map((kind, i) =>
+                    kind === "plus" ? (
+                      <span key={i} aria-hidden className={styles.seatOp}>
+                        +
+                      </span>
+                    ) : (
+                      <span
+                        key={i}
+                        className={`${styles.seat} ${
+                          kind === "ai"
+                            ? styles.seatAi
+                            : kind === "unknown"
+                              ? styles.seatUnknown
+                              : ""
+                        }`}
+                      >
+                        {kind === "ai" ? "AI" : kind === "unknown" ? "?" : "사람"}
+                      </span>
+                    ),
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+
+          {/* 그래서 어떻게 이기나 — 위 세 걸음의 결론 한 줄 */}
+          <p className="mt-8 text-center text-[0.9rem] font-light leading-[1.9] text-[#666]">
+            <span className="text-[#00ff66]">진짜 AI를 지목하면 사람들의 승리.</span> 연기자에게
+            표가 몰리면 연기자의 승리다.
+          </p>
+
+          <div className="mt-14 overflow-hidden rounded-3xl border border-white/[0.07] px-7 py-8">
+            <div className="flex flex-wrap items-baseline justify-between gap-3">
+              <p className="text-[0.6rem] uppercase tracking-[0.3em] text-[#00ff66]">Sequence</p>
+              <p className="text-[0.7rem] text-[#555]">시작하면 이 순서로 흐른다</p>
+            </div>
+            <ol className="mt-5 flex flex-wrap gap-x-10 gap-y-4">
+              {flow.map((f, i) => (
+                <li key={f.name} className="flex items-baseline gap-2">
+                  <span className="text-[0.6rem] text-[#3d3d3d]">{`0${i + 1}`}</span>
+                  <span>
+                    <span className="block text-[0.82rem] font-medium text-[#e8e8e8]">{f.name}</span>
+                    <span className="block text-[0.65rem] tracking-wider text-[#00ff66]/70">
+                      {f.sec}
+                    </span>
+                  </span>
+                </li>
+              ))}
+            </ol>
+          </div>
+        </section>
+
+        {/* ── 002 배역 ──────────────────────────────────────────────────── */}
+        <section
+          id="roles"
+          className="scroll-mt-24 border-t border-white/5 px-6 py-14 sm:px-10 lg:py-24"
+        >
+          <div className="mx-auto max-w-6xl">
+            <div className="flex flex-wrap items-end justify-between gap-8">
+              <div>
+                <span className={`${styles.numberLabel} block`}>002 — 배역</span>
+                <h2 className="mt-6 text-[clamp(2.2rem,5vw,3.2rem)] font-bold leading-[1.1] tracking-[-0.03em]">
+                  누구도
+                  <br />
+                  남의 역할을 모른다.
+                </h2>
+              </div>
+              <p className="max-w-[280px] text-[0.8rem] font-light leading-[1.9] text-[#444] sm:text-right">
+                역할은 시작할 때 무작위로 배정된다.
+                <br />
+                진행 순서는 상단 &lsquo;규칙&rsquo;에 있다.
+              </p>
+            </div>
+
+            <div className="mt-16 grid gap-5 md:grid-cols-3">
+              {roles.map((role) => (
+                <article key={role.name} className={styles.ruleCard}>
+                  <span className={`${styles.tag} ${styles.tagLive}`}>{role.tag}</span>
+                  <h3 className="text-2xl font-semibold tracking-tight">{role.name}</h3>
+                  <p className="text-[0.83rem] font-light leading-[1.95] text-[#6a6a6a]">
+                    {role.line}
+                  </p>
+                </article>
+              ))}
+            </div>
+
+            <div className="mt-10 flex justify-center">
+              <RulesTrigger className={styles.btnGhost}>규칙 카드 열기</RulesTrigger>
             </div>
           </div>
         </section>
 
-        {/* ── 구성 — 케이스에 붙은 물품표 ──────────────────────────────── */}
-        <ul className="mt-px grid grid-cols-2 gap-px sm:grid-cols-4">
-          {composition.map((c) => (
-            <li key={c.label} className="case px-5 py-4">
-              <p className="stencil text-[9px] text-ash">{c.label}</p>
-              <p className={`readout mt-2 text-2xl ${c.tone}`}>{c.value}</p>
-              <p className="mt-1 text-[11px] text-grime">{c.note}</p>
-            </li>
-          ))}
-        </ul>
-
-        {/* ── 진행 순서 — 시간축 ───────────────────────────────────────── */}
-        <div className="mt-16">
-          <p className="stencil text-[10px] text-grime">한 판의 흐름</p>
-          <ol className="mt-4 flex flex-wrap items-stretch gap-px">
-            {flow.map((f, i) => (
-              <li key={f.name} className="case flex min-w-32 flex-1 items-center gap-3 px-4 py-3">
-                <span className="readout text-[11px] text-ash">{i + 1}</span>
-                <span>
-                  <span className="block text-[13px] font-semibold text-bone">{f.name}</span>
-                  <span className="readout block text-[10px] text-tung/60">{f.sec}</span>
-                </span>
-              </li>
-            ))}
-          </ol>
-        </div>
-
-        {/* ── 역할 ─────────────────────────────────────────────────────── */}
-        <section className="mt-16">
-          <p className="stencil text-[10px] text-grime">배역</p>
-          <AnimatedTestimonials testimonials={roles} autoplay />
+        {/* ── CTA ───────────────────────────────────────────────────────── */}
+        <section className="relative overflow-hidden px-6 py-20 text-center sm:px-10 lg:py-28">
+          <span aria-hidden className={styles.ghostType}>
+            AI
+          </span>
+          <div className="relative z-10">
+            <div className="mb-12 flex items-center justify-center gap-3">
+              <span aria-hidden className={styles.glowDot} />
+              <span className="text-[0.6rem] uppercase tracking-[0.4em] text-[#00ff66]">
+                서버 접속 가능
+              </span>
+            </div>
+            <h2 className="mb-14 text-[clamp(2.6rem,8vw,7rem)] font-bold leading-[0.95] tracking-[-0.04em]">
+              당신은
+              <br />
+              찾을 수 있습니까?
+            </h2>
+            <Link href="/main" className={styles.btnPrimary} style={{ padding: "1.3rem 3.4rem" }}>
+              지금 게임 시작하기
+            </Link>
+          </div>
         </section>
+
+        {/* ── 바닥 ──────────────────────────────────────────────────────── */}
+        <footer className="flex flex-wrap items-center justify-between gap-6 border-t border-white/5 px-6 py-12 sm:px-10">
+          <span className="text-[0.62rem] uppercase tracking-[0.25em] text-[#333]">
+            Who is AI? — 사람인 척
+          </span>
+          <div className="flex gap-8">
+            {/* 개발용 작업 보드로 돌아가는 길. 눈에 덜 띄게 둔다 */}
+            <Link href="/" className={styles.navLink}>
+              Manifest
+            </Link>
+            <Link href="/world" className={styles.navLink}>
+              World
+            </Link>
+          </div>
+        </footer>
       </div>
-    </main>
+    </RulesProvider>
   );
 }

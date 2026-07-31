@@ -50,7 +50,16 @@ interface WorldState {
   applyWelcome(selfId: string, players: PlayerSnapshot[], now: number): void;
   addPlayer(snap: PlayerSnapshot, now: number): void;
   removePlayer(id: string): void;
-  applyMove(id: string, x: number, z: number, heading: number, anim: AnimState, now: number): void;
+  applyMove(
+    id: string,
+    x: number,
+    z: number,
+    /** 발 높이. 0이 바닥이다 */
+    y: number,
+    heading: number,
+    anim: AnimState,
+    now: number,
+  ): void;
   applyChat(id: string, nickname: string, text: string, ts: number, now: number): void;
   /** 방을 옮길 때 반드시 부른다. 안 지우면 이전 방 상태가 새 방에 새어 나온다 */
   reset(): void;
@@ -94,10 +103,10 @@ export const useWorldStore = create<WorldState>((set, get) => ({
   },
 
   // ★ set을 부르지 않는다. 10Hz × N명이라 여기서 리렌더가 나면 화면이 죽는다
-  applyMove: (id, x, z, heading, anim, now) => {
+  applyMove: (id, x, z, y, heading, anim, now) => {
     const player = get().players.get(id);
     if (!player) return;
-    pushMove(player, x, z, heading, anim, now);
+    pushMove(player, x, z, y, heading, anim, now);
   },
 
   applyChat: (id, nickname, text, ts, now) => {

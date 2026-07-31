@@ -78,8 +78,8 @@ export default function WorldPage() {
         useWorldStore.getState().applyWelcome(selfId, players, performance.now()),
       onJoined: (player) => useWorldStore.getState().addPlayer(player, performance.now()),
       onLeft: (id) => useWorldStore.getState().removePlayer(id),
-      onMoved: (id, x, z, heading, anim) =>
-        useWorldStore.getState().applyMove(id, x, z, heading, anim, performance.now()),
+      onMoved: (id, x, z, y, heading, anim) =>
+        useWorldStore.getState().applyMove(id, x, z, y, heading, anim, performance.now()),
       onChat: (id, nickname, text, ts) =>
         useWorldStore.getState().applyChat(id, nickname, text, ts, performance.now()),
       onError: (codeText) =>
@@ -252,7 +252,9 @@ export default function WorldPage() {
               className="max-w-md flex-1 rounded-full bg-black/60 px-4 py-2 text-[13px] text-neutral-100 ring-1 ring-white/15 outline-none backdrop-blur focus:ring-amber-500/50"
             />
             <p className="rounded-full bg-black/40 px-3 py-1.5 text-[11px] text-neutral-400 backdrop-blur">
-              {locked ? 'WASD 이동 · Shift 달리기 · ESC 마우스 풀기' : '화면을 클릭하면 걸어다닙니다'}
+              {locked
+                ? 'WASD 이동 · Shift 달리기 · Space 점프 · ESC 마우스 풀기'
+                : '화면을 클릭하면 걸어다닙니다'}
             </p>
           </div>
         </div>

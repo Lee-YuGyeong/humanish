@@ -930,3 +930,26 @@ export function resolveColliders(p: THREE.Vector3, feetY: number) {
     p.z = c.z - lx * sin + lz * cos;
   }
 }
+
+/**
+ * (x, z)에서 발이 닿을 높이. 바닥은 0, 가구 위에 서 있으면 그 윗면이다.
+ *
+ * `fromY`는 **판정 직전의 발 높이**다. 이보다 높은 윗면은 후보에서 뺀다 —
+ * 안 그러면 소파 옆을 걷다가 발이 갑자기 소파 위로 순간이동한다.
+ * 대신 조금(0.02) 여유를 둬서, 착지 프레임에서 살짝 파고든 발이 윗면을 놓치지 않게 한다.
+ *
+ * 발판 위에서 걸어 나가면 여기 값이 0으로 떨어지고, 호출자(LocalRig)가 그걸 보고
+ * 낙하로 넘어간다. 낙하 판정을 여기 두지 않는 이유는 이 함수를 순수하게 두기 위해서다.
+ */
+export function groundHeightAt(x: number, z: number, fromY: number): number {
+  let ground = 0;
+  for (const c of COLLIDERS) {
+    if (c.top > fromY + 0.02) continue; // 아직 이 윗면보다 아래에 있다
+    if (c.top <= ground) continue;
+    const [lx, lz] = toLocal(c, x, z);
+    // 딛는 판정은 밀어내기(PLAYER_R)보다 좁게 본다. 넓게 잡으면 가구 옆 허공에 선다
+    if (Math.abs(lx) > c.hw || Math.abs(lz) > c.hd) continue;
+    ground = c.top;
+  }
+  return ground;
+}
