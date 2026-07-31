@@ -16,30 +16,12 @@
  * DB(plpgsql)가 부를 수 없어서 reveal 훅에서 빼둔 것이다 (SPEC §17.2).
  */
 
-import { calcScores } from '@/lib/game/rules';
+import { SCORE_RULE, calcScores, humanVotesReceived } from '@/lib/game/rules';
 import type { Role } from '@/lib/game/types';
-import { SCORE_RULE, fallbackCalcScores, humanVotesReceived } from '@/lib/server/fallback-rules';
 import { getServiceClient } from '@/lib/server/supabase';
 import { ApiError, apiError, requirePlayer } from '@/lib/server/auth';
 
 export const dynamic = 'force-dynamic';
-
-/**
- * ★ 폴백과 채점 문구(SCORE_RULE)는 lib/server/fallback-rules.ts 에 있다.
- *   라우트 파일은 GET·POST 말고는 export할 수 없다 (Next 계약).
- *   B가 rules.ts를 구현하면 그 파일과 아래 catch를 같이 지운다.
- */
-function resolveScores(
-  votes: { voterId: string; targetId: string }[],
-  roles: Record<string, Role>,
-): Record<string, number> {
-  try {
-    return calcScores(votes, roles);
-  } catch (e) {
-    if (!(e instanceof Error) || !e.message.includes('미구현')) throw e;
-    return fallbackCalcScores(votes, roles);
-  }
-}
 
 export async function GET(req: Request): Promise<Response> {
   try {
@@ -72,7 +54,7 @@ export async function GET(req: Request): Promise<Response> {
     for (const r of roleRows ?? []) roles[r.player_id] = r.role as Role;
 
     const votes = (voteRows ?? []).map((v) => ({ voterId: v.voter_id, targetId: v.target_id }));
-    const scores = resolveScores(votes, roles);
+    const scores = calcScores(votes, roles);
 
     const received: Record<string, number> = {};
     for (const v of votes) received[v.targetId] = (received[v.targetId] ?? 0) + 1;

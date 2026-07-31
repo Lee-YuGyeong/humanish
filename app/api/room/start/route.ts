@@ -13,8 +13,6 @@
  */
 
 import { assignRoles } from '@/lib/game/rules';
-import { fallbackAssignRoles } from '@/lib/server/fallback-rules';
-import type { Role } from '@/lib/game/types';
 import { advancePhase } from '@/lib/server/phase';
 import { MIN_HUMANS_TO_START, fillWithBots, shuffleSeats } from '@/lib/server/room';
 import { getServiceClient } from '@/lib/server/supabase';
@@ -22,20 +20,6 @@ import { ApiError, apiError, readJson, requirePlayer } from '@/lib/server/auth';
 
 interface Body {
   room_id?: string;
-}
-
-/**
- * ★ 폴백은 lib/server/fallback-rules.ts 에 있다. 라우트 파일은 GET·POST 말고는
- *   export할 수 없어서(Next 계약) 여기 두고 검사할 수가 없다.
- *   B가 rules.ts를 구현하면 그 파일과 아래 catch를 같이 지운다.
- */
-function resolveRoles(isBotBySeat: boolean[], seed: number): Role[] {
-  try {
-    return assignRoles(isBotBySeat, seed);
-  } catch (e) {
-    if (!(e instanceof Error) || !e.message.includes('미구현')) throw e;
-    return fallbackAssignRoles(isBotBySeat, seed);
-  }
 }
 
 export async function POST(req: Request): Promise<Response> {
@@ -95,7 +79,7 @@ export async function POST(req: Request): Promise<Response> {
     if (playersErr) throw new ApiError(500, `참가자 조회 실패: ${playersErr.message}`);
 
     const seed = Math.floor(Math.random() * 2 ** 31);
-    const roles = resolveRoles(
+    const roles = assignRoles(
       players.map((p) => p.is_bot as boolean),
       seed,
     );
