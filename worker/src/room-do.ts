@@ -25,6 +25,7 @@
 import {
   BOT_PERSIST_MS,
   BOT_TICK_MS,
+  CHAT_HISTORY_MAX,
   CHAT_MAX_LEN,
   CHAT_MIN_INTERVAL_MS,
   MAX_GAME_MESSAGE_LEN,
@@ -41,14 +42,21 @@ import {
   FALLBACK_LINES,
   botSnapshot,
   createBot,
+  pickLine,
+  pickResponder,
+  readDelayMs,
+  replaceSpeech,
+  scheduleSpeech,
   shouldChat,
   spawnFor,
   stepBot,
+  takeSpeech,
   toPose,
   type BotPose,
   type BotState,
 } from './bots';
 import { fetchRoomMeta, type RoomMeta } from './room-meta';
+import { fetchAgentLines, type ChatLine } from './world-agent';
 import type { Env } from './bindings';
 
 const KEY_META = 'meta';
@@ -58,8 +66,20 @@ const KEY_EMPTY_AT = 'emptyAt';
 /** 방 메타(좌석 명단) 캐시 수명. 이보다 자주 사람이 들어오면 pid 미발견 시 강제 갱신된다. */
 const META_TTL_MS = 60_000;
 
+/**
+ * 이만큼도 안 남았으면 LLM을 아예 부르지 않는다 (ms).
+ * 왕복이 이 안에 끝날 리 없으므로, 부르면 남의 지갑만 쓰고 결과는 버려진다.
+ */
+const MIN_AGENT_BUDGET_MS = 900;
+
 interface CachedMeta extends RoomMeta {
   fetchedAt: number;
+  /**
+   * 이 DO가 맡은 방. HTTP 경로에서만 알 수 있는 값이라 여기 같이 구워 둔다 —
+   * evict 뒤에는 fetch()를 다시 안 타고 webSocketMessage로 되살아나므로,
+   * 안 구워 두면 그 뒤로 봇 반응(upgradeSpeech)이 조용히 멈춘다.
+   */
+  roomId: string;
 }
 
 export class RoomDO {
@@ -72,6 +92,14 @@ export class RoomDO {
   private lastChatAt = new WeakMap<WebSocket, number>();
   /** 소켓별 마지막 이동 시각. 위와 같은 이유로 메모리에만 둔다. */
   private lastMoveAt = new WeakMap<WebSocket, number>();
+  /**
+   * 최근 채팅. 사람·봇 것을 같이 담는다 (id로 나중에 가른다).
+   *
+   * 월드 채팅은 저장하지 않으므로(SPEC §6.1의 messages와 별개다) 이게 유일한 기록이고,
+   * evict로 날아가도 무해하다 — 비면 "방금 나온 문구 피하기"만 못 할 뿐이다.
+   * LLM이 붙으면(3단계) 여기가 그대로 대화 맥락이 된다.
+   */
+  private chatLog: { id: string; nickname: string; text: string }[] = [];
 
   constructor(
     private readonly ctx: DurableObjectState,
@@ -277,6 +305,11 @@ export class RoomDO {
         // 닉네임·시각은 서버 값만 쓴다. 본인도 포함해 보낸다 —
         // 낙관적 로컬 에코를 하면 내 화면과 남의 화면에서 순서가 달라진다.
         this.broadcast({ t: 'chat', id: snap.id, nickname: snap.nickname, text, ts: now });
+        this.rememberChat(snap.id, snap.nickname, text);
+
+        // 봇 하나가 대꾸할 수도 있다. **사람 소켓의 채팅에서만 부른다** —
+        // 봇 발화에서도 부르면 봇끼리 끝없이 주고받는다.
+        this.reactToHuman(now);
         return;
       }
 
@@ -383,6 +416,15 @@ export class RoomDO {
     }
 
     for (const bot of bots) {
+      // ① 말할 때가 됐으면 **예약만** 한다. 여기서 바로 broadcast하면 걸어가면서
+      //    말풍선이 뜬다 — 사람은 타이핑 중 발이 묶이므로 그게 곧 봇 표식이다 (I1).
+      //    stepBot보다 먼저 걸어야 같은 틱에 발이 묶인다.
+      //    스스로 꺼내는 말이라 읽는 시간은 없다 — 읽을 게 없으니 바로 친다.
+      if (shouldChat(bot, now)) {
+        scheduleSpeech(bot, pickLine(this.botLines(), this.recentTexts()), now);
+      }
+
+      // ② 굴린다. 예약이 걸려 있으면 stepBot이 세워 둔다.
       if (stepBot(bot, now, dt)) {
         this.broadcast({
           t: 'player_moved',
@@ -394,15 +436,18 @@ export class RoomDO {
           anim: bot.anim,
         });
       }
-      if (shouldChat(bot, now)) {
-        const lines = this.meta?.botLines?.length ? this.meta.botLines : FALLBACK_LINES;
+
+      // ③ 서 있는 시간이 끝났으면 그때 말한다. 이 틱의 stepBot은 이미 idle로 굴렸다.
+      const said = takeSpeech(bot, now);
+      if (said !== null) {
         this.broadcast({
           t: 'chat',
           id: bot.id,
           nickname: bot.nickname,
-          text: lines[Math.floor(Math.random() * lines.length)],
+          text: said,
           ts: now,
         });
+        this.rememberChat(bot.id, bot.nickname, said);
       }
     }
 
@@ -410,6 +455,84 @@ export class RoomDO {
       this.lastPersistAt = now;
       void this.persistBots();
     }
+  }
+
+  /**
+   * 사람이 한마디 했다 — 봇 하나가 대꾸할 수도 있다 (안 할 수도 있다).
+   * 고르는 규칙과 그 이유는 bots.ts의 pickResponder에 있다.
+   */
+  private reactToHuman(now: number): void {
+    const bots = this.bots;
+    if (!bots || bots.length === 0) return;
+
+    const bot = pickResponder(bots, now);
+    if (!bot) return;
+
+    // 읽는 시간을 준다 — 0이면 사람이 말한 그 순간 멈추는 아바타가 생긴다 (I1).
+    scheduleSpeech(bot, pickLine(this.botLines(), this.recentTexts()), now, readDelayMs());
+
+    // 풀 문구는 이미 예약됐다. LLM은 제때 오면 그 문구만 갈아끼운다 — 기다리지 않는다.
+    void this.upgradeSpeech(bot, bot.speechSeq);
+  }
+
+  /**
+   * 예약된 풀 문구를 LLM 반응으로 덮어쓴다 (SPEC §12.3의 폴백 패턴).
+   *
+   * ★ speakAt은 건드리지 않는다 — 발화 타이밍이 LLM 성공/실패와 무관해야 한다 (I1).
+   *   실패·지연이면 아무 일도 일어나지 않고 풀 문구가 그대로 나간다.
+   *
+   * 예산은 **speakAt까지 남은 시간**이다. 그 뒤에 온 답은 이미 말한 뒤라 버려지므로
+   * 더 기다릴 이유가 없다. 남은 시간이 얼마 없으면 아예 부르지 않는다.
+   */
+  private async upgradeSpeech(bot: BotState, seq: number): Promise<void> {
+    const roomId = this.meta?.roomId;
+    if (!roomId) return;
+
+    const budget = bot.speakAt - Date.now();
+    if (budget < MIN_AGENT_BUDGET_MS) return;
+
+    const lines = await fetchAgentLines(
+      this.env,
+      roomId,
+      [bot.id],
+      this.chatContext(),
+      budget,
+    );
+    const text = lines.find((l) => l.player_id === bot.id)?.text;
+    if (!text) return;
+
+    replaceSpeech(bot, seq, text, Date.now());
+  }
+
+  /**
+   * 최근 대화를 맥락 모양으로 바꾼다. **사람 발화와 봇 발화를 구분해서 보낸다** —
+   * 말투 관측(observeStyle)이 봇 풀 문구를 배우면 봇끼리 서로 닮아간다.
+   * is_bot은 여기서 밖으로 나가지만 받는 쪽이 서버(Next)다 — world-room과 같은 예외다.
+   */
+  private chatContext(): ChatLine[] {
+    const botIds = new Set((this.meta?.seats ?? []).filter((s) => s.is_bot).map((s) => s.id));
+    return this.chatLog.map((c) => ({
+      nickname: c.nickname,
+      text: c.text,
+      human: !botIds.has(c.id),
+    }));
+  }
+
+  /** 봇이 쓸 문구 풀. 방 메타를 못 받았으면 최소 대비책으로 버틴다. */
+  private botLines(): readonly string[] {
+    return this.meta?.botLines?.length ? this.meta.botLines : FALLBACK_LINES;
+  }
+
+  /** 채팅 한 줄 기록. 앞에서 버려 최근 CHAT_HISTORY_MAX줄만 남긴다. */
+  private rememberChat(id: string, nickname: string, text: string): void {
+    this.chatLog.push({ id, nickname, text });
+    if (this.chatLog.length > CHAT_HISTORY_MAX) {
+      this.chatLog.splice(0, this.chatLog.length - CHAT_HISTORY_MAX);
+    }
+  }
+
+  private recentTexts(): string[] {
+    return this.chatLog.map((c) => c.text);
   }
 
   private async ensureBots(meta: CachedMeta): Promise<BotState[]> {
@@ -460,7 +583,7 @@ export class RoomDO {
     const after = fresh.seats.map((s) => s.id).join(',');
     if (before !== after) this.bots = null;
 
-    this.meta = { ...fresh, fetchedAt: now };
+    this.meta = { ...fresh, fetchedAt: now, roomId };
     await this.ctx.storage.put(KEY_META, this.meta);
     return this.meta;
   }

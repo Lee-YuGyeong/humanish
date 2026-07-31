@@ -150,7 +150,7 @@ grep -rho 'process\.env\.[A-Z_]*' .open-next/server-functions --include='*.js' |
 | `AGENT_SELF_URL` | `wrangler.jsonc` 의 `vars` | 봇 답변 재생성이 `/api/agent` 를 self-fetch 할 자기 공개 주소. 비밀이 아니다 |
 | `NEXT_ORIGIN` | `.env.local` (로컬 전용) | Next 는 안 읽는다. `next.config.ts` 의 dev 설정과, `world:deploy` 가 월드 워커에 `--var` 로 실어 보낼 때만 쓴다 |
 | `SUPABASE_DB_URL_DIRECT` | 넣지 않는다 | 마이그레이션 전용 (SPEC §12.2) |
-| `NVIDIA_NIM_*` | 선택 (`secret put`) | `/api/agent` 를 쓸 때만. 지금은 봇이 DB 문구 풀로 말한다 (SPEC §17) |
+| `NVIDIA_NIM_*` | 선택 (`secret put`) | `/api/agent` 를 쓸 때만. 없으면 게임도 3D 월드도 DB 문구 풀로 떨어진다 — 그게 폴백이다 (SPEC §17) |
 
 #### 그 밖에 알아둘 것
 
@@ -207,6 +207,8 @@ npm run world:verify # 터미널 3 — 2인 왕복 검증 (브라우저 없이)
    봇 좌표는 사람과 **같은** `player_moved` 스트림을, **같은** 10Hz 주기로 탄다.
    "A→B로 4초간 이동" 같은 계획으로 보내면 devtools에서 한눈에 갈린다.
 2. `/api/internal/world-room` 응답(= `is_bot` 포함)은 **워커 밖으로 나가지 않는다.**
+   `/api/internal/world-agent` 도 같다 — 그 응답은 봇이 **아직 하지 않은 말**이라,
+   브라우저가 미리 읽으면 말하기도 전에 누가 봇인지 알게 된다.
 3. 프로토콜은 `lib/mp/protocol.ts` 한 곳에서만 정의한다. 워커에 복붙하지 않는다.
 4. `PROTOCOL_VERSION`을 올렸으면 **워커를 클라이언트보다 먼저 배포한다.**
    반대로 하면 새 클라이언트가 구 워커에 `version_mismatch`로 막힌다.
@@ -220,4 +222,8 @@ npm run world:verify # 터미널 3 — 2인 왕복 검증 (브라우저 없이)
 - **하트비트는 DO를 깨우지 않는다.** `setWebSocketAutoResponse("ping","pong")`을
   플랫폼이 대신 처리한다. 죽은 소켓은 30초 알람이 청소한다.
 - **채팅은 저장하지 않는다.** 릴레이만 한다 — 방이 사라지면 로그도 없다.
+  DO가 최근 20줄만 메모리로 들고 있고(봇 반응의 대화 맥락), evict되면 그것도 사라진다.
+- **봇 반응은 LLM이 늦으면 그냥 풀 문구로 나간다.** 발화 시각(`speakAt`)이 풀 문구로
+  먼저 정해지고 LLM은 그 문구만 덮어쓰기 때문이다. 키가 없어도, Next가 죽어도 논다.
+  자세한 건 `docs/MULTIPLAYER.md` §3.
   게임의 대화 기록은 Supabase `messages`가 따로 갖는다 (SPEC §6.1).

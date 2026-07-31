@@ -143,14 +143,43 @@ class Client {
 
 /* ─────────────────────────────── 준비 ─────────────────────────────── */
 
+/** 봇 반응이 LLM 문구로 덮어써졌는지 알아보려고, 풀 문구와 확실히 다른 값을 쓴다. */
+const AGENT_LINE = 'LLM 이 만든 대체 문구';
+
+/**
+ * 워커가 부르는 내부 경로 둘을 흉내 낸다. Next 도 Supabase 도 LLM 도 띄우지 않는다 —
+ * 이 스크립트의 목적은 **워커만** 격리해서 보는 것이다.
+ */
 const fake = http.createServer((req, res) => {
   // 공유 비밀이 없으면 404. 진짜 라우트와 같은 규칙이다
   if (req.headers.authorization !== `Bearer ${SECRET}`) {
     res.writeHead(404).end();
     return;
   }
-  res.writeHead(200, { 'content-type': 'application/json' });
-  res.end(JSON.stringify({ capacity: 5, phase: 'question', seats: SEATS, bot_lines: ['테스트 문구'] }));
+  const json = (body) => {
+    res.writeHead(200, { 'content-type': 'application/json' });
+    res.end(JSON.stringify(body));
+  };
+
+  // 봇 반응 — 진짜 라우트처럼 부탁받은 자리마다 한 줄씩 돌려준다.
+  if (req.url.startsWith('/api/internal/world-agent')) {
+    let raw = '';
+    req.on('data', (c) => {
+      raw += c;
+    });
+    req.on('end', () => {
+      let ids = [];
+      try {
+        ids = JSON.parse(raw).player_ids ?? [];
+      } catch {
+        ids = [];
+      }
+      json({ ok: true, results: ids.map((id) => ({ player_id: id, text: AGENT_LINE })) });
+    });
+    return;
+  }
+
+  json({ capacity: 5, phase: 'question', seats: SEATS, bot_lines: ['테스트 문구'] });
 });
 
 const worker = spawn(
@@ -305,6 +334,45 @@ async function main() {
     // 그 브라우저가 정답을 알게 된다 (I1). 봇은 최대 7초 서 있다가 출발한다
     const humans = new Set([a.selfId, b.selfId]);
     await b.wait((m) => m.t === 'player_moved' && !humans.has(m.id), 12_000, '봇의 player_moved');
+  });
+
+  await check('사람이 말하면 봇이 멈춰 서서 LLM 문구로 대꾸한다', async () => {
+    // ★ 이 검사가 I1의 두 번째 핵심이다. 사람은 Enter를 누르는 순간 발이 묶이므로
+    //   (app/world/world-scene.tsx의 composing) 말풍선은 항상 멈춰 선 아바타 위에 뜬다.
+    //   봇만 걸어가면서 말하면 그 자리가 눈으로 갈린다.
+    //
+    // 배선 전체를 본다: 소켓 수신 → 반응자 선택 → 예약 → 틱 → 발화. 조각은 단위
+    // 테스트(tests/worker/bots.test.ts)가 본다. 반응은 확률이라 여러 번 말을 건다 —
+    // 15번이면 한 번도 못 받을 확률이 1e-4 아래다. 그 사이 자발 발화가 먼저 나와도
+    // 검사의 뜻(멈춰서 말했는가)은 같으므로 그대로 받는다.
+    const humans = new Set([a.selfId, b.selfId]);
+    const from = b.msgs.length;
+
+    for (let i = 0; i < 15; i += 1) {
+      a.send({ t: 'chat', text: `안녕 ${i}` });
+      await sleep(700); // 채팅 속도 제한(600ms)보다 넉넉히
+    }
+
+    const said = await b.wait(
+      (m, i) => i >= from && m.t === 'chat' && !humans.has(m.id),
+      8000,
+      '봇의 발화',
+    );
+
+    // 봇은 스폰 시 idle이라 한 번도 안 움직였으면 player_moved가 없다 → idle로 본다.
+    let anim = 'idle';
+    for (const m of b.msgs.slice(0, b.msgs.indexOf(said))) {
+      if (m.t === 'player_moved' && m.id === said.id) anim = m.anim;
+    }
+    if (anim !== 'idle') throw new Error(`봇이 '${anim}' 상태로 말했다 (idle 이어야 한다)`);
+
+    // ★ 예약된 풀 문구가 LLM 답으로 덮어써졌는가. 예산(speakAt 까지 남은 시간)이
+    //   모자라면 여기서 걸린다 — 그때는 봇이 '테스트 문구'만 말한다.
+    await b.wait(
+      (m, i) => i >= from && m.t === 'chat' && m.text === AGENT_LINE,
+      9000,
+      'LLM 으로 덮어쓴 문구',
+    );
   });
 
   await check('A가 끊기면 B가 안다', async () => {

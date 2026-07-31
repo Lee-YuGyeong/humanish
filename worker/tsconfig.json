@@ -13,6 +13,9 @@
     "forceConsistentCasingInFileNames": true
   },
   // src 밖의 lib/mp/* 도 검사한다. 계약을 공유하므로 한쪽만 깨지면 안 된다.
-  "include": ["src/**/*.ts", "../lib/mp/**/*.ts"],
+  // lib/agent/disguise 는 **파일 하나만** 넣는다 — 봇의 타이핑 지연 곡선을 2D 게임과
+  // 같이 쓰기 위해서다(bots.ts 참고). 폴더째 넣으면 `@/` 별칭을 쓰는 형제 파일들이
+  // 딸려 들어와 워커 타입 검사가 깨진다.
+  "include": ["src/**/*.ts", "../lib/mp/**/*.ts", "../lib/agent/disguise.ts"],
   "exclude": ["node_modules"]
 }
