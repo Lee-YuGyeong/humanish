@@ -129,39 +129,27 @@ export default function WorldPage() {
 
   useEffect(() => () => conn.close(), [conn]);
 
-  // Enter를 누르면 마우스를 풀고 입력창으로 보낸다.
-  // 포인터 락 상태에서는 input에 포커스를 줄 수 없다.
+  /** 세계가 실제로 떠 있는가. 아래 효과들이 전부 이 값을 본다 (선언이 먼저여야 한다) */
+  const live = status === 'live' && ticket !== null;
+
+  /*
+   * 대화는 **ESC 로 연다**(마우스 잠금이 풀리면 판이 뜬다). Enter 로는 열지 않는다 —
+   * 걷는 중 Enter 가 창을 여닫으면 조작과 섞여 헷갈린다.
+   *
+   * 대화가 열리면(=locked=false, chatOpen) 입력창에 **바로 포커스**를 준다. 두 가지가
+   * 한꺼번에 해결된다:
+   *   1) 클릭하지 않고 곧장 타이핑한다 — 판 옆 빈 곳을 잘못 눌러 다시 잠기는 일이 없다.
+   *   2) 포커스가 입력창에 있으면 LocalRig 의 typing 가드가 이동키를 무시한다.
+   *      → 대화 중에 WASD 로 **몸이 움직이지 않는다** (예전엔 포커스가 없어 걸어다녔다).
+   *
+   * rAF 로 한 박자 미룬다: ESC 로 막 잠금이 풀린 직후라 DOM 커밋과 pointerlock 해제가
+   * 끝난 다음에 focus() 해야 브라우저가 무시하지 않는다.
+   */
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.code !== 'Enter') return;
-      // 이미 입력창 안이면 그건 '전송'이다 — ChatDock 의 onKeyDown 이 처리한다.
-      // 여기서 가로채면 preventDefault 로 전송이 막힌다.
-      const el = e.target as HTMLElement | null;
-      if (el?.tagName === 'INPUT' || el?.tagName === 'TEXTAREA' || el?.isContentEditable) return;
-
-      e.preventDefault();
-      // 채팅 판이 접혀 있었다면 같이 편다 — Enter 를 눌렀는데 아무 일도 없으면 안 된다
-      setChatOpen(true);
-
-      // ★ exitPointerLock() 은 비동기다. setTimeout(0) 으로 바로 focus() 하면 아직
-      //   락이 살아 있어 브라우저가 포커스를 무시한다 — 그러면 키 입력이 창으로 가
-      //   캐릭터만 걷고 글이 안 써진다. 락이 '실제로' 풀린 뒤에 포커스를 준다.
-      if (document.pointerLockElement) {
-        const focusWhenUnlocked = () => {
-          if (document.pointerLockElement) return; // 아직 락 중이면 다음 이벤트를 기다린다
-          document.removeEventListener('pointerlockchange', focusWhenUnlocked);
-          inputRef.current?.focus();
-        };
-        document.addEventListener('pointerlockchange', focusWhenUnlocked);
-        document.exitPointerLock();
-      } else {
-        // 락이 아니었으면 바로 포커스를 준다
-        inputRef.current?.focus();
-      }
-    };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, []);
+    if (!(live && !locked && chatOpen)) return;
+    const id = requestAnimationFrame(() => inputRef.current?.focus());
+    return () => cancelAnimationFrame(id);
+  }, [live, locked, chatOpen]);
 
   const send = useCallback(() => {
     const text = draft.trim();
@@ -192,7 +180,38 @@ export default function WorldPage() {
     [ticket],
   );
 
-  const live = status === 'live' && ticket !== null;
+  /*
+   * 들어오면 **바로 걷는다.** 예전엔 화면을 한 번 클릭해야 마우스가 잡혔는데,
+   * 그 클릭이 document 전체에 걸려 있어서 설정을 열어 놓고 볼륨을 만지려 해도
+   * 다시 잠겨 버렸다 (world-scene.tsx 의 selector 주석). 이제 모드는 클릭이 아니라
+   * **설정창이 열려 있는가**로만 갈린다.
+   *
+   * 잠금 요청은 사용자 제스처가 필요하다. 여기까지 온 건 「입장」 버튼을 누른
+   * 직후라(크롬은 그 활성화를 몇 초 유지한다) 대개 받아준다. 연결이 오래 걸려
+   * 거절당하면 잠기지 않은 채로 도크가 뜨고, 「게임으로」를 누르면 된다.
+   */
+  useEffect(() => {
+    if (!live) return;
+    const id = requestAnimationFrame(() => backToWalking());
+    return () => cancelAnimationFrame(id);
+  }, [live, backToWalking]);
+
+  /*
+   * ESC 는 스위치다. 브라우저가 잠금을 풀어 주는 게 '설정 열기'이고,
+   * 풀린 상태에서 한 번 더 누르면 걷기로 돌아간다. 입력창 안에서 누른 ESC 는
+   * 그 입력창이 처리한다(보내지 않고 나가기) — 여기서 겹쳐 잡지 않는다.
+   */
+  useEffect(() => {
+    if (!live || locked) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return;
+      const el = e.target as HTMLElement | null;
+      if (el?.tagName === 'INPUT' || el?.tagName === 'TEXTAREA' || el?.isContentEditable) return;
+      backToWalking();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [live, locked, backToWalking]);
 
   return (
     <main className="relative h-screen w-full overflow-hidden bg-[#07050a]">
@@ -282,8 +301,9 @@ export default function WorldPage() {
         │ 마우스가 잠긴 동안(걷는 중)에는 판을 띄우지 않는다. 판이 떠 있으면    │
         │ 시야를 가리고, 무엇보다 **클릭이 판에 먹혀** 다시 걸을 수가 없다.     │
         │ ESC 로 마우스를 풀면(locked=false) 그때 아이콘이 나오고, 거기서 채팅과 │
-        │ 소리를 만진다. 화면을 다시 클릭하면 판이 접히고 걷기로 돌아간다.      │
-        │ 즉 ESC 한 번이 '조작 ↔ 설정' 스위치다 — 따로 배울 게 없다.           │
+        │ 소리를 만진다. ESC 를 한 번 더 누르거나 「게임으로」를 누르면 걷기로   │
+        │ 돌아간다 — **화면 클릭으로는 돌아가지 않는다.** 설정을 만지는 클릭과   │
+        │ 겹쳤기 때문이다. 즉 ESC 하나가 '조작 ↔ 설정' 스위치다.               │
         └──────────────────────────────────────────────────────────────────────┘
       */}
       {live ? (
@@ -324,8 +344,8 @@ export default function WorldPage() {
           <div className="absolute inset-x-0 bottom-6 z-30 flex justify-center">
             {locked ? (
               <p className="rounded-full border border-white/10 bg-black/60 px-5 py-2.5 text-[12px] text-neutral-300 backdrop-blur">
-                WASD 이동 · Shift 달리기 · Space 점프 · <span className="text-[#d4a373]">Enter 말하기</span>{' '}
-                · <span className="text-[#d4a373]">ESC 설정</span>
+                WASD 이동 · Shift 달리기 · Space 점프 ·{' '}
+                <span className="text-[#d4a373]">ESC 로 대화 · 설정</span>
               </p>
             ) : (
               <div className="pointer-events-auto flex items-center gap-2 rounded-full border border-white/10 bg-black/60 p-1.5 backdrop-blur">
@@ -338,7 +358,17 @@ export default function WorldPage() {
                   <ChatIcon />
                 </DockButton>
                 <VolumeControl />
-                <span className="px-3 text-[12px] text-neutral-400">화면을 클릭하면 걸어다닙니다</span>
+                {/*
+                  걷기로 돌아가는 **유일한** 길. 화면 아무 데나 클릭해서 돌아가던
+                  길은 없앴다 — 그 클릭이 설정을 만지는 손과 겹쳤다.
+                */}
+                <button
+                  type="button"
+                  onClick={backToWalking}
+                  className="rounded-full px-3 py-1.5 text-[12px] font-bold text-neutral-300 transition-colors hover:bg-white/10 hover:text-white"
+                >
+                  게임으로 <span className="text-neutral-500">ESC</span>
+                </button>
               </div>
             )}
           </div>
@@ -402,7 +432,7 @@ function ChatPanel({
   onDraft: (v: string) => void;
   onSend: () => void;
   onClose: () => void;
-  /** 말하기를 끝내고 다시 걷기로 (Enter 전송 · ESC 취소) */
+  /** 말하기를 끝내고 다시 걷기로 (ESC). Enter 는 보내기만 하고 머문다 */
   onLeave: () => void;
 }) {
   const scroll = useRef<HTMLDivElement>(null);
@@ -468,14 +498,13 @@ function ChatPanel({
             onChange={(e) => onDraft(e.target.value)}
             onKeyDown={(e) => {
               /*
-                Enter 로 들어와 Enter 로 나간다 — 보내고 나서 마우스를 다시 잡아
-                **손을 떼지 않고** 걷기로 돌아간다. 예전엔 화면을 한 번 클릭해야 했다.
-                ESC 는 보내지 않고 나간다.
+                Enter 는 보내고 **대화창에 그대로 머문다** — 연달아 말할 수 있게
+                마우스를 다시 잡지 않는다. 걷기로 돌아가려면 ESC 를 누르거나
+                아래 「게임으로」를 누른다. 화면 클릭으로는 돌아가지 않는다.
               */
               if (e.key === 'Enter') {
                 e.preventDefault();
                 onSend();
-                onLeave();
                 return;
               }
               if (e.key === 'Escape') {
@@ -484,7 +513,7 @@ function ChatPanel({
               }
             }}
             maxLength={200}
-            placeholder="메시지를 입력하고 Enter · ESC 로 돌아가기"
+            placeholder="메시지 입력 후 Enter · ESC 로 걷기"
             className="w-full rounded-lg border border-white/10 bg-black/50 py-3 pl-4 pr-11 text-[13px] text-white outline-none transition-colors placeholder:text-neutral-600 focus:border-[#d4a373]"
           />
           <button

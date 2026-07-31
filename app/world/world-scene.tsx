@@ -81,7 +81,16 @@ export default function WorldScene({
 
       <Remotes />
       <LocalRig conn={conn} spawn={spawn} />
+      {/*
+        ★ selector 는 **일부러 아무 것도 맞지 않는 값**이다.
+          drei 는 selector 가 없으면 `document` 전체에 click→lock 을 건다. 그러면
+          ESC 로 설정을 열어 놓고 볼륨 슬라이더나 채팅 판을 누르는 순간 다시 잠겨
+          판이 사라진다 — 설정을 만질 수가 없다. 걷기/설정 전환은 클릭이 아니라
+          **설정창이 열려 있는가**로만 정한다 (page.tsx: 입장하면 바로 잠그고,
+          ESC 로 풀고, 「게임으로」·Enter 전송으로 되잡는다).
+      */}
       <PointerLockControls
+        selector="[data-world-click-to-lock]"
         onLock={() => onLockChange?.(true)}
         onUnlock={() => onLockChange?.(false)}
       />
