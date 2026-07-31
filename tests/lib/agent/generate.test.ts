@@ -207,6 +207,25 @@ describe('parseOutput — 뭐가 오든 발화 가능한 모양으로 (§12.3)',
     expect(out.messages).toEqual(['서로 봐주는 거']);
   });
 
+  it('한자 아닌 외국 문자 유출도 걷어낸다 — 단어 통째로 (70b 실측: 아랍어·베트남어)', () => {
+    // 글자만 지우면 "nhn만" 같은 잔해가 남는다 — 단어 단위로 빼야 문장이 자연스럽다.
+    const arabic = parseOutput(JSON.stringify({ messages: ['입지도 않고 جمع먼저 쌓여서'] }), ctx());
+    expect(arabic.messages).toEqual(['입지도 않고 쌓여서']);
+
+    const viet = parseOutput(JSON.stringify({ messages: ['맨날 nhìn만 봄'] }), ctx());
+    expect(viet.messages).toEqual(['맨날 봄']);
+  });
+
+  it('전각 문장부호는 반각으로 바꾼다 — 그 자체도 봇 티다', () => {
+    const out = parseOutput(JSON.stringify({ messages: ['진짜？ 몰랐네！'] }), ctx());
+    expect(out.messages).toEqual(['진짜? 몰랐네!']);
+  });
+
+  it('전부 외국 문자면 발화가 비고 폴백으로 간다', () => {
+    const out = parseOutput(JSON.stringify({ messages: ['جمع نظر'] }), ctx());
+    expect(FALLBACK_POOL).toContain(out.messages[0]);
+  });
+
   it('길이 컷은 단어 경계에서 자른다 — 중간에서 뚝 끊긴 문장은 어색하다', () => {
     const long = '오늘 알바 끝나고 집에 가는데 비를 쫄딱 맞아서 '.repeat(4).trim(); // 80자 초과
     expect(long.length).toBeGreaterThan(80);

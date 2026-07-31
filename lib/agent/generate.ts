@@ -196,14 +196,33 @@ function extractJson(raw: string): Record<string, unknown> | null {
   }
 }
 
-/** 따옴표 껍데기 · 한자 유출 · 줄바꿈 정리 · 길이 컷. 채팅 한 줄 모양으로 만든다. */
+/**
+ * 한국어 채팅에 나올 수 있는 글자만 — 한글(음절·자모) · ASCII · 흔한 문장부호.
+ * 이 밖의 글자가 든 **단어는 통째로** 뺀다 (cleanMessage 참고).
+ */
+const KOREAN_CHAT_WORD =
+  /^[가-힣ㄱ-ㆎᄀ-ᇿ -~“”‘’…·–—₩°]+$/;
+
+/** 따옴표 껍데기 · 외국 문자 유출 · 줄바꿈 정리 · 길이 컷. 채팅 한 줄 모양으로 만든다. */
 function cleanMessage(text: string): string {
   let t = text
     .trim()
     .replace(/^["'“”]+|["'“”]+$/g, '')
-    // Llama가 가끔 한자를 흘린다("거吧", "낫子" — 실측). 한국어 채팅에 한자는 봇 티다.
+    // 전각 문장부호는 반각으로 — 그 자체도 봇 티고, 아래 단어 검사에서 살리기 위해서다
+    .replace(/[。．]/g, '.')
+    .replace(/[，、]/g, ',')
+    .replace(/！/g, '!')
+    .replace(/？/g, '?')
+    // Llama가 가끔 한자를 흘린다("거吧", "낫子" — 실측). 글자만 지우면 "거"는 산다.
     .replace(/[一-鿿]/g, '')
     .replace(/\s+/g, ' ')
+    .trim();
+  // 한자만이 아니다 — 아랍어("جمع먼저")·베트남어("nhìn만")도 샌다 (70b 실측).
+  // 이쪽은 글자 단위로 지우면 "nhn만" 같은 잔해가 남으므로 단어를 통째로 뺀다.
+  t = t
+    .split(' ')
+    .filter((w) => KOREAN_CHAT_WORD.test(w))
+    .join(' ')
     .trim();
   if (t.length > MAX_MESSAGE_LEN) {
     // 단어 중간에서 뚝 자르면 "...담배" 같은 미완성 문장이 된다 — 마지막 공백에서 자른다.
