@@ -290,6 +290,15 @@ function WallBraces() {
 const SCREEN = { w: 10, h: 10 * (9 / 16), y: 4.2, z: ROOM.back + 0.22 };
 
 /**
+ * 스크린 한가운데. **들어오면 이 점을 보고 시작한다** (world-scene.tsx 의 LocalRig).
+ *
+ * 여기서 내보내는 이유: 시선의 목표가 곧 스크린의 위치라, 스크린을 옮겼는데
+ * 카메라가 옛 자리를 보고 있으면 첫 화면이 벽이 된다. 배치를 아는 건 이 파일뿐이므로
+ * 좌표를 복사해 가지 말고 이 값을 쓴다.
+ */
+export const SCREEN_FOCUS = { x: 0, y: SCREEN.y, z: SCREEN.z } as const;
+
+/**
  * 안쪽 벽의 대형 빈 스크린.
  * 흰 판 자체는 살짝만 발광하고, 위에서 쏘는 스포트 3개(§Lights)가
  * 레퍼런스처럼 세 갈래 빛 웅덩이를 만든다.

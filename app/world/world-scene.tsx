@@ -19,7 +19,14 @@ import { Suspense, memo, useEffect, useMemo, useRef, useState } from 'react';
 import * as THREE from 'three';
 
 import { Avatar, avatarVariant } from './avatar';
-import { Furniture, Lights, Warehouse, groundHeightAt, resolveColliders } from './warehouse';
+import {
+  Furniture,
+  Lights,
+  SCREEN_FOCUS,
+  Warehouse,
+  groundHeightAt,
+  resolveColliders,
+} from './warehouse';
 import {
   EYE_HEIGHT,
   GRAVITY,
@@ -37,8 +44,12 @@ import type { WorldConnection } from './net/connection';
 import type { RemotePlayer } from './net/remote-players';
 import { useWorldStore } from './store';
 
-const CENTER_X = (WORLD.minX + WORLD.maxX) / 2;
-const CENTER_Z = (WORLD.minZ + WORLD.maxZ) / 2;
+/**
+ * 처음 올려다보는 각도의 상한(라디안). 지금 스폰 원(반지름 3.4)에서는 스크린까지
+ * 7.9~12.9m 라 11~18°가 나오므로 걸리지 않는다. 스폰이나 스크린을 옮겨 바짝 붙었을 때
+ * 하늘을 보며 시작하는 것만 막는 안전선이다.
+ */
+const MAX_START_PITCH = (25 * Math.PI) / 180;
 
 /* ─────────────────────────────── 최상위 ─────────────────────────────── */
 
@@ -144,17 +155,27 @@ function LocalRig({
   useEffect(() => {
     camera.position.set(spawn.x, EYE_HEIGHT, spawn.z);
 
-    // 방 가운데를 보고 시작한다. 좌석 스폰은 원 위에 흩어져 있어서, 기본 방향(-z)으로
-    // 두면 사람에 따라 벽만 보이고 **다른 사람이 화면에 아예 없다.** 처음 3초가 곧
-    // "멀티플레이가 되는가"의 인상이라 여기서 방향을 잡아 준다.
-    //
-    // 카메라의 로컬 정면은 -z다. yaw θ일 때 월드 정면은 (-sinθ, 0, -cosθ)이므로
-    // 중심 방향 (dx, dz)를 보려면 θ = atan2(-dx, -dz)다.
-    // PointerLockControls는 이 회전을 이어받아 델타만 더하므로 먼저 잡아도 안전하다.
-    const dx = CENTER_X - spawn.x;
-    const dz = CENTER_Z - spawn.z;
+    /*
+     * **스크린을 보고 시작한다.**
+     *
+     * 좌석 스폰은 원 위에 흩어져 있어서 기본 방향(-z)으로 두면 사람에 따라 벽만
+     * 보인다. 예전엔 방 한가운데를 보게 했지만, 세계가 나타나는 그 순간 스크린에서는
+     * 카운트다운이 20부터 흐르기 시작한다 (warehouse.tsx COUNTDOWN_SEC, page.tsx 의
+     * live 마운트 주석). 가운데를 보면 그게 시야 밖이라, 정작 처음 20초 동안 벌어지는
+     * 유일한 사건을 놓친다. 스폰 원은 스크린 앞쪽에 모여 있으므로 스크린을 보면
+     * 다른 사람들도 대체로 같이 화면에 들어온다.
+     *
+     * 카메라의 로컬 정면은 -z다. yaw θ일 때 월드 정면은 (-sinθ, 0, -cosθ)이므로
+     * 목표 방향 (dx, dz)를 보려면 θ = atan2(-dx, -dz)다.
+     * 스크린 한가운데는 눈높이보다 위(4.2 vs 1.62)라 고개도 그만큼 든다 — YXZ 순서에서
+     * rotation.x 가 양수면 위를 본다.
+     * PointerLockControls는 이 회전을 이어받아 델타만 더하므로 먼저 잡아도 안전하다.
+     */
+    const dx = SCREEN_FOCUS.x - spawn.x;
+    const dz = SCREEN_FOCUS.z - spawn.z;
+    const pitch = Math.atan2(SCREEN_FOCUS.y - EYE_HEIGHT, Math.hypot(dx, dz));
     camera.rotation.order = 'YXZ';
-    camera.rotation.set(0, Math.atan2(-dx, -dz), 0);
+    camera.rotation.set(Math.min(pitch, MAX_START_PITCH), Math.atan2(-dx, -dz), 0);
   }, [camera, spawn.x, spawn.z]);
 
   useEffect(() => {
