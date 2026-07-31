@@ -309,7 +309,7 @@ export class RoomDO {
 
         // 봇 하나가 대꾸할 수도 있다. **사람 소켓의 채팅에서만 부른다** —
         // 봇 발화에서도 부르면 봇끼리 끝없이 주고받는다.
-        this.reactToHuman(now);
+        this.reactToHuman(now, text);
         return;
       }
 
@@ -422,6 +422,10 @@ export class RoomDO {
       //    스스로 꺼내는 말이라 읽는 시간은 없다 — 읽을 게 없으니 바로 친다.
       if (shouldChat(bot, now)) {
         scheduleSpeech(bot, pickLine(this.botLines(), this.recentTexts()), now);
+        // ★ 스스로 꺼내는 말도 LLM 을 태운다. 안 태우면 이 자리는 **평생 풀 문구만**
+        //   말한다 — 사용자가 본 게 정확히 그거였다. trigger 는 없다(답할 상대가
+        //   없으니 흐름에 끼어드는 게 맞다).
+        void this.upgradeSpeech(bot, bot.speechSeq, null);
       }
 
       // ② 굴린다. 예약이 걸려 있으면 stepBot이 세워 둔다.
@@ -461,18 +465,18 @@ export class RoomDO {
    * 사람이 한마디 했다 — 봇 하나가 대꾸할 수도 있다 (안 할 수도 있다).
    * 고르는 규칙과 그 이유는 bots.ts의 pickResponder에 있다.
    */
-  private reactToHuman(now: number): void {
+  private reactToHuman(now: number, trigger: string): void {
     const bots = this.bots;
     if (!bots || bots.length === 0) return;
 
-    const bot = pickResponder(bots, now);
+    const bot = pickResponder(bots, now, this.meta?.companionMode === true);
     if (!bot) return;
 
     // 읽는 시간을 준다 — 0이면 사람이 말한 그 순간 멈추는 아바타가 생긴다 (I1).
     scheduleSpeech(bot, pickLine(this.botLines(), this.recentTexts()), now, readDelayMs());
 
     // 풀 문구는 이미 예약됐다. LLM은 제때 오면 그 문구만 갈아끼운다 — 기다리지 않는다.
-    void this.upgradeSpeech(bot, bot.speechSeq);
+    void this.upgradeSpeech(bot, bot.speechSeq, trigger);
   }
 
   /**
@@ -484,7 +488,12 @@ export class RoomDO {
    * 예산은 **speakAt까지 남은 시간**이다. 그 뒤에 온 답은 이미 말한 뒤라 버려지므로
    * 더 기다릴 이유가 없다. 남은 시간이 얼마 없으면 아예 부르지 않는다.
    */
-  private async upgradeSpeech(bot: BotState, seq: number): Promise<void> {
+  private async upgradeSpeech(
+    bot: BotState,
+    seq: number,
+    /** 반응이면 그 사람 발화. 스스로 꺼내는 말이면 null. */
+    trigger: string | null,
+  ): Promise<void> {
     const roomId = this.meta?.roomId;
     if (!roomId) return;
 
@@ -496,6 +505,7 @@ export class RoomDO {
       roomId,
       [bot.id],
       this.chatContext(),
+      trigger,
       budget,
     );
     const text = lines.find((l) => l.player_id === bot.id)?.text;

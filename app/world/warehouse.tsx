@@ -21,6 +21,7 @@ import { RoundedBox, useTexture } from "@react-three/drei";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import * as THREE from "three";
 
+import { groundHeightAt, resolveCollisions } from "@/lib/mp/collide";
 import { pauseMusic, startMusic, stopMusic } from "./music";
 
 /* ─────────────────────────── 창고 치수 (월드 단위 ≈ m) ─────────────────────────── */
@@ -360,6 +361,11 @@ function ScreenVideo() {
   const videoRef = useRef<HTMLVideoElement | null>(null);
 
   useEffect(() => {
+    /** 카운트다운이 끝나는 시점에 부른다. 아래에서 채운다 */
+    let startVideo = () => {};
+    /** 소리가 막혔을 때만 걸리는 클릭 리스너를 걷어낸다 */
+    let cleanupGesture = () => {};
+
     const video = document.createElement('video');
     videoRef.current = video;
     video.src = SCREEN_VIDEO;
@@ -404,24 +410,48 @@ function ScreenVideo() {
         if (prev > 1) return prev - 1;
         clearInterval(timer);
         pauseMusic();
-        void video.play().catch(onError);
+        startVideo();
         return null;
       });
     }, 1000);
 
-    // 클릭 한 번이 있어야 소리를 켤 수 있다. 한 번만 듣고 스스로 떨어진다
-    const unmute = () => {
-      video.muted = false;
-      if (!video.paused) void video.play().catch(() => {});
+    /*
+     * ★ **소리부터 켜고 시작한다.** 거절당했을 때만 음소거로 물러난다.
+     *
+     *   예전에는 반대였다 — muted 로 켜 두고 "마운트 이후의 첫 pointerdown" 을 기다렸다.
+     *   그런데 입장 버튼 클릭은 이 컴포넌트가 붙기 **전에** 끝난 일이라 그 리스너에
+     *   잡히지 않는다. 들어와서 가만히 보고만 있으면 클릭이 영영 안 와서 **영상이
+     *   끝까지 무음으로 흐른다.** 사용자가 겪은 게 그거다.
+     *
+     *   입장 버튼을 누른 시점에 이미 이 페이지에는 사용자 조작이 있었으므로 대개는
+     *   소리 있는 재생이 그냥 허용된다. 안 되는 브라우저(정책이 더 빡빡하거나 자동
+     *   재생 차단을 켜둔 경우)에서만 음소거로 틀고, 그때 비로소 클릭을 기다린다.
+     */
+    const armUnmuteOnGesture = () => {
+      const unmute = () => {
+        video.muted = false;
+        if (!video.paused) void video.play().catch(() => {});
+      };
+      window.addEventListener('pointerdown', unmute, { once: true });
+      cleanupGesture = () => window.removeEventListener('pointerdown', unmute);
     };
-    window.addEventListener('pointerdown', unmute, { once: true });
+
+    startVideo = () => {
+      video.muted = false;
+      video.play().catch(() => {
+        // 소리 있는 재생이 막혔다 — 그림이라도 나와야 한다
+        video.muted = true;
+        void video.play().catch(onError);
+        armUnmuteOnGesture();
+      });
+    };
 
     return () => {
       clearInterval(timer);
       video.removeEventListener('loadedmetadata', onReady);
       video.removeEventListener('error', onError);
       video.removeEventListener('ended', onEnded);
-      window.removeEventListener('pointerdown', unmute);
+      cleanupGesture();
       video.pause();
       video.src = '';
       tex.dispose();
@@ -1025,112 +1055,18 @@ function Chair({
 
 /* ─────────────────────────────── 가구 충돌 ─────────────────────────────── */
 
-/** 플레이어 몸통 반지름 — 이만큼 가구에서 밀려난다 */
-const PLAYER_R = 0.35;
-/** 이보다 낮은 턱은 막지 않고 그냥 지나간다 (낮은 탁자). 걸려서 멈추면 답답하다 */
-const STEP_UP = 0.55;
-
 /**
- * 가구 충돌용 회전 박스(footprint). Warehouse()·Furniture() 배치를 그대로 옮겼다.
- * 거기 좌표를 고치면 여기도 같이 고친다. hw/hd 는 반폭·반깊이.
- * top 은 윗면 높이 — 막는 높이이자 **올라섰을 때 발이 닿는 높이**다.
- */
-const COLLIDERS: {
-  x: number;
-  z: number;
-  hw: number;
-  hd: number;
-  rot: number;
-  top: number;
-}[] = [
-  // 소파 (팔걸이 포함 폭 / 등받이 윗면)
-  { x: -4.4, z: -8.2, hw: 1.5, hd: 0.62, rot: 0.12, top: 0.99 },
-  { x: 0.2, z: -7.4, hw: 1.5, hd: 0.62, rot: 0, top: 0.99 },
-  { x: 4.8, z: -8, hw: 1.5, hd: 0.62, rot: -0.12, top: 0.99 },
-  { x: -7.8, z: -6.6, hw: 1.5, hd: 0.62, rot: 0.5, top: 0.99 },
-  { x: 7.9, z: -6.4, hw: 1.5, hd: 0.62, rot: -0.5, top: 0.99 },
-  // 낮은 탁자 (STEP_UP 아래 — 걸어서 올라간다)
-  { x: -4.2, z: -6.7, hw: 0.9, hd: 0.5, rot: 0, top: 0.5 },
-  { x: 0.4, z: -5.9, hw: 0.9, hd: 0.5, rot: 0, top: 0.5 },
-  { x: 4.7, z: -6.5, hw: 0.75, hd: 0.5, rot: 0, top: 0.5 },
-  // 식탁 세트 (의자까지 한 덩어리 / 상판 윗면)
-  { x: -7.6, z: -1.6, hw: 0.8, hd: 1.3, rot: 0.15, top: 0.81 },
-  { x: -6.9, z: 3, hw: 0.8, hd: 1.3, rot: -0.2, top: 0.81 },
-  { x: 0.1, z: 1.4, hw: 0.8, hd: 1.3, rot: 0.05, top: 0.81 },
-  { x: 7.2, z: -1.9, hw: 0.8, hd: 1.3, rot: -0.12, top: 0.81 },
-  { x: 6.6, z: 3.1, hw: 0.8, hd: 1.3, rot: 0.25, top: 0.81 },
-  // 좌우 벽의 랙 (90° 돌아간 것만 — 스크린 옆 랙은 이동 한계 밖이다)
-  { x: -(HALF_W - 0.75), z: -8.5, hw: 0.55, hd: 1.45, rot: 0, top: 4.4 },
-  { x: HALF_W - 0.75, z: -8.5, hw: 0.55, hd: 1.45, rot: 0, top: 4.4 },
-  { x: -(HALF_W - 0.75), z: -4.8, hw: 0.55, hd: 1.45, rot: 0, top: 4.4 },
-  { x: HALF_W - 0.75, z: -4.8, hw: 0.55, hd: 1.45, rot: 0, top: 4.4 },
-  // 장비 케이스
-  { x: HALF_W - 1.3, z: 1.6, hw: 0.7, hd: 0.45, rot: 0, top: 1.3 },
-  { x: HALF_W - 1.2, z: 3.2, hw: 0.55, hd: 0.45, rot: 0, top: 0.9 },
-  { x: HALF_W - 2.6, z: 2.4, hw: 0.5, hd: 0.45, rot: 0, top: 1.05 },
-  { x: -HALF_W + 1.3, z: 2.2, hw: 0.65, hd: 0.45, rot: 0, top: 1.15 },
-];
-
-/** 월드 좌표를 가구 로컬(rotation-y 역회전)로 옮긴다. lx = 폭 방향, lz = 깊이 방향 */
-function toLocal(
-  c: (typeof COLLIDERS)[number],
-  x: number,
-  z: number,
-): [number, number] {
-  const cos = Math.cos(c.rot);
-  const sin = Math.sin(c.rot);
-  const dx = x - c.x;
-  const dz = z - c.z;
-  return [dx * cos - dz * sin, dx * sin + dz * cos];
-}
-
-/**
- * 박스 하나하나에 대해: 플레이어 위치를 가구 로컬 좌표로 돌려 넣고,
- * 겹쳤으면 얕게 파고든 축으로 밀어낸다. 벽처럼 미끄러지는 느낌이 난다.
+ * 충돌 데이터와 판정은 **`lib/mp/collide.ts` 하나에만 있다.**
  *
- * 발(feetY)이 윗면보다 높으면 막지 않는다 — 뛰어넘거나 위에 올라선 상태다.
+ * 서버(워커)도 봇을 그 가구에 부딪히게 해야 하는데, 워커는 이 파일을 못 읽는다
+ * (three.js·React가 딸려온다). 여기 복붙해 두면 그 순간 갈리고, 증상은 고약하다 —
+ * 사람 화면에서 봇이 소파를 뚫고 지나간다. 그래서 데이터는 lib/mp 로 옮겼고
+ * 여기는 THREE.Vector3 를 제자리에서 고쳐 주는 얇은 껍데기만 남긴다.
  */
 export function resolveColliders(p: THREE.Vector3, feetY: number) {
-  for (const c of COLLIDERS) {
-    if (feetY >= c.top - 0.02 || c.top - feetY <= STEP_UP) continue;
-    const [lx0, lz0] = toLocal(c, p.x, p.z);
-    let lx = lx0;
-    let lz = lz0;
-    const ex = c.hw + PLAYER_R;
-    const ez = c.hd + PLAYER_R;
-    if (Math.abs(lx) >= ex || Math.abs(lz) >= ez) continue;
-    if (ex - Math.abs(lx) < ez - Math.abs(lz)) {
-      lx = Math.sign(lx || 1) * ex;
-    } else {
-      lz = Math.sign(lz || 1) * ez;
-    }
-    // 로컬 → 월드
-    const cos = Math.cos(c.rot);
-    const sin = Math.sin(c.rot);
-    p.x = c.x + lx * cos + lz * sin;
-    p.z = c.z - lx * sin + lz * cos;
-  }
+  const out = resolveCollisions(p.x, p.z, feetY);
+  p.x = out.x;
+  p.z = out.z;
 }
 
-/**
- * (x, z)에서 발이 닿을 높이. 바닥은 0, 가구 위에 서 있으면 그 윗면이다.
- *
- * `fromY`는 **판정 직전의 발 높이**다. 이보다 높은 윗면은 후보에서 뺀다 —
- * 안 그러면 소파 옆을 걷다가 발이 갑자기 소파 위로 순간이동한다.
- * 대신 조금(0.02) 여유를 둬서, 착지 프레임에서 살짝 파고든 발이 윗면을 놓치지 않게 한다.
- *
- * 발판 위에서 걸어 나가면 여기 값이 0으로 떨어지고, 호출자(LocalRig)가 그걸 보고
- * 낙하로 넘어간다. 낙하 판정을 여기 두지 않는 이유는 이 함수를 순수하게 두기 위해서다.
- */
-export function groundHeightAt(x: number, z: number, fromY: number): number {
-  let ground = 0;
-  for (const c of COLLIDERS) {
-    if (c.top > fromY + 0.02) continue; // 아직 이 윗면보다 아래에 있다
-    if (c.top <= ground) continue;
-    const [lx, lz] = toLocal(c, x, z);
-    // 딛는 판정은 밀어내기(PLAYER_R)보다 좁게 본다. 넓게 잡으면 가구 옆 허공에 선다
-    if (Math.abs(lx) > c.hw || Math.abs(lz) > c.hd) continue;
-    ground = c.top;
-  }
-  return ground;
-}
+export { groundHeightAt };

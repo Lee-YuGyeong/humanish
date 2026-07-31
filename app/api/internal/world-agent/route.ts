@@ -32,7 +32,7 @@ import { FALLBACK_POOL, type AgentContext, type AgentOutput } from '@/lib/agent/
 import { personaForSeat } from '@/lib/agent/persona';
 import { AGENT_SELF_URL, agentHeaders } from '@/lib/agent/prefill';
 import { apiError, readJson } from '@/lib/server/auth';
-import { getServiceClient } from '@/lib/server/supabase';
+import { buildWorldRoster, worldPersonaForSeat } from '@/lib/server/world-ai';
 
 export const dynamic = 'force-dynamic';
 
@@ -43,20 +43,23 @@ const MAX_TEXT_LEN = 300;
 const MAX_NICK_LEN = 20;
 
 /**
- * 발화 길이 상한. speakAt은 **풀 문구 길이**로 이미 정해졌으므로(bots.ts), 그 지연에
- * 긴 글이 실리면 "짧게 친 것치고 길다"가 미세한 봇 신호가 된다 (I1).
- * 풀 문구가 7~13자대라, 지연 오차(글자당 55ms)를 1초 안에 묶으려면 이쯤이 상한이다.
+ * 발화 길이 상한. **타이밍과는 무관하다** — bots.ts 의 speakAt 은 발화 길이가 아니라
+ * 미리 뽑은 글자 수 예산으로 정해진다(BOT_TYPE_CHARS_*). 그래서 여기서는 "사람이
+ * 채팅에 이보다 길게 쓰지 않는다"만 보면 된다.
  *
  * ★ 넘치면 **자르지 않고 버린다.** 잘린 말끝("…주말에 일도 많이")은 폴백 문구보다
- *   훨씬 더 봇 티가 난다 — 사람은 문장을 하다 말지 않는다. 버리면 풀 문구가 그대로
- *   나가고, 그건 최소한 온전한 한국어다 (실측: 3건 중 2건이 잘려 나왔다).
+ *   훨씬 더 봇 티가 난다 — 사람은 문장을 하다 말지 않는다 (실측).
+ *   30자로 뒀더니 질문에 제대로 답한 문장이 되레 걸려 대부분 버려졌다(실측 2/3).
+ *   8b 가 실제로 내놓는 길이(24~33자)를 담을 만큼 올린다.
  */
-const MAX_REPLY_LEN = 30;
+const MAX_REPLY_LEN = 42;
 
 interface Body {
   room_id?: string;
   player_ids?: string[];
   history?: { nickname?: string; text?: string; human?: boolean }[];
+  /** 반응을 부른 사람 발화. 스스로 말을 꺼내는 경우에는 없다. */
+  trigger?: string | null;
 }
 
 interface ChatLine {
@@ -102,32 +105,50 @@ export async function POST(req: Request): Promise<Response> {
     const wanted = Array.isArray(body.player_ids) ? body.player_ids.slice(0, MAX_BOTS) : [];
     if (!roomId || wanted.length === 0) return notFound();
 
-    const db = getServiceClient();
+    // 명단을 여기서 다시 만든다. 워커가 보낸 id를 그대로 믿지 않는다 — 봇이 아닌
+    // 자리로 발화를 만들어 달라고 하면 사람 자리에 봇 말이 실린다.
+    // world-room 과 **같은 함수**를 쓴다. 한쪽만 월드 AI를 알면 그 AI는 영원히
+    // 풀 문구만 말한다 (실측으로 한 번 겪은 경로다).
+    const roster = await buildWorldRoster(roomId);
+    if (!roster) return notFound();
 
-    // 좌석을 여기서 다시 읽는다. 워커가 보낸 id를 그대로 믿지 않는다 —
-    // 봇이 아닌 자리로 발화를 만들어 달라고 하면 사람 자리에 봇 말이 실린다.
-    // 방 스코프를 반드시 건다 (I10).
-    const { data: playerRows } = await db
-      .from('players')
-      .select('id, seat, is_bot')
-      .eq('room_id', roomId);
-    const bots = ((playerRows ?? []) as { id: string; seat: number; is_bot: boolean }[])
-      .filter((p) => p.is_bot && wanted.includes(p.id));
+    const bots = roster.seats.filter((s) => s.is_bot && wanted.includes(s.id));
     if (bots.length === 0) return empty();
 
     const history = sanitizeHistory(body.history);
     // 말투 관측은 **사람 발화만** — 봇 풀 문구를 배우면 봇끼리 서로 닮아간다
     // (lib/agent/chat-reply.ts와 같은 이유).
     const styleProfile = observeStyle(history.filter((h) => h.human).map((h) => h.text));
-    const visibleHistory = history.map((h) => ({ speaker: h.nickname, text: h.text }));
 
-    // question을 싣지 않으므로 buildMessages의 chat 분기("자연스럽게 한마디")를 탄다.
-    // 월드에는 페이즈가 없다 — 워커는 게임 규칙을 모르고, 여기서도 알려주지 않는다.
+    /*
+     * ★ 반응을 부른 **그 한마디**를 question 으로 넘긴다 (워커가 실어 보낸다).
+     *
+     * 안 넘기면 buildMessages 의 chat 분기("대화 흐름에 자연스럽게 한마디 끼어들어라")를
+     * 타는데, 누가 말을 걸어서 대꾸하는 상황에는 그게 안 맞는다 — 흐름에는 맞지만
+     * 질문에는 안 맞는 답이 나온다 (실측: "안녕" → "그러게").
+     * 반대로 **스스로 말을 꺼낼 때는 trigger 가 없고**, 그때는 chat 분기가 맞다.
+     *
+     * 기록에서는 뺀다. 남겨두면 같은 문장이 [대화 기록]과 [지금 답할 질문]에 두 번
+     * 나오고, generate.ts 의 에코 검사가 그걸 베끼기로 오인해 폴백으로 바꾼다.
+     */
+    const trigger = typeof body.trigger === 'string' ? body.trigger.slice(0, MAX_TEXT_LEN) : null;
+    const triggerIdx = trigger ? history.map((h) => h.text).lastIndexOf(trigger) : -1;
+    const visibleHistory = history
+      .filter((_, i) => i !== triggerIdx)
+      .map((h) => ({ speaker: h.nickname, text: h.text }));
+
+    /*
+     * ★ 월드 AI 에게는 **월드 인물**을 준다 (lib/server/world-ai.ts).
+     *   게임 페르소나는 의심·투표를 전제로 만들어져서, 그냥 노는 공간에서는
+     *   동문서답으로 보인다 (실측: "안녕하세요" → "야 근데 야근 너무 힘들어").
+     *   게임이 시작된 방의 진짜 봇은 그대로 게임 페르소나를 쓴다.
+     */
     const jobs = bots.map((b) => ({
       player_id: b.id,
       context: {
-        persona: personaForSeat(b.seat),
+        persona: b.synthetic ? worldPersonaForSeat(b.seat) : personaForSeat(b.seat),
         phase: 'chat' as const,
+        question: trigger ?? undefined,
         visibleHistory,
         styleProfile,
         suspicionOnMe: 0.2,
@@ -137,7 +158,12 @@ export async function POST(req: Request): Promise<Response> {
     const res = await fetch(`${AGENT_SELF_URL}/api/agent`, {
       method: 'POST',
       headers: agentHeaders(),
-      body: JSON.stringify({ room_id: roomId, bots: jobs }),
+      body: JSON.stringify({
+        room_id: roomId,
+        bots: jobs,
+        // 월드 AI 는 players 행이 없어 agent_logs 외래키에 걸린다 (lib/server/world-ai.ts).
+        no_log: bots.some((b) => b.synthetic),
+      }),
     });
     if (!res.ok) {
       console.error(`[world-agent] /api/agent ${res.status} — 풀 문구 유지 (room ${roomId})`);

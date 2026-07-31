@@ -52,6 +52,24 @@ function element(): HTMLAudioElement {
  * 음악을 켠다. 방에 들어오는 순간(카운트다운과 함께) 한 번, 영상이 끝난 뒤 한 번.
  * pause 로 멈춘 뒤에 다시 부르면 **멈춘 자리에서** 이어진다 (currentTime 을 안 건드린다).
  */
+/**
+ * 자동재생이 막혔을 때 걸어두는 일회성 리스너. 다음 클릭에 스스로 다시 켠다.
+ *
+ * ★ 이게 없으면 **한 번 막힌 음악은 영영 안 나온다.** 볼륨을 만져야 되살아나는데,
+ *   그걸 아는 사람이 없다 (영상 소리도 같은 이유로 무음이었다 — warehouse.tsx 참고).
+ */
+let armed = false;
+function armRetryOnGesture(): void {
+  if (armed) return;
+  armed = true;
+  const retry = () => {
+    armed = false;
+    startMusic();
+  };
+  window.addEventListener('pointerdown', retry, { once: true });
+  window.addEventListener('keydown', retry, { once: true });
+}
+
 export function startMusic(): void {
   const el = element();
   el.volume = volume;
@@ -61,9 +79,10 @@ export function startMusic(): void {
       emit();
     },
     () => {
-      // 브라우저가 막았다. 볼륨을 만지면 그때 다시 시도한다 (setVolume 참고)
+      // 브라우저가 막았다. 다음 조작(클릭·키)에 스스로 다시 시도한다.
       playing = false;
       emit();
+      armRetryOnGesture();
     },
   );
 }

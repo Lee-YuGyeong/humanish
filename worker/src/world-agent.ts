@@ -36,6 +36,8 @@ export async function fetchAgentLines(
   roomId: string,
   playerIds: string[],
   history: ChatLine[],
+  /** 반응을 부른 사람 발화. 스스로 말을 꺼내는 거면 null — 그때는 흐름에 끼어드는 게 맞다. */
+  trigger: string | null,
   timeoutMs: number,
 ): Promise<AgentLine[]> {
   const url = `${env.NEXT_ORIGIN.replace(/\/$/, '')}/api/internal/world-agent`;
@@ -47,7 +49,7 @@ export async function fetchAgentLines(
         authorization: `Bearer ${env.WORLD_SHARED_SECRET}`,
         'content-type': 'application/json',
       },
-      body: JSON.stringify({ room_id: roomId, player_ids: playerIds, history }),
+      body: JSON.stringify({ room_id: roomId, player_ids: playerIds, history, trigger }),
       // speakAt을 넘겨 오는 답은 쓸 데가 없다. 호출부가 남은 시간을 그대로 넘긴다.
       signal: AbortSignal.timeout(timeoutMs),
     });

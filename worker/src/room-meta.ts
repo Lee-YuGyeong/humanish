@@ -27,6 +27,11 @@ export interface RoomMeta {
   seats: SeatRow[];
   /** 봇이 3D 공간에서 던지는 한마디 풀. 클라이언트로 절대 나가지 않는다 */
   botLines: string[];
+  /**
+   * 게임이 아직 안 돌아가는 방인가 (= 월드 AI 만 서 있다).
+   * 대화 성향을 가른다 — 게임 중 봇은 아껴 말하고, 동행자는 잘 대꾸한다.
+   */
+  companionMode: boolean;
 }
 
 /** Next가 잠깐 느릴 때 워커 전체가 멈추지 않도록 상한을 둔다. */
@@ -50,6 +55,7 @@ export async function fetchRoomMeta(env: Env, roomId: string): Promise<RoomMeta 
       phase?: string | null;
       seats?: SeatRow[];
       bot_lines?: string[];
+      companion_mode?: boolean;
     };
     if (typeof body.capacity !== 'number' || !Array.isArray(body.seats)) return null;
 
@@ -58,6 +64,7 @@ export async function fetchRoomMeta(env: Env, roomId: string): Promise<RoomMeta 
       phase: body.phase ?? null,
       seats: body.seats,
       botLines: Array.isArray(body.bot_lines) ? body.bot_lines : [],
+      companionMode: body.companion_mode === true,
     };
   } catch (e) {
     console.warn(`[room-meta] 실패 ${roomId}: ${e instanceof Error ? e.message : String(e)}`);

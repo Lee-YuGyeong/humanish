@@ -155,6 +155,12 @@ interface Body {
   model?: string;
   room_id?: string;
   bots?: { player_id?: string; context?: AgentContext }[];
+  /**
+   * agent_logs 기록을 건너뛴다. 3D 월드의 AI 는 players 행이 없어서
+   * (lib/server/world-ai.ts) player_id 외래키에 매번 걸린다 — 기록은 못 남기고
+   * 콘솔만 에러로 덮인다. 발화 자체는 그대로 만든다.
+   */
+  no_log?: boolean;
 }
 
 /** 정원 상한(8)보다 많은 봇을 한 번에 만들 일이 없다 (SPEC §4). */
@@ -253,7 +259,7 @@ export async function POST(req: Request): Promise<Response> {
         throw new ApiError(400, 'player_id나 context 없는 봇이 있다');
       }
       jobs = bots.map((b) => ({ player_id: b.player_id!, context: b.context! }));
-      roomId = body.room_id;
+      roomId = body.no_log ? null : body.room_id;
     }
 
     // 봇 수만큼 병렬 (§12.3). 순차 호출은 봇 수 배만큼 느리다.

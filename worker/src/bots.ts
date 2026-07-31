@@ -38,8 +38,12 @@ import {
   BOT_READ_MIN_MS,
   BOT_REACT_CHANCE,
   BOT_REACT_COOLDOWN_MS,
+  COMPANION_REACT_CHANCE,
+  COMPANION_REACT_COOLDOWN_MS,
   BOT_SPEED_MAX,
   BOT_SPEED_MIN,
+  BOT_TYPE_CHARS_MAX,
+  BOT_TYPE_CHARS_MIN,
   GRAVITY,
   JUMP_SPEED,
   MOVE_THROTTLE_MS,
@@ -48,6 +52,9 @@ import {
 } from '../../lib/mp/constants';
 import type { AnimState, PlayerSnapshot } from '../../lib/mp/protocol';
 import { spawnFor } from '../../lib/mp/spawn';
+// 가구는 클라이언트만 아는 게 아니다 — 좌표를 만드는 건 서버라, 서버가 같은 가구를
+// 보지 않으면 봇이 소파를 뚫고 지나간다. 데이터·판정은 lib/mp/collide.ts 하나뿐이다.
+import { isBlocked, resolveCollisions } from '../../lib/mp/collide';
 // 타이핑 지연은 2D 게임과 **같은 곡선**을 쓴다 (lib/agent/disguise.ts — 소유 B).
 // 재는 대상이 같기 때문이다: "사람이 이 길이의 한국어를 치는 데 걸리는 시간".
 // 여기 복사해 두면 그 순간 두 벌이 되고, 한쪽만 손보면 월드에서만 티가 나기 시작한다.
@@ -60,6 +67,40 @@ const ARRIVE_EPS = 0.25;
 const TURN_RATE = 3.4;
 /** 벽에서 이만큼 떨어진 데까지만 목적지를 잡는다. */
 const EDGE_INSET = 1.2;
+
+/**
+ * 봇은 낮은 탁자에도 올라서지 않는다 (stepUp = 0 — 전부 막는 것으로 본다).
+ *
+ * 사람은 STEP_UP(0.55) 아래 턱을 걸어서 넘고, 넘는 순간 발 높이가 탁자 윗면으로
+ * 올라간다(groundHeightAt). 봇에게 같은 걸 주려면 y 도 같이 올려야 하는데,
+ * 빠뜨리면 **탁자를 뚫고 걷는 그림**이 된다 — 지금 고치려는 바로 그 증상이다.
+ * 돌아가게 두는 쪽이 안전하고, 봇이 가구에 안 올라가는 건 원래 정한 바다.
+ */
+const BOT_STEP_UP = 0;
+
+/** 목적지를 고를 때 가구를 피해 다시 뽑는 횟수. 다 실패하면 그냥 마지막 값을 쓴다. */
+const TARGET_TRIES = 12;
+
+/**
+ * 이만큼 가까워지지 못하면 막힌 것으로 보고 목적지를 다시 잡는다 (ms).
+ *
+ * 충돌만 넣고 이걸 빠뜨리면 봇이 소파 뒤 목적지를 향해 **소파에 영원히 비빈다.**
+ * 사람은 못 가는 데를 계속 밀지 않는다 — 몇 초 해보고 딴 데로 간다.
+ */
+const STUCK_MS = 2_500;
+/** 이만큼은 줄어야 "가까워졌다"고 본다 (m). 잡음으로 진행 판정이 뒤집히지 않게 한다. */
+const PROGRESS_EPS = 0.05;
+
+/**
+ * 아예 못 움직인 채로 이만큼 지나면 곧장 목적지를 다시 잡는다 (ms).
+ *
+ * STUCK_MS(2.5초)는 "미끄러지긴 하는데 가까워지지 않는" 경우용이라 여기엔 너무 길다.
+ * 가구에 정면으로 눌린 봇이 2.5초 동안 서 있으면 눈에 띈다 — 사람은 부딪히면
+ * 반 박자 안에 방향을 튼다.
+ */
+const BLOCKED_MS = 600;
+/** 이 비율보다 적게 갔으면 "못 갔다"로 본다 (이번 틱에 가려던 거리 대비). */
+const BLOCKED_RATIO = 0.25;
 
 export interface BotState {
   id: string;
@@ -120,6 +161,13 @@ export interface BotState {
 
   /** 이 시각 전에는 사람 말에 반응하지 않는다 (epoch ms). 한 자리가 대화를 독점하지 않게 한다. */
   nextReactAt: number;
+
+  /** 목적지까지 남은 거리의 최근 최소값. 안 줄면 가구에 막힌 것이다 */
+  bestDist: number;
+  /** bestDist 가 마지막으로 갱신된 시각 (epoch ms) */
+  progressAt: number;
+  /** 마지막으로 실제로 움직인 시각 (epoch ms). 가구에 정면으로 눌렸는지 본다 */
+  blockedAt: number;
 }
 
 /** 저장·복원용. 좌표만 남기면 충분하다 — 나머지는 다시 뽑아도 티가 안 난다. */
@@ -134,11 +182,20 @@ function rand(min: number, max: number): number {
   return min + Math.random() * (max - min);
 }
 
+/**
+ * 설 수 있는 자리 하나. **가구 안은 피한다** —
+ * 가구 안을 목적지로 잡으면 봇이 그 앞에서 영원히 비빈다.
+ */
 function randomPoint(): { x: number; z: number } {
-  return {
-    x: rand(WORLD.minX + EDGE_INSET, WORLD.maxX - EDGE_INSET),
-    z: rand(WORLD.minZ + EDGE_INSET, WORLD.maxZ - EDGE_INSET),
-  };
+  let p = { x: 0, z: 0 };
+  for (let i = 0; i < TARGET_TRIES; i += 1) {
+    p = {
+      x: rand(WORLD.minX + EDGE_INSET, WORLD.maxX - EDGE_INSET),
+      z: rand(WORLD.minZ + EDGE_INSET, WORLD.maxZ - EDGE_INSET),
+    };
+    if (!isBlocked(p.x, p.z, 0, BOT_STEP_UP)) return p;
+  }
+  return p; // 다 막혔다면(있을 수 없다) 그냥 간다 — 아래 막힘 판정이 곧 다시 잡는다
 }
 
 // 시작 위치는 lib/mp/spawn.ts 하나로 정한다. 사람(room-do.ts·클라이언트)도 같은 함수를
@@ -151,7 +208,13 @@ export function createBot(
   now: number,
   pose?: BotPose,
 ): BotState {
-  const start = pose ?? { ...spawnFor(seed.seat, capacity), heading: 0 };
+  const raw = pose ?? { ...spawnFor(seed.seat, capacity), heading: 0 };
+  // 좌석 원(spawnFor)이 가구와 겹칠 수 있고, 저장된 좌표는 가구를 옮기기 전 것일 수 있다.
+  // 가구 안에서 시작하면 첫 틱에 튕겨 나가는 게 보인다 — 여기서 미리 밀어낸다.
+  const pushed = resolveCollisions(raw.x, raw.z, 0, BOT_STEP_UP);
+  // 밀어내도 안 풀리는 쐐기(소파 두 개 사이 구석)일 수 있다. 그러면 빈자리를 새로 뽑는다.
+  const free = isBlocked(pushed.x, pushed.z, 0, BOT_STEP_UP) ? randomPoint() : pushed;
+  const start = { ...raw, x: free.x, z: free.z };
   const target = randomPoint();
   return {
     ...seed,
@@ -180,7 +243,31 @@ export function createBot(
     speakAt: 0,
     speechSeq: 0,
     nextReactAt: 0,
+    bestDist: Infinity,
+    progressAt: now,
+    blockedAt: now,
   };
+}
+
+/** 다음 목적지를 잡고 막힘 판정을 초기화한다. */
+function retarget(bot: BotState, now: number): void {
+  const next = randomPoint();
+  bot.tx = next.x;
+  bot.tz = next.z;
+  bot.bestDist = Infinity;
+  bot.progressAt = now;
+  bot.blockedAt = now;
+}
+
+/**
+ * 원하는 방향으로 서서히 돈다. 사람이 마우스를 홱 돌리는 것보다 느려야 자연스럽다.
+ * atan2(dx, dz) 는 three.js 의 y회전과 축이 맞는다 (app/world/avatar.tsx 의 정면 축 주석).
+ */
+function turnToward(bot: BotState, want: number, dt: number): void {
+  let diff = ((want - bot.heading + Math.PI) % (Math.PI * 2)) - Math.PI;
+  if (diff < -Math.PI) diff += Math.PI * 2;
+  const maxTurn = TURN_RATE * dt;
+  bot.heading += Math.max(-maxTurn, Math.min(maxTurn, diff));
 }
 
 /**
@@ -196,10 +283,13 @@ export function stepBot(bot: BotState, now: number, dt: number): boolean {
   //   예약이 걸려도 typeAt 전(= 읽는 중)에는 평소처럼 걷는다.
   const typing = bot.pendingText !== null && now >= bot.typeAt;
 
-  if (typing) {
+  // ★ 걷으려 하지 않는 동안에는 막힘 시계를 멈춘다. 안 그러면 말하려고 서 있던 3초가
+  //   "못 갔다"로 세어져서, 말이 끝나자마자 가던 목적지를 잊고 방향을 튼다.
+  //   막힘 판정은 **걸으려고 애쓴 시간**만 재야 한다.
+  if (typing || now < bot.waitUntil) {
     bot.anim = 'idle';
-  } else if (now < bot.waitUntil) {
-    bot.anim = 'idle';
+    bot.progressAt = now;
+    bot.blockedAt = now;
   } else {
     const dx = bot.tx - bot.x;
     const dz = bot.tz - bot.z;
@@ -207,24 +297,59 @@ export function stepBot(bot: BotState, now: number, dt: number): boolean {
 
     if (dist < ARRIVE_EPS) {
       // 도착 — 잠깐 서 있다가 다음 목적지로. 속도도 다시 뽑아 걸음걸이를 바꾼다.
-      const next = randomPoint();
-      bot.tx = next.x;
-      bot.tz = next.z;
+      retarget(bot, now);
       bot.waitUntil = now + rand(BOT_IDLE_MIN_MS, BOT_IDLE_MAX_MS);
       bot.speed = rand(BOT_SPEED_MIN, BOT_SPEED_MAX);
       bot.anim = 'idle';
+    } else if (dist >= bot.bestDist - PROGRESS_EPS && now - bot.progressAt > STUCK_MS) {
+      // 몇 초째 가까워지지 못했다 = 가구에 막혔다. 사람은 못 가는 데를 계속 밀지 않는다.
+      retarget(bot, now);
+      bot.anim = 'idle';
     } else {
-      const step = Math.min(bot.speed * dt, dist);
-      bot.x += (dx / dist) * step;
-      bot.z += (dz / dist) * step;
-      bot.anim = 'walk';
+      if (dist < bot.bestDist - PROGRESS_EPS) {
+        bot.bestDist = dist;
+        bot.progressAt = now;
+      }
 
-      // 진행 방향으로 서서히 돈다. atan2(dx, dz)는 three.js의 y회전과 축이 맞는다.
-      const want = Math.atan2(dx, dz);
-      let diff = ((want - bot.heading + Math.PI) % (Math.PI * 2)) - Math.PI;
-      if (diff < -Math.PI) diff += Math.PI * 2;
-      const maxTurn = TURN_RATE * dt;
-      bot.heading += Math.max(-maxTurn, Math.min(maxTurn, diff));
+      const step = Math.min(bot.speed * dt, dist);
+      const fromX = bot.x;
+      const fromZ = bot.z;
+
+      // 가구에 막히면 밀려난다 — 벽을 따라 미끄러지는 느낌이 난다.
+      // ★ 사람(LocalRig)과 **같은 함수**를 쓴다. 여기만 다르면 봇이 가구를 뚫는다.
+      // ★ 발 높이를 bot.y 가 아니라 **0으로 고정해서** 본다. 점프 중(y>0)에 판정을
+      //   풀면 봇이 소파를 뛰어넘고 그 안에 착지한다 — 봇의 착지 높이는 항상 0이라
+      //   가구 안에 서 있게 된다. 뛰어도 가구는 못 넘는 편이 낫다.
+      const moved = resolveCollisions(
+        bot.x + (dx / dist) * step,
+        bot.z + (dz / dist) * step,
+        0,
+        BOT_STEP_UP,
+      );
+      // ★ 밀어냈는데도 아직 가구 안이면 **그 자리로 가지 않는다.**
+      //   소파 두 개가 ㄱ 자로 놓인 구석처럼, A 에서 밀면 B 안이고 B 에서 밀면 A 안인
+      //   쐐기가 있다. 거기는 몇 번을 밀어도 안 풀린다 — 들어가지 않는 게 유일한 답이다.
+      if (!isBlocked(moved.x, moved.z, 0, BOT_STEP_UP)) {
+        bot.x = moved.x;
+        bot.z = moved.z;
+      }
+
+      const mx = bot.x - fromX;
+      const mz = bot.z - fromZ;
+
+      if (Math.hypot(mx, mz) < step * BLOCKED_RATIO) {
+        // 가구에 정면으로 눌려 거의 못 갔다.
+        // ★ 여기서 'walk' 를 유지하면 **제자리걸음**이 된다 — 화면에서 제일 이상해
+        //   보이는 게 그거다. 사람도 부딪히면 멈추고 방향을 튼다.
+        bot.anim = 'idle';
+        if (now - bot.blockedAt > BLOCKED_MS) retarget(bot, now);
+      } else {
+        bot.blockedAt = now;
+        bot.anim = 'walk';
+        // ★ 목적지가 아니라 **실제로 간 방향**으로 돈다. 가구를 따라 미끄러지는 동안
+        //   목적지를 보고 있으면 옆걸음·뒷걸음처럼 보인다. 사람은 가는 쪽을 본다.
+        turnToward(bot, Math.atan2(mx, mz), dt);
+      }
     }
   }
 
@@ -306,7 +431,13 @@ export function scheduleSpeech(
 ): void {
   bot.pendingText = text;
   bot.typeAt = now + readDelayMs;
-  bot.speakAt = bot.typeAt + typingDelayMs(text) + Math.floor(Math.random() * SPEAK_JITTER_MS);
+  // ★ 지연은 **text 길이와 무관하다** (BOT_TYPE_CHARS_* 주석 참고). 그 문구는 LLM 이
+  //   제때 오면 통째로 갈아치워지므로, 그 길이로 타이밍을 정하면 아무도 못 볼 문장이
+  //   타이밍을 정하는 셈이고 LLM 답 길이까지 옥죈다.
+  //   typingDelayMs 를 그대로 쓰려고 같은 길이의 더미를 넘긴다 — 공식을 복사하지 않는다.
+  const chars = Math.round(rand(BOT_TYPE_CHARS_MIN, BOT_TYPE_CHARS_MAX));
+  bot.speakAt =
+    bot.typeAt + typingDelayMs('x'.repeat(chars)) + Math.floor(Math.random() * SPEAK_JITTER_MS);
   bot.speechSeq += 1;
 }
 
@@ -360,13 +491,22 @@ export function readDelayMs(): number {
  * **봇의 말에는 반응하지 않는다.** 호출부가 사람 소켓의 채팅에서만 부르므로
  * 구조적으로 지켜진다 — 봇끼리 주고받기 시작하면 끝없이 돈다.
  */
-export function pickResponder(bots: BotState[], now: number): BotState | null {
+export function pickResponder(
+  bots: BotState[],
+  now: number,
+  /** 게임이 안 돌아가는 방(월드 AI만 있는 방)이면 훨씬 잘 대꾸한다 — 숨길 게 없다. */
+  companionMode = false,
+): BotState | null {
+  const chance = companionMode ? COMPANION_REACT_CHANCE : BOT_REACT_CHANCE;
+  const cooldown = companionMode ? COMPANION_REACT_COOLDOWN_MS : BOT_REACT_COOLDOWN_MS;
+
   const eligible = bots.filter((b) => b.pendingText === null && now >= b.nextReactAt);
   if (eligible.length === 0) return null;
-  if (Math.random() >= BOT_REACT_CHANCE) return null;
+  if (Math.random() >= chance) return null;
 
   const bot = eligible[Math.floor(Math.random() * eligible.length)];
-  bot.nextReactAt = now + BOT_REACT_COOLDOWN_MS;
+  bot.nextReactAt = now + cooldown;
+  // 방금 대꾸한 자리가 몇 초 뒤 혼잣말까지 하면 그 자리만 유난히 말이 많아진다.
   bot.nextChatAt = Math.max(bot.nextChatAt, now + BOT_CHAT_MIN_MS);
   return bot;
 }
