@@ -21,7 +21,7 @@ import Link from 'next/link';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { PlayerGrid } from '@/components/player-grid';
-import { RoomLobby } from '@/components/room-lobby';
+import { RoomBoot, RoomLobby } from '@/components/room-lobby';
 import {
   ArrowLeftIcon,
   CheckIcon,
@@ -102,7 +102,9 @@ export function RoomView({ code }: { code: string }) {
   const roomId = room?.id;
 
   const { data: players = [] } = useRoster(roomId);
-  const { data: me = null } = useMe(roomId);
+  /** isPending 도 봐야 한다 — "아직 안 왔다"와 "참가자가 아니다"는 다른 상태다 */
+  const meQuery = useMe(roomId);
+  const me = meQuery.data ?? null;
   const { data: questions = [] } = useQuestions(roomId);
   const { data: answerRows = [] } = useAnswers(roomId);
   const { data: votes = [] } = useVotes(roomId);
@@ -159,12 +161,20 @@ export function RoomView({ code }: { code: string }) {
     );
   }
 
-  if (!room) {
-    return (
-      <main className="room-green flex min-h-screen items-center justify-center">
-        <p className="stencil text-[10px] text-grime">loading…</p>
-      </main>
-    );
+  /*
+   * ┌─ 들어올 때 옛 화면이 번쩍이지 않게 ────────────────────────────────────┐
+   * │ 방 정보와 내 자리 정보는 **따로** 온다. 예전에는 room 만 오면 곧장 아래  │
+   * │ 레이아웃을 그렸는데, 그 찰나에 me 가 아직 없어서 대기실 조건이 거짓이    │
+   * │ 되고 창고 화면이 한 번 지나갔다 — 화면에 남아 있던 직전 방의 결과표가    │
+   * │ 새 방에 들어가는 사람에게 그대로 보였다.                                │
+   * │ 둘 다 올 때까지 같은 색의 빈 판으로 덮는다. 라우트가 바뀌는 동안은      │
+   * │ app/room/[code]/loading.tsx 가 같은 일을 한다.                          │
+   * └────────────────────────────────────────────────────────────────────────┘
+   * me 가 null 로 **확정된** 경우(참가자가 아니다)는 기다리지 않는다 —
+   * 그건 아래 Panel 이 안내해야 하는 상태다.
+   */
+  if (!room || meQuery.isPending) {
+    return <RoomBoot />;
   }
 
   const seconds = remainMs == null ? null : Math.max(0, Math.ceil(remainMs / 1000));

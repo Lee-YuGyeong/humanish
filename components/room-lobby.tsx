@@ -33,6 +33,28 @@ import { useLobbyLines, useServerClock } from "@/lib/queries/room";
 import { selectIsBusy, selectIsPending, useRoomUi } from "@/lib/store/room";
 import styles from "./room-lobby.module.css";
 
+/**
+ * 방을 여는 동안 덮어두는 화면.
+ *
+ * ★ 왜 필요한가: 방 정보(room)는 왔는데 내 자리 정보(me)가 아직 안 온 찰나에
+ *   아래 RoomLobby 조건이 거짓이 되어 **옛 창고 화면이 한 번 번쩍인다.**
+ *   그 순간 화면에 뜨는 건 직전에 보던 방의 잔상이라 더 나쁘다 — 다 끝난 판의
+ *   결과표가 새 방에 들어가는 사람에게 보인다.
+ *   여기서 같은 색의 빈 판으로 덮어 그 틈을 없앤다.
+ */
+export function RoomBoot({ label = "방을 여는 중…" }: { label?: string }) {
+  return (
+    <div className={`${styles.root} flex h-screen items-center justify-center`}>
+      <div aria-hidden className={styles.backdrop} />
+      <div aria-hidden className={styles.noise} />
+      <div aria-hidden className={styles.scanlines} />
+      <p className={styles.label} aria-live="polite">
+        {label}
+      </p>
+    </div>
+  );
+}
+
 export function RoomLobby({
   code,
   room,
