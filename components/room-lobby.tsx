@@ -77,7 +77,7 @@ export function RoomLobby({
           </Link>
           <span className="h-4 w-px shrink-0" style={{ background: "var(--border2)" }} />
           <div className="min-w-0">
-            <div className={styles.label}>room</div>
+            <div className={`${styles.label} ${styles.labelStrong}`}>room</div>
             <div className={`${styles.mono} truncate text-[0.85rem] font-bold tracking-[0.12em]`}>
               {room.code}
             </div>
@@ -373,7 +373,7 @@ function RulePanel({ capacity }: { capacity: number }) {
         className="flex items-center justify-between border-b px-5 py-3"
         style={{ borderColor: "var(--border)" }}
       >
-        <span className={styles.label}>방 규칙</span>
+        <span className={`${styles.label} ${styles.labelStrong}`}>방 규칙</span>
         <span className={styles.tag}>표준</span>
       </div>
 

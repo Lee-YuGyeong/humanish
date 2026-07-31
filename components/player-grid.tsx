@@ -124,7 +124,7 @@ export function PlayerGrid({
                     'readout flex h-8 w-8 items-center justify-center rounded-[2px] text-[13px]',
                     p
                       ? isMe
-                        ? 'bg-tung/15 text-flare shadow-[inset_0_0_0_1px_rgba(255,217,172,0.45)]'
+                        ? 'bg-tung/15 text-flare shadow-[inset_0_0_0_1px_rgba(0,255,102,0.45)]'
                         : 'bg-black/45 text-dust'
                       : 'text-ash',
                   ].join(' ')}

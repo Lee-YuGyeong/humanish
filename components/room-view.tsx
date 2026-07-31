@@ -146,7 +146,7 @@ export function RoomView({ code }: { code: string }) {
 
   if (loadError) {
     return (
-      <main className="mx-auto flex min-h-screen max-w-lg flex-col justify-center gap-5 px-6">
+      <main className="room-green mx-auto flex min-h-screen max-w-lg flex-col justify-center gap-5 px-6">
         <p className="case border-signal/30 px-6 py-5 text-sm text-signal">{loadError}</p>
         <Link
           href="/main"
@@ -161,7 +161,7 @@ export function RoomView({ code }: { code: string }) {
 
   if (!room) {
     return (
-      <main className="flex min-h-screen items-center justify-center">
+      <main className="room-green flex min-h-screen items-center justify-center">
         <p className="stencil text-[10px] text-grime">loading…</p>
       </main>
     );
@@ -193,7 +193,7 @@ export function RoomView({ code }: { code: string }) {
   }
 
   return (
-    <div className="flex min-h-screen flex-col">
+    <div className="room-green flex min-h-screen flex-col">
       {/* 골강판 머리말 — 방 번호판과 계기판이 붙어 있다 */}
       <header className="rib sticky top-0 z-10 border-b border-black/70 shadow-[0_1px_0_rgba(214,207,194,0.05)]">
         <div className="mx-auto flex w-full max-w-3xl items-center justify-between gap-4 px-6 py-3">
@@ -327,12 +327,12 @@ function LobbyHero({
         className="pointer-events-none absolute inset-0"
         style={{
           backgroundImage:
-            'radial-gradient(50% 70% at 50% -20%, rgba(255,227,189,.11), transparent 70%)',
+            'radial-gradient(50% 70% at 50% -20%, rgba(0,255,102,.10), transparent 70%)',
         }}
       />
       <div className="relative">
         <p className="stencil text-[9px] text-ash">이 코드로 들어온다</p>
-        <p className="readout mt-3 text-[clamp(2.75rem,13vw,4.5rem)] leading-none tracking-[0.22em] text-linen drop-shadow-[0_0_30px_rgba(255,217,172,0.35)]">
+        <p className="readout mt-3 text-[clamp(2.75rem,13vw,4.5rem)] leading-none tracking-[0.22em] text-linen drop-shadow-[0_0_30px_rgba(0,255,102,0.35)]">
           {code}
         </p>
 
@@ -450,7 +450,7 @@ function LobbySay({
         className={[
           'stencil mt-1 flex w-full items-center justify-center gap-2.5 py-3 text-[10px] transition-all disabled:cursor-not-allowed disabled:opacity-30',
           mine?.is_ready
-            ? 'bg-tung/15 text-flare shadow-[inset_0_0_0_1px_rgba(255,217,172,0.45)]'
+            ? 'bg-tung/15 text-flare shadow-[inset_0_0_0_1px_rgba(0,255,102,0.45)]'
             : 'cut text-grime hover:text-tung',
         ].join(' ')}
       >
@@ -606,7 +606,7 @@ function Panel({
             className="pointer-events-none absolute inset-0"
             style={{
               backgroundImage:
-                'radial-gradient(55% 70% at 50% -20%, rgba(255,227,189,.10), transparent 70%)',
+                'radial-gradient(55% 70% at 50% -20%, rgba(0,255,102,.09), transparent 70%)',
             }}
           />
           <div className="relative">
@@ -794,7 +794,7 @@ function ChatPanel({
                 className={[
                   'max-w-[80%] px-3.5 py-2 text-[13px] leading-relaxed',
                   mine
-                    ? 'bg-tung/15 text-flare shadow-[inset_0_0_0_1px_rgba(255,217,172,0.28)]'
+                    ? 'bg-tung/15 text-flare shadow-[inset_0_0_0_1px_rgba(0,255,102,0.28)]'
                     : 'bg-steel text-bone shadow-[inset_0_1px_0_rgba(214,207,194,0.07)]',
                 ].join(' ')}
               >
@@ -919,7 +919,7 @@ function RevealPanel({
           className="pointer-events-none absolute inset-0"
           style={{
             backgroundImage:
-              'radial-gradient(55% 75% at 50% -20%, rgba(255,227,189,.12), transparent 70%)',
+              'radial-gradient(55% 75% at 50% -20%, rgba(0,255,102,.11), transparent 70%)',
           }}
         />
         <div className="relative">
@@ -939,7 +939,7 @@ function RevealPanel({
                 key={p.id}
                 className={[
                   'flex items-center gap-3.5 px-4 py-3',
-                  isMe ? 'bg-tung/8 shadow-[inset_0_0_0_1px_rgba(255,217,172,0.25)]' : 'cut',
+                  isMe ? 'bg-tung/8 shadow-[inset_0_0_0_1px_rgba(0,255,102,0.25)]' : 'cut',
                 ].join(' ')}
               >
                 <span className="readout w-4 shrink-0 text-center text-[11px] text-ash">

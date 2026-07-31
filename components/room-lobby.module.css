@@ -83,6 +83,15 @@
   color: var(--muted);
 }
 
+/*
+ * 섹션 제목용 라벨. 기본 .label 은 #666 이라 어두운 배경에서 거의 안 읽힌다.
+ * "room" · "방 규칙" 처럼 화면을 나누는 제목에만 얹어 또렷하게 만든다.
+ */
+.labelStrong {
+  color: #b8b8b8;
+  font-size: 0.56rem;
+}
+
 .mono {
   font-variant-numeric: tabular-nums;
   letter-spacing: 0.04em;
