@@ -166,9 +166,13 @@ function LocalRig({ conn, spawn }: { conn: WorldConnection; spawn: { x: number; 
 
   useFrame((_, delta) => {
     const k = keys.current;
-    const ax = (k.KeyD || k.ArrowRight ? 1 : 0) - (k.KeyA || k.ArrowLeft ? 1 : 0);
-    const az = (k.KeyW || k.ArrowUp ? 1 : 0) - (k.KeyS || k.ArrowDown ? 1 : 0);
-    const running = Boolean(k.ShiftLeft || k.ShiftRight);
+    // 마우스가 잠긴(=걷기) 동안에만 조작을 받는다. ESC 로 풀어 설정·대화를 여는
+    // 동안에는 이동·점프를 무시한다 — 그래야 대화 중에 몸이 걸어다니지 않는다.
+    // 입력창 포커스에 기대지 않는다(포커스를 강제하면 카메라를 못 돌린다, page.tsx 주석).
+    const active = document.pointerLockElement !== null;
+    const ax = active ? (k.KeyD || k.ArrowRight ? 1 : 0) - (k.KeyA || k.ArrowLeft ? 1 : 0) : 0;
+    const az = active ? (k.KeyW || k.ArrowUp ? 1 : 0) - (k.KeyS || k.ArrowDown ? 1 : 0) : 0;
+    const running = active && Boolean(k.ShiftLeft || k.ShiftRight);
 
     camera.getWorldDirection(forward.current);
     forward.current.y = 0;
@@ -186,7 +190,7 @@ function LocalRig({ conn, spawn }: { conn: WorldConnection; spawn: { x: number; 
     }
 
     // 점프. **땅에 있을 때만** 받는다 — 누른 채로 있어도 공중에서 다시 뛰지 않는다.
-    if ((k.Space || k.KeyE) && grounded.current) {
+    if (active && (k.Space || k.KeyE) && grounded.current) {
       vy.current = JUMP_SPEED;
       grounded.current = false;
     }

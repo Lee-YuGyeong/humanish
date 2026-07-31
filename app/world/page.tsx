@@ -172,23 +172,12 @@ export default function WorldPage() {
   const live = status === 'live' && ticket !== null;
 
   /*
-   * 대화는 **ESC 로 연다**(마우스 잠금이 풀리면 판이 뜬다). Enter 로는 열지 않는다 —
-   * 걷는 중 Enter 가 창을 여닫으면 조작과 섞여 헷갈린다.
-   *
-   * 대화가 열리면(=settingsOpen, chatOpen) 입력창에 **바로 포커스**를 준다. 두 가지가
-   * 한꺼번에 해결된다:
-   *   1) 클릭하지 않고 곧장 타이핑한다 — 판 옆 빈 곳을 잘못 눌러 다시 잠기는 일이 없다.
-   *   2) 포커스가 입력창에 있으면 LocalRig 의 typing 가드가 이동키를 무시한다.
-   *      → 대화 중에 WASD 로 **몸이 움직이지 않는다** (예전엔 포커스가 없어 걸어다녔다).
-   *
-   * rAF 로 한 박자 미룬다: ESC 로 막 잠금이 풀린 직후라 DOM 커밋과 pointerlock 해제가
-   * 끝난 다음에 focus() 해야 브라우저가 무시하지 않는다.
+   * ★ 입력창에 포커스를 **강제하지 않는다.** 포커스를 억지로 뺏으면 다시 걷기로
+   *   돌아가 카메라를 돌리려 할 때 방해가 된다(포커스가 창에 묶여 조작이 어긋난다).
+   *   "설정/대화 중에 몸이 걸어다니는" 문제는 포커스가 아니라 **포인터 잠금 상태**로
+   *   막는다 — world-scene.tsx 의 LocalRig 가 잠금이 풀린 동안 이동키를 무시한다.
+   *   말을 하려면 입력창을 한 번 클릭해 포커스를 준다(그래야 카메라도 자유롭다).
    */
-  useEffect(() => {
-    if (!(live && settingsOpen && chatOpen)) return;
-    const id = requestAnimationFrame(() => inputRef.current?.focus());
-    return () => cancelAnimationFrame(id);
-  }, [live, settingsOpen, chatOpen]);
 
   /*
    * 브라우저가 잠금을 **풀었다** = 사용자가 ESC 를 눌렀다 = 설정을 열라는 뜻이다.
