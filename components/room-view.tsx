@@ -782,10 +782,23 @@ function ChatPanel({
   const text = useRoomUi(selectChatDraft);
   const canSend = useRoomUi(selectCanSendChat);
   const bottomRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  /**
+   * 대화창은 평상시 잠들어 있다 — 누르면 깨어난다 (SPEC §5.4 화면 요청).
+   * 좁은 화면에서 입력칸이 늘 열려 있으면 좌석판·말풍선이 밀린다. 눌렀을 때만 열어
+   * 대화 로그에 시선이 머물게 한다. 로그의 말풍선 자체는 그대로다.
+   */
+  const [active, setActive] = useState(false);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages.length]);
+
+  // 깨어난 순간 커서를 입력칸에 둔다 — 한 번 눌러 바로 타이핑되게
+  useEffect(() => {
+    if (active) inputRef.current?.focus();
+  }, [active]);
 
   return (
     <Box>
@@ -816,29 +829,43 @@ function ChatPanel({
         <div ref={bottomRef} />
       </ul>
 
-      <form
-        className="flex gap-1.5"
-        onSubmit={(e) => {
-          e.preventDefault();
-          const t = text.trim();
-          if (!t) return;
-          // 채팅만 보내는 즉시 비운다 — 연달아 치는 것이라 입력칸이 안 비면 손이 멈춘다
-          // (reducer.ts 의 draft/chatSent 주석).
-          dispatch(roomActions.chatSent());
-          send.run(t);
-        }}
-      >
-        <input
-          value={text}
-          onChange={(e) => dispatch(roomActions.chatChanged(e.target.value))}
-          maxLength={200}
-          placeholder="말한다"
-          className={INPUT}
-        />
-        <button type="submit" disabled={!canSend} aria-label="보내기" className={PRIMARY_BUTTON}>
-          <SendIcon className="h-3.5 w-3.5" />
+      {active ? (
+        <form
+          className="flex items-center gap-2"
+          onSubmit={(e) => {
+            e.preventDefault();
+            const t = text.trim();
+            if (!t) return;
+            // 채팅만 보내는 즉시 비운다 — 연달아 치는 것이라 입력칸이 안 비면 손이 멈춘다
+            // (reducer.ts 의 draft/chatSent 주석).
+            dispatch(roomActions.chatSent());
+            send.run(t);
+            // 보낸 뒤에도 열어 둔다 — 대화 흐름이 끊기지 않게 커서를 다시 잡아준다
+            requestAnimationFrame(() => inputRef.current?.focus());
+          }}
+        >
+          <input
+            ref={inputRef}
+            value={text}
+            onChange={(e) => dispatch(roomActions.chatChanged(e.target.value))}
+            // 빈 채로 바깥을 누르면 다시 잠든다. 쓰던 글이 남아 있으면 열어 둔다
+            onBlur={() => {
+              if (!text.trim()) setActive(false);
+            }}
+            maxLength={200}
+            placeholder="말한다…"
+            className={CHAT_INPUT}
+          />
+          <button type="submit" disabled={!canSend} aria-label="보내기" className={CHAT_SEND}>
+            <SendIcon className="h-4 w-4" />
+          </button>
+        </form>
+      ) : (
+        <button type="button" onClick={() => setActive(true)} className={CHAT_RESTING}>
+          <span className="flex-1">눌러서 말한다…</span>
+          <SendIcon className="h-4 w-4 shrink-0 text-grime transition-colors group-hover:text-tung" />
         </button>
-      </form>
+      )}
     </Box>
   );
 }
@@ -1027,6 +1054,18 @@ function RevealPanel({
 
 const INPUT =
   'cut min-w-0 flex-1 px-4 py-3 text-[13px] text-bone transition-colors placeholder:text-ash focus:border-tung/40 focus:outline-none';
+
+/*
+ * 자유 채팅 대화창 — 산업용 .cut 대신 둥근 대화 바로 자연스럽게 짓는다.
+ * 평상시엔 CHAT_RESTING(잠든 바)만 보이고, 누르면 CHAT_INPUT(깨어난 입력칸)으로 바뀐다.
+ * 강조색은 room-green 스코프가 초록으로 옮긴다 (app/globals.css).
+ */
+const CHAT_RESTING =
+  'group flex w-full items-center gap-3 rounded-2xl border border-bone/10 bg-black/25 px-5 py-3.5 text-left text-[13px] text-ash transition-colors hover:border-tung/40 hover:text-bone';
+const CHAT_INPUT =
+  'min-w-0 flex-1 rounded-2xl border border-tung/40 bg-black/40 px-5 py-3.5 text-[13px] text-bone placeholder:text-ash transition-shadow focus:border-tung/60 focus:outline-none focus:shadow-[0_0_0_3px_rgba(0,255,102,0.12)]';
+const CHAT_SEND =
+  'flex h-[46px] w-[46px] shrink-0 items-center justify-center rounded-2xl bg-tung/15 text-flare transition-colors hover:bg-tung/25 disabled:cursor-not-allowed disabled:bg-black/25 disabled:text-ash';
 
 /** 평상시 조작 — 텅스텐 조명이 든 금속 버튼 */
 const PRIMARY_BUTTON =

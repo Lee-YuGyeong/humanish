@@ -14,11 +14,17 @@
 
 import dynamic from 'next/dynamic';
 import Link from 'next/link';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 
 import { spawnFor } from '@/lib/mp/spawn';
 import type { Role } from '@/lib/game/types';
 import { WorldConnection, type WorldEvents } from './net/connection';
+import {
+  getVolume as getMusicVolume,
+  isPlaying as isMusicPlaying,
+  setVolume as setMusicVolume,
+  subscribe as musicSubscribe,
+} from './music';
 import { useWorldStore } from './store';
 
 const WorldScene = dynamic(() => import('./world-scene'), {
@@ -177,7 +183,12 @@ export default function WorldPage() {
             </p>
           ) : null}
         </div>
-        {live ? <StatusChip /> : null}
+        {live ? (
+          <div className="flex flex-col items-end gap-2">
+            <StatusChip />
+            <MusicVolume />
+          </div>
+        ) : null}
       </header>
 
       {/* 입장 패널 */}
@@ -260,6 +271,39 @@ export default function WorldPage() {
         </div>
       ) : null}
     </main>
+  );
+}
+
+/**
+ * 음악 볼륨. 음악은 스크린 영상이 끝난 뒤에 시작한다 (app/world/music.ts).
+ *
+ * ★ 슬라이더는 영상이 도는 동안에도 보인다. 시작하면 조용해지는 게 아니라
+ *   **아직 안 나온다**는 걸 알려야, 소리가 안 난다고 볼륨을 끝까지 올리지 않는다.
+ * ★ pointer-events-auto 를 명시한다 — 이 헤더는 통째로 pointer-events-none 이라
+ *   그냥 두면 슬라이더가 안 잡힌다.
+ */
+function MusicVolume() {
+  const volume = useSyncExternalStore(musicSubscribe, getMusicVolume, () => 0.45);
+  const playing = useSyncExternalStore(musicSubscribe, isMusicPlaying, () => false);
+
+  return (
+    <div className="pointer-events-auto flex items-center gap-2 rounded-full bg-black/50 px-3 py-1.5 backdrop-blur">
+      <span className="font-mono text-[10px] tracking-wider text-neutral-400">
+        {playing ? '음악' : '영상 후 음악'}
+      </span>
+      <input
+        type="range"
+        min={0}
+        max={100}
+        value={Math.round(volume * 100)}
+        aria-label="음악 볼륨"
+        onChange={(e) => setMusicVolume(Number(e.target.value) / 100)}
+        className="h-1 w-24 cursor-pointer appearance-none rounded-full bg-white/20 accent-amber-400"
+      />
+      <span className="w-7 text-right font-mono text-[10px] text-neutral-500">
+        {Math.round(volume * 100)}
+      </span>
+    </div>
   );
 }
 

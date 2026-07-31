@@ -41,7 +41,13 @@ export const AVATAR_MODELS = ['/world/office-man.glb', '/world/office-girl.glb']
 const TARGET_HEIGHT = 1.72;
 
 /** 클립 사이 넘어가는 시간(초). 짧으면 툭툭 끊기고 길면 미끄러진다 */
-const FADE = 0.18;
+const FADE = 0.2;
+
+/**
+ * idle 일 때 머리·목을 바인드(정면) 쪽으로 얼마나 되돌릴지. 0=클립 그대로,
+ * 1=완전 고정. 0.65면 고개 젓는 폭이 1/3로 줄어 '두리번'이 '가만히'가 된다.
+ */
+const HEAD_CALM = 0.65;
 
 type ClipName = 'idle' | 'walk' | 'run' | 'jump';
 
@@ -76,6 +82,26 @@ export function Avatar({
    *   SkeletonUtils.clone 은 스킨 메시와 뼈대를 짝지어 복제한다 (object3d.clone 은 못 한다).
    */
   const scene = useMemo(() => cloneSkeleton(gltf.scene), [gltf.scene]);
+
+  /**
+   * 머리·목 진정용 바인드 포즈. **믹서가 돌기 전인 지금**(갓 복제한 씬) 잡아야
+   * 클립이 흔들어 놓기 전의 '정면을 본 자세'가 들어온다. useFrame 첫 프레임에
+   * 잡으면 이미 idle 클립 t=0 값이라 소용없다.
+   *
+   * idle 클립이 고개를 크게 좌우로 젓는다 — 이 자세로 일부 되돌려 진폭만 줄인다
+   * (완전히 고정하면 오히려 뻣뻣해진다).
+   */
+  const restBones = useMemo(() => {
+    const out: { bone: THREE.Object3D; q: THREE.Quaternion }[] = [];
+    // 리그마다 'Head' · 'mixamorigHead' 처럼 이름이 다를 수 있어 포함 여부로 찾는다.
+    scene.traverse((o) => {
+      const n = o.name.toLowerCase();
+      if (n.includes('head') || n.includes('neck')) {
+        out.push({ bone: o, q: o.quaternion.clone() });
+      }
+    });
+    return out;
+  }, [scene]);
 
   /**
    * 모델마다 실제 키가 달라서 파일에 손대지 않고 여기서 맞춘다.
@@ -129,11 +155,12 @@ export function Avatar({
       // 어깨(부모) 공간에서 본 현재 팔 방향
       const bindDir = child.position.clone().normalize().applyQuaternion(bone.quaternion);
 
-      // 원하는 방향: 아래로, 몸에서 살짝 벌려서. 벌리는 쪽은 지금 팔이 향한 쪽을 따른다
+      // 원하는 방향: 아래로, 몸에서 아주 살짝만 벌려서. 벌리는 쪽은 지금 팔이 향한 쪽을 따른다.
+      // 0.22 는 팔이 뜨게 벌어져 걷을 때 어색했다 — 0.12 면 팔이 몸에 붙어 자연스럽다.
       const world = new THREE.Vector3();
       child.getWorldPosition(world).sub(bone.getWorldPosition(new THREE.Vector3()));
       const outward = Math.sign(world.x) || 1;
-      const wanted = new THREE.Vector3(outward * 0.22, -1, 0.04).normalize();
+      const wanted = new THREE.Vector3(outward * 0.12, -1, 0.02).normalize();
 
       const parentQuat = bone.parent
         ? bone.parent.getWorldQuaternion(new THREE.Quaternion())
@@ -205,13 +232,20 @@ export function Avatar({
     if (armFixRef.current === null) armFixRef.current = computeArmFix(scene);
     for (const { bone, corr } of armFixRef.current) bone.quaternion.premultiply(corr);
 
+    const idle = !airborne && anim === 'idle';
+
+    // 서 있을 때 고개가 너무 도는 걸 눌러준다. 걷기/뛰기 클립엔 손대지 않는다 —
+    // 이동 중 고개 흔들림은 자연스러운 무게 이동이라 그대로 둔다.
+    if (idle) {
+      for (const { bone, q } of restBones) bone.quaternion.slerp(q, HEAD_CALM);
+    }
+
     /*
      * 얼굴이 못 하는 몫을 몸이 대신한다 — 서 있을 때 아주 얕은 호흡.
      * 진폭은 6mm 다. 이보다 크면 '숨 쉬는 사람'이 아니라 '떠 있는 인형'이 된다.
      */
     const g = root.current;
     if (g) {
-      const idle = !airborne && anim === 'idle';
       const breath = idle ? Math.sin(state.clock.elapsedTime * 1.7) * 0.006 : 0;
       g.position.y = breath;
     }
@@ -220,10 +254,13 @@ export function Avatar({
   return (
     <group ref={root} scale={scale}>
       {/*
-        ★ 이 회전이 없으면 아바타가 뒤통수를 보이며 걷는다. 씬의 정면은 로컬 +z 인데
-          (world-scene.tsx 의 heading 규약) glTF 캐릭터는 관례상 -z 를 본다.
+        ★ 정면 축. 씬의 정면(=group +z)은 heading 이 가리키는 방향이다
+          (world-scene.tsx 의 heading = atan2(x,z), 봇도 같은 규약).
+          이 두 모델(office-man/girl)은 파일 자체가 **+z 를 정면**으로 내보내므로
+          여기서 추가 회전을 주지 않는다. 예전엔 -z 로 보고 π 를 곱했는데, 그러면
+          캐릭터가 진행·시선 방향과 **정반대**로 서서 뒷걸음질처럼 보였다.
       */}
-      <primitive object={scene} rotation-y={Math.PI} />
+      <primitive object={scene} rotation-y={0} />
     </group>
   );
 }

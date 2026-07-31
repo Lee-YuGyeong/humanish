@@ -18,8 +18,10 @@
 
 import { useFrame } from "@react-three/fiber";
 import { RoundedBox, useTexture } from "@react-three/drei";
-import { useLayoutEffect, useMemo, useRef } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import * as THREE from "three";
+
+import { startMusic, stopMusic } from "./music";
 
 /* ─────────────────────────── 창고 치수 (월드 단위 ≈ m) ─────────────────────────── */
 
@@ -278,7 +280,14 @@ function WallBraces() {
 
 /* ─────────────────────────────── 스크린 · 무대 ─────────────────────────────── */
 
-const SCREEN = { w: 11, h: 4.3, y: 3.9, z: ROOM.back + 0.22 };
+/**
+ * 스크린 치수 — **16:9**. 트는 영상(1280×720)과 같은 비율이라 여백 없이 꽉 찬다.
+ *
+ * ★ 세로가 커지면 아래가 무대턱(y 0~1.1)에 박히고 위는 용마루(8.8)를 뚫는다.
+ *   지금 값은 액자까지 포함해 아래 1.24 · 위 7.16 이라 둘 다 피한다.
+ *   양옆 랙이 x=±8.3 이므로 폭도 10.3(액자 포함)까지가 한계다.
+ */
+const SCREEN = { w: 10, h: 10 * (9 / 16), y: 4.2, z: ROOM.back + 0.22 };
 
 /**
  * 안쪽 벽의 대형 빈 스크린.
@@ -302,9 +311,99 @@ function Screen() {
           roughness={0.95}
         />
       </mesh>
+      <ScreenVideo />
       {/* 스크린이 방을 향해 뿜는 미광 */}
       <pointLight position={[0, 0, 4]} intensity={30} distance={22} decay={1.6} color="#e6c9a3" />
     </group>
+  );
+}
+
+/** 영사되는 영상. public/world/screen.mp4 (1280×720, 15초) */
+const SCREEN_VIDEO = '/world/screen.mp4';
+
+/**
+ * 스크린에 영상을 튼다.
+ *
+ * ★ **소리 없이 시작한다.** 브라우저는 사용자가 뭔가 누르기 전에는 소리 있는
+ *   자동재생을 막는다(막지 않으면 방에 들어오자마자 소리가 난다). muted 로 시작하고,
+ *   화면을 클릭해 조작을 시작하는 순간(포인터 잠금 = 사용자 제스처) 소리를 켠다.
+ *
+ * ★ 영상이 안 열려도 방은 그대로 돌아야 한다. 실패하면 아무것도 그리지 않고,
+ *   원래의 흰 스크린이 그대로 남는다 — 콘솔에만 남긴다.
+ *
+ * ★ 비율은 **가로세로를 지킨 채 안쪽에 맞춘다**(contain). 스크린은 11×4.3(≈2.56:1)
+ *   이고 영상은 16:9 라, 늘리면 사람 얼굴이 옆으로 퍼진다.
+ */
+function ScreenVideo() {
+  const [texture, setTexture] = useState<THREE.VideoTexture | null>(null);
+  const [size, setSize] = useState<[number, number]>([SCREEN.h * (16 / 9), SCREEN.h]);
+
+  useEffect(() => {
+    const video = document.createElement('video');
+    video.src = SCREEN_VIDEO;
+    // ★ 반복하지 않는다. 끝나야 음악이 시작된다 (app/world/music.ts)
+    video.loop = false;
+    video.muted = true; // 자동재생의 전제조건이다
+    video.playsInline = true;
+    video.crossOrigin = 'anonymous';
+    video.preload = 'auto';
+
+    const tex = new THREE.VideoTexture(video);
+    tex.colorSpace = THREE.SRGBColorSpace;
+
+    const onReady = () => {
+      const w = video.videoWidth;
+      const h = video.videoHeight;
+      if (w > 0 && h > 0) {
+        // 안쪽에 맞춘다 — 높이를 먼저 채우고, 그래도 넘치면 폭 기준으로 줄인다
+        const byHeight: [number, number] = [SCREEN.h * (w / h), SCREEN.h];
+        setSize(byHeight[0] <= SCREEN.w ? byHeight : [SCREEN.w, SCREEN.w * (h / w)]);
+      }
+      setTexture(tex);
+    };
+    const onError = () => {
+      console.warn('[world] 스크린 영상을 열지 못했다:', SCREEN_VIDEO, video.error?.message);
+    };
+
+    // 영상이 끝나면 음악으로 바통을 넘긴다. 마지막 프레임은 화면에 그대로 남는다
+    const onEnded = () => startMusic();
+
+    video.addEventListener('loadedmetadata', onReady);
+    video.addEventListener('error', onError);
+    video.addEventListener('ended', onEnded);
+    void video.play().catch(onError);
+
+    // 클릭 한 번이 있어야 소리를 켤 수 있다. 한 번만 듣고 스스로 떨어진다
+    const unmute = () => {
+      video.muted = false;
+      void video.play().catch(() => {});
+    };
+    window.addEventListener('pointerdown', unmute, { once: true });
+
+    return () => {
+      video.removeEventListener('loadedmetadata', onReady);
+      video.removeEventListener('error', onError);
+      video.removeEventListener('ended', onEnded);
+      window.removeEventListener('pointerdown', unmute);
+      video.pause();
+      video.src = '';
+      tex.dispose();
+      // 방을 나가면 음악도 멈춘다. 안 그러면 로비로 돌아가도 계속 들린다
+      stopMusic();
+    };
+  }, []);
+
+  if (!texture) return null;
+
+  return (
+    <mesh position={[0, 0, 0.03]}>
+      <planeGeometry args={size} />
+      {/*
+        영사막은 스스로 빛나는 면이다. 조명을 받는 재질(standard)로 두면 이 어두운
+        창고에서 거의 안 보인다. toneMapped 를 끄는 것도 같은 이유다.
+      */}
+      <meshBasicMaterial map={texture} toneMapped={false} />
+    </mesh>
   );
 }
 

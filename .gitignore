@@ -68,3 +68,7 @@ next-env.d.ts
 # 3D 원본 모델 (각 75MB). 저장소에 넣지 않는다 — 웹에 쓰는 것은
 # public/world/office-*.glb 이고, 만드는 순서는 app/world/avatar.tsx 머리말에 있다.
 /3d_model/
+# 3D 영상·음악 원본 (각 130MB / 22MB). 웹에 쓰는 것은 public/world/ 쪽이다 —
+# 변환 명령은 app/world/music.ts · warehouse.tsx 머리말에 적어 둔다.
+/3d_video/
+/3d_music/
