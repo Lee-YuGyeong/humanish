@@ -52,6 +52,19 @@ const HEAD_CALM = 0.65;
 type ClipName = 'idle' | 'walk' | 'run' | 'jump';
 
 /**
+ * 클립 재생 배속. **에셋에서 직접 재고, 이동 속도에서 역산한 값이다.**
+ *
+ *   측정: walk 1.43걸음/초 · run 4.29걸음/초 (허벅지 회전의 왕복 주기)
+ *   속도: WALK_SPEED 2.6m/s · RUN_SPEED 5.0m/s (lib/mp/constants.ts)
+ *   보폭을 걷기 0.95m · 달리기 1.35m 로 잡으면 필요한 걸음 수는 2.74 · 3.70/초,
+ *   그래서 배속은 1.9 · 0.86 이다.
+ *
+ * 이 값이 1 이면 몸은 나아가는데 다리가 안 따라와 **발이 얼음판처럼 미끄러진다.**
+ * 속도 상수를 바꾸면 여기도 같이 본다.
+ */
+const CADENCE_SCALE: Record<'walk' | 'run', number> = { walk: 1.9, run: 0.86 };
+
+/**
  * id → 0 | 1. 문자열 해시라 클라이언트마다 같은 값이 나온다.
  * (Math.random 을 쓰면 새로 고칠 때마다 성별이 바뀐다)
  */
@@ -140,7 +153,7 @@ export function Avatar({
 
   /*
    * ★ 이 계산은 **첫 프레임에** 한다. 마운트 시점에는 이 씬이 아직 R3F 트리에
-   *   붙기 전이라 부모(그룹·rotation-y=π)의 월드 행렬이 없다. 그때 계산하면
+   *   붙기 전이라 부모(그룹·스케일·회전)의 월드 행렬이 없다. 그때 계산하면
    *   '아래'가 엉뚱한 축으로 잡혀서 팔이 위로 올라간다 — 실제로 그랬다.
    */
   const computeArmFix = (root: THREE.Object3D) => {
@@ -178,14 +191,40 @@ export function Avatar({
   const mixer = useMemo(() => new THREE.AnimationMixer(scene), [scene]);
   const actions = useMemo(() => {
     const map = {} as Record<ClipName, THREE.AnimationAction | undefined>;
-    for (const clip of gltf.animations) {
+    for (const source of gltf.animations) {
+      const name = source.name as ClipName;
+
+      /*
+       * ★ 점프 클립에는 **루트 모션이 들어 있다** — Hips 가 클립 안에서 1m 넘게 솟는다.
+       *   그런데 이 월드에서 높이는 물리가 만든다(JUMP_SPEED/GRAVITY 로 최고 1.05m).
+       *   그대로 두면 둘이 더해져 2m 를 뛰고, 내려올 때는 바닥을 뚫는 것처럼 보인다.
+       *   그래서 Hips 의 **위치 트랙만** 떼어낸다. 회전(자세)은 그대로 살아 있다.
+       *   원본 클립은 useGLTF 캐시라 여러 명이 공유한다 — 반드시 복제해서 손댄다.
+       */
+      const clip =
+        name === 'jump'
+          ? new THREE.AnimationClip(
+              source.name,
+              source.duration,
+              source.tracks.filter((t) => t.name !== 'Hips.position'),
+            )
+          : source;
+
       const action = mixer.clipAction(clip);
-      if (clip.name === 'jump') {
+
+      if (name === 'jump') {
         // 점프는 한 번만 돌고 마지막 자세에서 멈춘다. 착지하면 걷기/서기로 넘어간다
         action.setLoop(THREE.LoopOnce, 1);
         action.clampWhenFinished = true;
       }
-      map[clip.name as ClipName] = action;
+      /*
+       * ★ 걸음 수를 이동 속도에 맞춘다. 안 맞추면 **발이 미끄러진다** — 몸은 2.6m/s 로
+       *   나아가는데 다리는 1.43걸음/초라 한 걸음에 1.8m 를 벌리는 꼴이 된다.
+       *   아래 값은 이 에셋에서 직접 잰 것이다(허벅지 회전의 왕복 주기).
+       */
+      if (name === 'walk' || name === 'run') action.timeScale = CADENCE_SCALE[name];
+
+      map[name] = action;
     }
     return map;
   }, [gltf.animations, mixer]);

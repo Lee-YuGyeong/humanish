@@ -179,7 +179,14 @@ export default function WorldPage() {
 
   return (
     <main className="relative h-screen w-full overflow-hidden bg-[#07050a]">
-      {ticket ? (
+      {/*
+        ★ 씬은 **입장이 실제로 끝난 뒤(live)** 에 마운트한다. 예전엔 ticket 이 오는
+        순간(=아직 connecting, 입장 오버레이가 화면을 덮고 있는 동안) 마운트해서,
+        스크린 카운트다운(warehouse.tsx COUNTDOWN_SEC)이 사용자가 보기도 전에
+        흘러가 버렸다 — 연결이 조금만 걸려도 20→0 과 영상이 다 지나간 뒤에야 화면이
+        보였다. live 로 미루면 세계가 나타나는 순간에 카운트다운이 20부터 시작된다.
+      */}
+      {live ? (
         <WorldScene conn={conn} spawn={spawn} onLockChange={setLocked} />
       ) : (
         <div className="h-full w-full bg-[#07050a]" />
