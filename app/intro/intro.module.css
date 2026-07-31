@@ -337,6 +337,12 @@
   box-shadow: 0 22px 50px -30px rgba(0, 255, 102, 0.45);
 }
 
+/* 켜진 카드 — 배역 중 AI 한 장만. 이 화면에서 초록은 언제나 '진짜 AI'다 */
+.ruleCardLit {
+  border-color: rgba(0, 255, 102, 0.28);
+  background: linear-gradient(180deg, rgba(0, 255, 102, 0.05), rgba(255, 255, 255, 0));
+}
+
 /* 카드 번호 — 배경으로 눌러 둔다. 읽는 순서만 알려주면 된다 */
 .ruleIndex {
   font-size: 3.4rem;

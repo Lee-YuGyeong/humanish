@@ -1,0 +1,405 @@
+/*
+ * 대기실(방 로비) 표면. 소유: C
+ *
+ * /main 로비와 같은 팔레트(취조실 형광 초록)를 쓴다 — 로비에서 들어온 사람이
+ * 같은 방에 계속 있는 것처럼 보여야 한다. 전역(globals.css)은 창고 시네마라
+ * 여기 색을 올리면 게임 중 화면까지 물든다. 그래서 모듈로 가둔다.
+ *
+ * 시안이 물고 있던 CDN 셋(tailwind 런타임 · font-awesome · Google Fonts)은 쓰지 않는다.
+ * 폰트는 next/font(app/room/[code]/page.tsx), 아이콘은 인라인 SVG 다.
+ */
+
+.root {
+  --bg: #080808;
+  --bg2: #050505;
+  --surface: #0f0f0f;
+  --surface2: #141414;
+  --surface3: #1c1c1c;
+  --border: rgba(255, 255, 255, 0.06);
+  --border2: rgba(255, 255, 255, 0.1);
+  --text: #e2e2e2;
+  --muted: #666;
+  --dim: #2e2e2e;
+  --accent: #00ff66;
+  --accent-dim: rgba(0, 255, 102, 0.1);
+  --accent-glow: rgba(0, 255, 102, 0.3);
+  --red: #ff3b30;
+  --red-dim: rgba(255, 59, 48, 0.1);
+
+  font-family: var(--font-space), var(--font-plex-sans), system-ui, sans-serif;
+  background: var(--bg2);
+  color: var(--text);
+  position: relative;
+  z-index: 1;
+}
+
+/* layout.tsx 의 창고 배경(.room, z-index:-1)을 덮는다. 음수여야 본문이 위에 남는다 */
+.backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  background: var(--bg2);
+  pointer-events: none;
+}
+
+.noise {
+  position: fixed;
+  inset: 0;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 512 512' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.75' numOctaves='4' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  opacity: 0.03;
+  pointer-events: none;
+  z-index: 90;
+}
+
+.scanlines {
+  position: fixed;
+  inset: 0;
+  background: repeating-linear-gradient(
+    to bottom,
+    transparent,
+    transparent 3px,
+    rgba(0, 0, 0, 0.03) 3px,
+    rgba(0, 0, 0, 0.03) 4px
+  );
+  pointer-events: none;
+  z-index: 89;
+}
+
+.scroll::-webkit-scrollbar {
+  width: 3px;
+}
+.scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+.scroll::-webkit-scrollbar-thumb {
+  background: var(--border2);
+}
+
+/* ── 표기 ─────────────────────────────────────────────────────────────── */
+.label {
+  font-size: 0.52rem;
+  letter-spacing: 0.3em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.mono {
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.04em;
+}
+
+.dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 8px var(--accent);
+  display: inline-block;
+  flex-shrink: 0;
+}
+
+.tag {
+  font-size: 0.5rem;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  padding: 0.22rem 0.65rem;
+  border: 1px solid var(--border2);
+  color: var(--muted);
+  display: inline-block;
+  white-space: nowrap;
+}
+.tagGreen {
+  color: var(--accent);
+  border-color: rgba(0, 255, 102, 0.3);
+  background: var(--accent-dim);
+}
+
+.panel {
+  background: var(--surface);
+  border: 1px solid var(--border);
+}
+
+/* ── 좌석 ─────────────────────────────────────────────────────────────── */
+.slot {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 0.8rem;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  padding: 1.6rem 0.8rem;
+  position: relative;
+  height: 100%;
+  transition:
+    border-color 0.25s,
+    background-color 0.25s;
+}
+/* 내 자리 */
+.slotMe {
+  border-color: rgba(0, 255, 102, 0.3);
+  background: rgba(0, 255, 102, 0.03);
+}
+/* 아직 아무도 안 앉은 자리 */
+.slotEmpty {
+  border-style: dashed;
+  background: transparent;
+}
+
+.person {
+  width: 52px;
+  height: 52px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  background: var(--surface3);
+  border: 1px solid var(--border2);
+  color: var(--muted);
+  flex-shrink: 0;
+}
+.personMe {
+  background: var(--accent-dim);
+  border-color: rgba(0, 255, 102, 0.4);
+  color: var(--accent);
+}
+.personEmpty {
+  background: transparent;
+  border: 1px dashed var(--dim);
+  color: var(--dim);
+}
+
+/* 준비 완료 표시는 자리에 붙은 링으로. 말풍선으로 흘리지 않는다 */
+@keyframes pulseRing {
+  0% {
+    box-shadow: 0 0 0 0 rgba(0, 255, 102, 0.35);
+  }
+  70% {
+    box-shadow: 0 0 0 9px rgba(0, 255, 102, 0);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(0, 255, 102, 0);
+  }
+}
+.pulse {
+  animation: pulseRing 2s infinite;
+}
+
+@keyframes blink {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.3;
+  }
+}
+.blink {
+  animation: blink 1.6s infinite;
+}
+
+/* 좌석에 뜬 말풍선. 사람마다 지금 한 줄만 (SPEC §15-3-결정) */
+.bubble {
+  max-width: 100%;
+  padding: 0.28rem 0.6rem;
+  border: 1px solid var(--border2);
+  background: var(--bg2);
+  font-size: 0.62rem;
+  line-height: 1.2;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* 말이 없을 때도 높이를 잡아 둔다 — 한 사람만 말하면 그리드가 들썩인다 */
+.bubbleGhost {
+  height: 1.55rem;
+}
+
+/* ── 규칙 줄 ──────────────────────────────────────────────────────────── */
+.ruleRow {
+  display: flex;
+  align-items: flex-start;
+  gap: 1rem;
+  padding: 0.9rem 1.3rem;
+  border-bottom: 1px solid var(--border);
+}
+.ruleRow:last-child {
+  border-bottom: none;
+}
+.ruleIcon {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  background: var(--surface3);
+  border: 1px solid var(--border2);
+  color: var(--muted);
+  flex-shrink: 0;
+  margin-top: 0.1rem;
+}
+.ruleIconAccent {
+  background: var(--accent-dim);
+  border-color: rgba(0, 255, 102, 0.25);
+  color: var(--accent);
+}
+
+/* ── 버튼 ─────────────────────────────────────────────────────────────── */
+.btnAccent,
+.btnGhost {
+  font-size: 0.66rem;
+  font-weight: 700;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.6rem;
+  transition:
+    background-color 0.2s,
+    color 0.2s,
+    border-color 0.2s,
+    box-shadow 0.2s;
+  white-space: nowrap;
+}
+
+.btnAccent {
+  padding: 0.8rem 2rem;
+  border: 1px solid var(--accent);
+  background: var(--accent);
+  color: #000;
+}
+.btnAccent:hover:not(:disabled) {
+  background: #33ff88;
+  border-color: #33ff88;
+  box-shadow: 0 0 20px var(--accent-glow);
+}
+.btnAccent:disabled {
+  background: var(--surface3);
+  border-color: var(--border2);
+  color: var(--dim);
+  cursor: not-allowed;
+  box-shadow: none;
+}
+
+.btnGhost {
+  padding: 0.7rem 1.6rem;
+  font-weight: 500;
+  letter-spacing: 0.18em;
+  background: transparent;
+  color: var(--muted);
+  border: 1px solid var(--border2);
+}
+.btnGhost:hover:not(:disabled) {
+  color: var(--text);
+  border-color: rgba(255, 255, 255, 0.2);
+}
+.btnGhost:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+/* 말하기 — 정해진 문구 버튼 */
+.line {
+  padding: 0.5rem 0.7rem;
+  font-family: inherit;
+  font-size: 0.7rem;
+  color: var(--text);
+  background: var(--bg2);
+  border: 1px solid var(--border2);
+  cursor: pointer;
+  transition:
+    color 0.2s,
+    border-color 0.2s;
+}
+.line:hover:not(:disabled) {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.line:disabled {
+  opacity: 0.28;
+  cursor: not-allowed;
+}
+
+/* 준비 완료 토글 */
+.ready {
+  width: 100%;
+  padding: 0.7rem;
+  font-family: inherit;
+  font-size: 0.62rem;
+  font-weight: 700;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  cursor: pointer;
+  background: transparent;
+  color: var(--muted);
+  border: 1px solid var(--border2);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  transition:
+    background-color 0.2s,
+    color 0.2s,
+    border-color 0.2s;
+}
+.ready:hover:not(:disabled) {
+  color: var(--text);
+}
+.readyOn {
+  background: var(--accent-dim);
+  border-color: rgba(0, 255, 102, 0.4);
+  color: var(--accent);
+}
+.ready:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+/* 코드 복사 배지 */
+.copy {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.6rem 1.2rem;
+  border: 1px solid var(--border2);
+  background: var(--surface2);
+  color: var(--muted);
+  font-family: inherit;
+  font-size: 0.6rem;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition:
+    border-color 0.2s,
+    color 0.2s;
+}
+.copy:hover {
+  border-color: var(--accent);
+  color: var(--text);
+}
+.copyDone {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+/* 인원 진행 막대 */
+.bar {
+  height: 2px;
+  background: var(--border2);
+}
+.barFill {
+  height: 100%;
+  background: var(--accent);
+  box-shadow: 0 0 6px var(--accent-glow);
+  transition: width 0.4s;
+}
+
+.alert {
+  border: 1px solid rgba(255, 59, 48, 0.3);
+  background: var(--red-dim);
+  color: var(--red);
+  padding: 0.75rem 1rem;
+  font-size: 0.72rem;
+}

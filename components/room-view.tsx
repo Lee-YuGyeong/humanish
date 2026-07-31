@@ -21,6 +21,7 @@ import Link from 'next/link';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { PlayerGrid } from '@/components/player-grid';
+import { RoomLobby } from '@/components/room-lobby';
 import {
   ArrowLeftIcon,
   CheckIcon,
@@ -168,6 +169,28 @@ export function RoomView({ code }: { code: string }) {
 
   const seconds = remainMs == null ? null : Math.max(0, Math.ceil(remainMs / 1000));
   const urgent = seconds != null && seconds <= URGENT_SECONDS;
+
+  /*
+   * 대기실은 화면 자체가 다르다 — 코드 배너 · 좌석판 · 말하기 판이 한 화면에
+   * 같이 있어야 해서 아래의 한 줄짜리 레이아웃으로는 담기지 않는다.
+   * 그래서 여기서 통째로 갈아탄다 (components/room-lobby.tsx).
+   *
+   * ★ 훅은 전부 이 위에서 불렀다. 이 분기 아래에는 훅이 없다 — 페이즈가 바뀔 때
+   *   훅 개수가 달라지면 React 가 상태를 잘못 짝짓는다.
+   * ★ me.player 가 없으면(참가자가 아니면) 이 화면을 그리지 않는다. 아래 Panel 이
+   *   "이 방의 참가자가 아니다"를 안내한다.
+   */
+  if (room.phase === 'lobby' && me?.player) {
+    return (
+      <RoomLobby
+        code={code}
+        room={room}
+        players={players}
+        me={{ ...me, player: me.player }}
+        error={error}
+      />
+    );
+  }
 
   return (
     <div className="flex min-h-screen flex-col">

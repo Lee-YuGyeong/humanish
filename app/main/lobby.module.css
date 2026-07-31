@@ -1,0 +1,496 @@
+/*
+ * 로비 전용 표면. /intro(초록 취조실)와 톤을 맞춘 green 글래스다.
+ *
+ * ┌─ 왜 globals.css 가 아니라 모듈인가 ────────────────────────────────────┐
+ * │ 이 저장소의 기본 화면은 창고 시네마(텅스텐 #ffd9ac)다. 로비만 이 green  │
+ * │ 팔레트를 쓴다. 전역에 올리면 방 화면(/room)까지 물든다.                 │
+ * │ 모듈이면 클래스 이름이 해시로 바뀌어 밖으로 새지 않는다.                │
+ * │                                                                        │
+ * │ ★ 초록이되 **네온(#00ff66)은 안 쓴다.** /intro 는 형광 초록이 콘셉트라  │
+ * │   그대로 두고, 로비는 한 톤 가라앉힌 green(#35D07F)으로 눈부심을 줄인다. │
+ * │   같은 초록 계열이라 두 화면이 자연스럽게 이어진다.                     │
+ * │                                                                        │
+ * │ CDN(tailwind 런타임 · font-awesome · Google Fonts)은 안 쓴다.          │
+ * │ 폰트는 next/font(page.tsx), 아이콘은 인라인 SVG 다.                     │
+ * └────────────────────────────────────────────────────────────────────────┘
+ */
+
+.root {
+  --bg: #0a0a0a;
+  --bg2: #08080a;
+  --surface: #121212;
+  --surface2: #161616;
+  --surface3: #1e1e1e;
+  --border: rgba(42, 42, 42, 0.7);
+  --border2: rgba(60, 60, 60, 0.9);
+  --text: #e5e5e5;
+  /* 라벨·비활성 토글·설명 등 보조 글자가 어두운 배경에서 안 읽혀 밝게 올린다. */
+  --muted: #d8d8d8;
+  --dim: #a3a3a3;
+  /*
+   * green accent — 네온(#00ff66) 대신 한 톤 가라앉힌 초록. /intro 의 초록 계열과
+   * 이어지되 형광 눈부심은 없앤다. 점·태그·EXP 바·슬라이더 같은 작은 강조에 쓴다.
+   */
+  --accent: #35d07f;
+  --accent-dim: rgba(53, 208, 127, 0.12);
+  --accent-glow: rgba(53, 208, 127, 0.35);
+  /*
+   * 큰 CTA 버튼은 더 차분한 초록으로 꽉 채우고 밝은 글자를 얹는다(눈부심 방지).
+   */
+  --btn: #1f9d5b;
+  --btn-hover: #27b869;
+  --btn-text: #f2fff7;
+  --btn-glow: rgba(31, 157, 91, 0.35);
+  --red: #ef4444;
+  --red-dim: rgba(239, 68, 68, 0.12);
+
+  /* 라틴은 Space Grotesk, 한글은 layout.tsx 의 IBM Plex Sans KR 로 떨어진다 */
+  font-family: var(--font-space), var(--font-plex-sans), system-ui, sans-serif;
+  /* 은은한 초록 웅덩이 두 개 — 우상단(밝게) · 좌하단(깊게). /intro 의 빛과 같은 결 */
+  background:
+    radial-gradient(42% 42% at 100% 0%, rgba(53, 208, 127, 0.07), transparent 70%),
+    radial-gradient(36% 36% at 0% 100%, rgba(31, 157, 91, 0.06), transparent 70%),
+    var(--bg2);
+  color: var(--text);
+  position: relative;
+  z-index: 1;
+}
+
+/*
+ * layout.tsx 의 창고 배경(.room, z-index:-1)을 덮는다.
+ * ★ 반드시 음수 z-index — 0 이면 자리 안 잡은 본문 블록이 이 판 밑으로 사라진다.
+ */
+.backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  background: var(--bg2);
+  pointer-events: none;
+}
+
+.noise {
+  position: fixed;
+  inset: 0;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 512 512' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.75' numOctaves='4' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  opacity: 0.03;
+  pointer-events: none;
+  z-index: 90;
+}
+
+/* CRT 주사선. 3px 마다 한 줄 — 화면이 모니터로 보인다 */
+.scanlines {
+  position: fixed;
+  inset: 0;
+  background: repeating-linear-gradient(
+    to bottom,
+    transparent,
+    transparent 3px,
+    rgba(0, 0, 0, 0.03) 3px,
+    rgba(0, 0, 0, 0.03) 4px
+  );
+  pointer-events: none;
+  z-index: 89;
+}
+
+/* ── 표기 ─────────────────────────────────────────────────────────────── */
+.label {
+  font-size: 0.6rem;
+  letter-spacing: 0.3em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.mono {
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.04em;
+}
+
+.dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--dim);
+  display: inline-block;
+  flex-shrink: 0;
+}
+.dotGreen {
+  background: var(--accent);
+  box-shadow: 0 0 8px var(--accent);
+}
+.dotRed {
+  background: var(--red);
+  box-shadow: 0 0 8px var(--red);
+}
+
+.tag {
+  font-size: 0.56rem;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  padding: 0.22rem 0.6rem;
+  border: 1px solid var(--border2);
+  border-radius: 0.4rem;
+  color: var(--muted);
+  display: inline-block;
+  white-space: nowrap;
+}
+.tagGreen {
+  color: var(--accent);
+  border-color: rgba(53, 208, 127, 0.3);
+  background: var(--accent-dim);
+}
+.tagRed {
+  color: var(--red);
+  border-color: rgba(239, 68, 68, 0.3);
+  background: var(--red-dim);
+}
+
+/* 뒷받침할 데이터가 없는 자리 표시. 진짜처럼 보이는 화면이 제일 나쁘다 */
+.mock {
+  font-size: 0.5rem;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  padding: 0.1rem 0.34rem;
+  border: 1px solid var(--dim);
+  border-radius: 0.3rem;
+  color: var(--dim);
+  white-space: nowrap;
+}
+
+/* ── 버튼 ─────────────────────────────────────────────────────────────── */
+.btnAccent,
+.btnGhost,
+.btnSm {
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.6rem;
+  border-radius: 0.75rem;
+  transition:
+    background-color 0.2s,
+    color 0.2s,
+    border-color 0.2s,
+    box-shadow 0.2s;
+  white-space: nowrap;
+}
+
+.btnAccent {
+  padding: 0.75rem 2rem;
+  border: 1px solid var(--btn);
+  background: var(--btn);
+  color: var(--btn-text);
+}
+.btnAccent:hover:not(:disabled) {
+  background: var(--btn-hover);
+  border-color: var(--btn-hover);
+  box-shadow: 0 0 16px var(--btn-glow);
+}
+
+.btnGhost {
+  padding: 0.75rem 1.6rem;
+  font-weight: 500;
+  letter-spacing: 0.18em;
+  background: transparent;
+  color: var(--muted);
+  border: 1px solid var(--border2);
+}
+.btnGhost:hover:not(:disabled) {
+  color: var(--text);
+  border-color: rgba(255, 255, 255, 0.2);
+}
+
+.btnSm {
+  padding: 0.5rem 1.2rem;
+  font-size: 0.62rem;
+  border: 1px solid var(--btn);
+  background: var(--btn);
+  color: var(--btn-text);
+}
+.btnSm:hover:not(:disabled) {
+  background: var(--btn-hover);
+  border-color: var(--btn-hover);
+  box-shadow: 0 0 10px var(--btn-glow);
+}
+
+/* 정원이 찬 방 — 눌리기는 한다. 그 방에 앉아 있던 사람은 다시 들어가야 하기 때문이다 */
+.btnQuiet {
+  padding: 0.5rem 1.2rem;
+  font-size: 0.62rem;
+  font-weight: 700;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  cursor: pointer;
+  background: transparent;
+  color: var(--muted);
+  border: 1px solid var(--border2);
+  border-radius: 0.6rem;
+  transition: color 0.2s;
+  white-space: nowrap;
+}
+.btnQuiet:hover:not(:disabled) {
+  color: var(--text);
+}
+
+.btnAccent:disabled,
+.btnSm:disabled,
+.btnGhost:disabled,
+.btnQuiet:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+/* ── 입력 ─────────────────────────────────────────────────────────────── */
+.field,
+.select {
+  width: 100%;
+  background: var(--bg);
+  border: 1px solid var(--border2);
+  color: var(--text);
+  font-family: inherit;
+  font-size: 0.86rem;
+  padding: 0.8rem 1rem;
+  border-radius: 0.75rem;
+  outline: none;
+  letter-spacing: 0.04em;
+  transition:
+    border-color 0.2s,
+    box-shadow 0.2s;
+}
+.field::placeholder {
+  color: var(--dim);
+}
+.field:focus,
+.select:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent-dim);
+}
+.select {
+  appearance: none;
+  cursor: pointer;
+}
+.field:disabled,
+.select:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+/* 토글 — 모드 · 시간 · 공개 설정 */
+.tog {
+  flex: 1;
+  padding: 0.7rem 0;
+  font-family: inherit;
+  font-size: 0.68rem;
+  letter-spacing: 0.15em;
+  text-transform: uppercase;
+  background: var(--bg);
+  color: var(--muted);
+  border: 1px solid var(--border);
+  border-radius: 0.75rem;
+  cursor: pointer;
+  transition:
+    background-color 0.18s,
+    color 0.18s,
+    border-color 0.18s;
+}
+.togOn {
+  background: var(--accent-dim);
+  color: var(--accent);
+  border-color: rgba(53, 208, 127, 0.5);
+}
+.tog:hover:not(.togOn):not(:disabled) {
+  color: var(--text);
+}
+.tog:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.range {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--surface3);
+  outline: none;
+  cursor: pointer;
+}
+.range::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 10px var(--accent-glow);
+  cursor: pointer;
+}
+.range::-moz-range-thumb {
+  width: 16px;
+  height: 16px;
+  border: none;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 10px var(--accent-glow);
+  cursor: pointer;
+}
+.range:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+/* ── 면 ───────────────────────────────────────────────────────────────── */
+/* 시안의 glass-panel — 반투명 + blur 로 뒤 배경 웅덩이가 은은히 비친다 */
+.panel {
+  background: rgba(18, 18, 18, 0.7);
+  border: 1px solid rgba(42, 42, 42, 0.8);
+  border-radius: 1rem;
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+}
+
+.inset {
+  background: rgba(10, 10, 10, 0.5);
+  border: 1px solid var(--border);
+  border-radius: 0.75rem;
+}
+
+/* 방 한 줄 */
+.roomRow {
+  display: grid;
+  grid-template-columns: 1fr 90px 78px 92px 108px;
+  gap: 1rem;
+  align-items: center;
+  padding: 0.9rem 1.2rem;
+  border: 1px solid var(--border);
+  border-radius: 0.85rem;
+  background: var(--surface);
+  transition:
+    background-color 0.2s,
+    border-color 0.2s;
+}
+.roomRow:hover {
+  border-color: var(--border2);
+  background: var(--surface2);
+}
+/* 정원이 찬 방은 흐리게. 다만 클릭 자체를 막지는 않는다 (btnQuiet 주석 참고) */
+.roomFull {
+  opacity: 0.5;
+}
+
+@media (max-width: 900px) {
+  .roomRow {
+    grid-template-columns: 1fr auto;
+    row-gap: 0.6rem;
+  }
+  .roomRow > :nth-child(2),
+  .roomRow > :nth-child(4) {
+    display: none;
+  }
+}
+
+/* 탭 밑줄 */
+.tab {
+  font-size: 0.7rem;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  padding: 0 0 0.8rem;
+  background: none;
+  border: none;
+  border-bottom: 1px solid transparent;
+  /* 비활성 탭도 흰색으로 또렷하게 보이게 한다 (기존 --muted #666 은 어두운 배경에서 안 읽힌다) */
+  color: #fff;
+  cursor: pointer;
+  font-family: inherit;
+  transition: color 0.2s;
+}
+.tab:hover {
+  color: #fff;
+}
+.tabOn {
+  color: #fff;
+  border-bottom-color: var(--accent);
+}
+
+/* 참가자 슬롯 — 방장 자리와 빈자리 */
+.slotHost {
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+  padding: 0.65rem 0.85rem;
+  border: 1px solid rgba(53, 208, 127, 0.3);
+  border-radius: 0.75rem;
+  background: rgba(53, 208, 127, 0.06);
+}
+.slotEmpty {
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+  padding: 0.65rem 0.85rem;
+  border: 1px dashed var(--border2);
+  border-radius: 0.75rem;
+  background: rgba(10, 10, 10, 0.3);
+}
+.slotDot {
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  border: 1px dashed var(--dim);
+  color: var(--dim);
+  font-size: 0.66rem;
+  flex-shrink: 0;
+}
+
+/* 이니셜 아바타. 외부 이미지 호스트에 기대지 않는다 */
+.avatar {
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  border: 1px solid var(--border2);
+  background: var(--surface3);
+  color: var(--muted);
+  font-size: 0.66rem;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+
+/* ── 코드 입장 모달 ───────────────────────────────────────────────────── */
+.overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 500;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1.5rem;
+  background: rgba(0, 0, 0, 0.85);
+  backdrop-filter: blur(4px);
+}
+
+.modal {
+  width: 100%;
+  max-width: 460px;
+  padding: 2rem 2.2rem;
+  background: rgba(18, 18, 18, 0.85);
+  border: 1px solid var(--border2);
+  border-radius: 1rem;
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+}
+
+/* 얇은 스크롤바 — 시안 그대로 */
+.scroll::-webkit-scrollbar {
+  width: 3px;
+}
+.scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+.scroll::-webkit-scrollbar-thumb {
+  background: var(--border2);
+}

@@ -16,7 +16,8 @@
  *   그건 규칙이 아니라 구현 메모라서 읽는 사람을 지치게 했다. 여기 남기는 것은
  *   **무엇을 언제 하는가** 뿐이다.
  *
- * 정원(3~8)은 SPEC §17.6. 고정 숫자를 쓰지 않는다 — "5명"이라 적으면 3인 방에서 거짓말이 된다.
+ * 정원(UI 표기 2~8, 기본 5)은 SPEC §17.6. 고정 숫자를 쓰지 않는다 — "5명"이라 적으면 다른 정원 방에서 거짓말이 된다.
+ * ※ 서버·DB 하한은 아직 3이다(§17.6). UI만 먼저 2로 내렸고 백엔드는 다음에 논의한다.
  */
 
 import { createContext, useCallback, useContext, useEffect, useState } from "react";
@@ -30,13 +31,18 @@ type Rule = {
   tags: string[];
 };
 
+/*
+ * 배역(인간 · 연기자 · AI · 승리)은 이 카드에서 뺐다 — page.tsx 의 배역 섹션이
+ * 이미 같은 내용을 다뤄서 중복이었다. 규칙 카드는 **진행 순서**만 담는다.
+ */
+
 const rules: Rule[] = [
   {
     index: "01",
     title: "자리 배정",
     timing: "시작 직전",
-    body: "방 정원은 3~8명. 사람이 채우지 못한 빈자리는 AI 봇이 대신 앉는다. 봇이 몇인지는 알려주지만, 어느 자리인지는 끝까지 숨긴다.",
-    tags: ["정원 3–8", "자리 비공개"],
+    body: "방 정원은 2~8명. 사람이 채우지 못한 빈자리는 AI 봇이 대신 앉는다. 봇이 몇인지는 알려주지만, 어느 자리인지는 끝까지 숨긴다.",
+    tags: ["정원 2–8", "자리 비공개"],
   },
   {
     index: "02",
@@ -135,10 +141,11 @@ function RulesOverlay({ onClose }: { onClose: () => void }) {
       <div className={`${styles.panel} mx-auto max-w-6xl px-6 py-16 sm:px-10 sm:py-24`}>
         <div className="flex items-start justify-between gap-6">
           <div>
-            <span className={styles.numberLabel}>002 — 수사 프로토콜</span>
+            <span className={styles.numberLabel}>규칙 — 진행</span>
             <h2 className="mt-5 text-4xl font-bold leading-[1.05] tracking-tight sm:text-5xl">
               한 판은
-              <br />이 순서로 흐른다.
+              <br />
+              이 순서로 흐른다.
             </h2>
           </div>
           <button type="button" className={styles.closeBtn} onClick={onClose} aria-label="닫기">
@@ -154,9 +161,10 @@ function RulesOverlay({ onClose }: { onClose: () => void }) {
         </div>
 
         <p className="mt-6 max-w-md text-[0.8rem] font-light leading-loose text-[#4a4a4a]">
-          프로토콜을 따르십시오. 모든 것을 의심하십시오. 아무도 믿지 마십시오.
+          역할은 시작할 때 무작위로 배정된다. 배역과 승리 조건은 &lsquo;배역&rsquo; 섹션에 있다.
         </p>
 
+        {/* ── 진행 순서 여섯 장 ──────────────────────────────────────── */}
         <div className="mt-14 grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
           {rules.map((rule) => (
             <article key={rule.index} className={styles.ruleCard}>
@@ -165,7 +173,7 @@ function RulesOverlay({ onClose }: { onClose: () => void }) {
                 <span className={`${styles.tag} ${styles.tagLive}`}>{rule.timing}</span>
               </div>
               <h3 className="text-xl font-semibold tracking-tight">{rule.title}</h3>
-              <p className="text-[0.83rem] font-light leading-[1.95] text-[#6a6a6a]">{rule.body}</p>
+              <p className="text-[0.86rem] leading-[1.9] text-[#c9c9c9]">{rule.body}</p>
               <div className="mt-auto flex flex-wrap gap-2 pt-2">
                 {rule.tags.map((tag) => (
                   <span key={tag} className={styles.tag}>

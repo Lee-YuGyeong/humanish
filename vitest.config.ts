@@ -25,6 +25,19 @@ export default defineConfig({
     // 소스가 쓰는 `@/` 별칭. tsconfig.json의 paths와 같은 값이어야 한다.
     alias: { '@': fileURLToPath(new URL('./', import.meta.url)) },
   },
+  /**
+   * ★ 빈 postcss 설정을 **일부러** 준다.
+   *
+   * 값을 주지 않으면 vite 가 프로젝트의 postcss.config.mjs 를 찾아 읽는데, 거기 든
+   * `@tailwindcss/postcss` 를 vite 의 postcss 로더가 플러그인으로 인정하지 못한다
+   * ("Invalid PostCSS Plugin found at: plugins[0]"). 그러면 `*.module.css` 를
+   * import 하는 컴포넌트를 부르는 순간 **스위트가 통째로 죽는다** — 검사가 실패한
+   * 게 아니라 파일이 아예 안 열린다.
+   *
+   * 테스트는 실제 CSS 가 필요 없다. 클래스 이름만 있으면 되고 그건 vite 의 CSS 모듈
+   * 처리가 postcss 설정과 무관하게 해준다.
+   */
+  css: { postcss: {} },
   test: {
     include: ['tests/**/*.test.{ts,tsx}'],
     // 기본은 node다. DOM이 필요한 파일만 맨 위에 `// @vitest-environment jsdom`을 적는다.

@@ -451,3 +451,78 @@ body {
     right: 6px;
   }
 }
+
+/* ══════════════════════════════════════════════════════════════════════════
+   /room 게임 화면 — 강조색만 네온 그린 (CEO 결정 2026-07)
+
+   대기실(room-lobby)·로비(/main)는 형광 초록 취조실이다. 게임 진행 화면만
+   전역 창고 시네마(앰버) 테마 위에 지어져 색이 갈렸다. 여기서 **창고 배경·재질
+   (.case/.screen/.rib/3D room)은 그대로 두고**, 앰버(텅스텐) 글로우와 텍스트만
+   초록으로 옮긴다. signal(비상등 빨강)은 위험·마감 표시라 건드리지 않는다.
+
+   ★ 스코프는 .room-green 하나다. components/room-view.tsx 의 게임 화면 루트에만
+     붙인다 — 이 클래스 밖(다른 페이지·3D 배경)은 앰버로 남는다.
+   ★ @theme inline 이라 text-tung 은 리터럴로 컴파일된다. 토큰 변수를 덮어도
+     안 먹으므로, 여기서 유틸리티를 직접 더 높은 명시도(.room-green 자손)로 덮는다.
+   ══════════════════════════════════════════════════════════════════════════ */
+@layer utilities {
+  /* 조명 색. rgb(var(--lit)/x) 를 쓰는 모든 글로우·포커스 링·케이스 하이라이트가 초록이 된다 */
+  .room-green {
+    --lit: 0 255 102;
+    --lit-soft: 0 230 120;
+  }
+
+  /* 텍스트·배경·테두리 앰버 유틸리티 → 네온 그린 */
+  .room-green .text-tung {
+    color: #00ff66;
+  }
+  .room-green .text-tung\/70 {
+    color: rgba(0, 255, 102, 0.7);
+  }
+  .room-green .text-tung\/60 {
+    color: rgba(0, 255, 102, 0.6);
+  }
+  .room-green .hover\:text-tung:hover {
+    color: #00ff66;
+  }
+  .room-green .text-flare {
+    color: #66ffa1;
+  }
+  .room-green .hover\:text-flare:hover {
+    color: #66ffa1;
+  }
+  .room-green .text-bounce {
+    color: #7dffb2;
+  }
+  .room-green .bg-tung {
+    background-color: #00ff66;
+  }
+  .room-green .bg-tung\/15 {
+    background-color: rgba(0, 255, 102, 0.15);
+  }
+  .room-green .bg-tung\/8 {
+    background-color: rgba(0, 255, 102, 0.08);
+  }
+  .room-green .shadow-tung\/60 {
+    --tw-shadow-color: rgba(0, 255, 102, 0.6);
+  }
+  .room-green .focus\:border-tung\/40:focus {
+    border-color: rgba(0, 255, 102, 0.4);
+  }
+
+  /* 켜진 텅스텐 LED 글자 → 켜진 그린 LED */
+  .room-green .lit-tung {
+    color: #66ffa1;
+    text-shadow:
+      0 0 12px rgba(0, 255, 102, 0.55),
+      0 0 30px rgba(0, 255, 102, 0.28);
+  }
+
+  /* 강판 각인 제목의 윗변 하이라이트만 초록으로 (글자 밝기는 유지) */
+  .room-green .engraved {
+    text-shadow:
+      0 1px 0 rgba(0, 255, 102, 0.16),
+      0 -1px 0 rgba(0, 0, 0, 0.55),
+      0 14px 34px rgba(0, 0, 0, 0.85);
+  }
+}
