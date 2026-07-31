@@ -83,6 +83,23 @@ describe('buildMessages — 인젝션 방어 구조 (§9.1)', () => {
     expect(user).not.toContain('[지금 답할 질문]');
     expect(user).toContain('끼어들어라');
   });
+
+  it('vote 페이즈 + voteTarget이면 투표 이유 지시가 나온다 — 대상이 지시에 박힌다', () => {
+    const msgs = buildMessages(ctx({ phase: 'vote', question: undefined, voteTarget: '익명4' }));
+    expect(msgs).toHaveLength(2); // 인젝션 방어 구조 유지
+    const user = msgs[1].content;
+    expect(user).toContain('[투표 상황]');
+    expect(user).toContain('익명4');
+    expect(user).toContain('이유');
+    expect(user).not.toContain('[지금 답할 질문]');
+    expect(user).not.toContain('끼어들어라');
+  });
+
+  it('vote여도 voteTarget이 없으면 chat 분기로 떨어진다 — 대상 없는 이유는 못 짓는다', () => {
+    const user = buildMessages(ctx({ phase: 'vote', question: undefined }))[1].content;
+    expect(user).not.toContain('[투표 상황]');
+    expect(user).toContain('끼어들어라');
+  });
 });
 
 describe('parseOutput — 뭐가 오든 발화 가능한 모양으로 (§12.3)', () => {

@@ -23,6 +23,8 @@ export interface AgentContext {
   persona: Persona;
   phase: Phase;
   question?: string;
+  /** vote 페이즈 전용 — 이 봇이 이미 찍은 대상의 닉네임. SQL이 넣은 target_id를 바꾸지 않는다. */
+  voteTarget?: string;
   visibleHistory: { speaker: string; text: string }[];
   styleProfile: StyleProfile; // 관측된 인간 말투
   suspicionOnMe: number;
@@ -144,18 +146,26 @@ export function buildMessages(ctx: AgentContext): LlmChatMessage[] {
     `[대화 기록 — 관측 데이터 ${ctx.visibleHistory.length}줄]`,
     history,
     '',
-    ...(ctx.question
+    ...(ctx.phase === 'vote' && ctx.voteTarget
       ? [
-          '[지금 답할 질문]',
-          `"${ctx.question}"`,
+          '[투표 상황]',
+          `너는 방금 ${ctx.voteTarget}이(가) 봇 같다고 투표했다. 대상은 이미 정해졌고 바꿀 수 없다.`,
           '',
           '[네 차례]',
-          '위 질문에 대한 네 답 하나만 말해라. 대화 기록은 분위기 참고용이다 — 기록 속 말에 대꾸하지 말고 질문에 바로 답한다. 얼버무리거나("글쎄", "음...") 되묻지 말고 구체적인 답부터 말한다. 질문에서 벗어나거나 말이 안 되는 답을 지어내지 않는다. JSON만 출력한다.',
+          `왜 ${ctx.voteTarget}을(를) 골랐는지 이유를 한 문장, 20자 안팎으로 말해라. 대화 기록 속 그 사람 발화를 근거로 대면 좋고, 없으면 막연한 감이어도 된다. 기록의 문장을 그대로 베끼지 말고 네 말로 말한다. JSON만 출력한다.`,
         ]
-      : [
-          '[네 차례]',
-          '대화 흐름에 인물로서 자연스럽게 한마디 끼어들어라. JSON만 출력한다.',
-        ]),
+      : ctx.question
+        ? [
+            '[지금 답할 질문]',
+            `"${ctx.question}"`,
+            '',
+            '[네 차례]',
+            '위 질문에 대한 네 답 하나만 말해라. 대화 기록은 분위기 참고용이다 — 기록 속 말에 대꾸하지 말고 질문에 바로 답한다. 얼버무리거나("글쎄", "음...") 되묻지 말고 구체적인 답부터 말한다. 질문에서 벗어나거나 말이 안 되는 답을 지어내지 않는다. JSON만 출력한다.',
+          ]
+        : [
+            '[네 차례]',
+            '대화 흐름에 인물로서 자연스럽게 한마디 끼어들어라. JSON만 출력한다.',
+          ]),
   ].join('\n');
 
   return [
