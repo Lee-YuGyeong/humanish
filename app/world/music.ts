@@ -23,7 +23,8 @@ const SRC = '/world/music.m4a';
 
 /**
  * 기본 볼륨. **낮게 시작한다** — 들어오자마자 깔리는 소리라 크면 놀란다.
- * 더 듣고 싶은 사람은 「노래」 판에서 올린다 (app/world/page.tsx).
+ * 더 듣고 싶은 사람은 걸으면서 `+` 로 올린다 (M 음소거 · − + 조절, page.tsx).
+ * ★ 이 값을 바꾸면 page.tsx 의 useSyncExternalStore 서버 스냅샷도 같이 맞춘다.
  */
 const DEFAULT_VOLUME = 0.18;
 

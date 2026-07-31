@@ -45,12 +45,24 @@ const CENTER_Z = (WORLD.minZ + WORLD.maxZ) / 2;
 export default function WorldScene({
   conn,
   spawn,
+  composing,
   onLockChange,
+  onReady,
 }: {
   conn: WorldConnection;
   /** 내 시작 위치. 서버가 좌석으로 정한 자리와 같게 맞춘다 */
   spawn: { x: number; z: number };
+  /**
+   * 한 마디 치는 중인가. **잠금은 걸린 채**라 시야는 계속 돌지만 다리는 멈춘다.
+   * 잠금만 봐서는 이 상태를 구분할 수 없어서 따로 받는다 (page.tsx 머리말).
+   */
+  composing: boolean;
   onLockChange?: (locked: boolean) => void;
+  /**
+   * 캔버스가 DOM 에 붙었다. **이때부터** 포인터 잠금을 걸 수 있다 —
+   * 이 파일은 dynamic import 라, 부모가 `live` 를 본 시점엔 아직 캔버스가 없다.
+   */
+  onReady?: () => void;
 }) {
   return (
     <Canvas
@@ -61,6 +73,7 @@ export default function WorldScene({
       onCreated={({ gl }) => {
         gl.toneMapping = THREE.ACESFilmicToneMapping;
         gl.toneMappingExposure = 1.1;
+        onReady?.();
       }}
     >
       <color attach="background" args={['#080604']} />
@@ -80,14 +93,18 @@ export default function WorldScene({
       </Suspense>
 
       <Remotes />
-      <LocalRig conn={conn} spawn={spawn} />
+      <LocalRig conn={conn} spawn={spawn} composing={composing} />
       {/*
         ★ selector 는 **일부러 아무 것도 맞지 않는 값**이다.
           drei 는 selector 가 없으면 `document` 전체에 click→lock 을 건다. 그러면
           ESC 로 설정을 열어 놓고 볼륨 슬라이더나 채팅 판을 누르는 순간 다시 잠겨
-          판이 사라진다 — 설정을 만질 수가 없다. 걷기/설정 전환은 클릭이 아니라
-          **설정창이 열려 있는가**로만 정한다 (page.tsx: 입장하면 바로 잠그고,
-          ESC 로 풀고, 「게임으로」·Enter 전송으로 되잡는다).
+          판이 사라진다 — 설정을 만질 수가 없다. 걷기/설정 전환은 **설정창이
+          열려 있는가**로 정한다 (page.tsx: 입장하면 바로 잠그고, ESC 로 풀고,
+          「게임으로」로 되잡는다).
+          클릭으로 잠그는 길은 page.tsx 가 **캔버스를 target 으로 하는 클릭**에만
+          따로 건다 — 자동 잠금이 거절됐을 때의 복구용이고, 판 위의 클릭은
+          target 이 캔버스가 아니라 여기 걸리지 않는다. 이 selector 를 없애
+          document 로 되돌리면 위의 문제가 그대로 돌아온다.
       */}
       <PointerLockControls
         selector="[data-world-click-to-lock]"
@@ -102,7 +119,15 @@ export default function WorldScene({
 
 const UP = new THREE.Vector3(0, 1, 0);
 
-function LocalRig({ conn, spawn }: { conn: WorldConnection; spawn: { x: number; z: number } }) {
+function LocalRig({
+  conn,
+  spawn,
+  composing,
+}: {
+  conn: WorldConnection;
+  spawn: { x: number; z: number };
+  composing: boolean;
+}) {
   const { camera } = useThree();
   const keys = useRef<Record<string, boolean>>({});
   // ★ pos.y 는 **발 높이**다(눈높이가 아니다). 카메라만 EYE_HEIGHT를 더해 올린다 —
@@ -164,12 +189,20 @@ function LocalRig({ conn, spawn }: { conn: WorldConnection; spawn: { x: number; 
     };
   }, []);
 
+  // 말하기로 들어가는 순간 눌린 키를 비운다. W 를 누른 채 Enter 를 치면 그 W 의
+  // keyup 은 입력창이 가져가고, 여기 keys 에는 true 가 남아 혼자 계속 걸어간다.
+  useEffect(() => {
+    if (composing) keys.current = {};
+  }, [composing]);
+
   useFrame((_, delta) => {
     const k = keys.current;
-    // 마우스가 잠긴(=걷기) 동안에만 조작을 받는다. ESC 로 풀어 설정·대화를 여는
-    // 동안에는 이동·점프를 무시한다 — 그래야 대화 중에 몸이 걸어다니지 않는다.
-    // 입력창 포커스에 기대지 않는다(포커스를 강제하면 카메라를 못 돌린다, page.tsx 주석).
-    const active = document.pointerLockElement !== null;
+    // 조작을 받는 조건은 둘이다.
+    //   1) 마우스가 잠겨 있다 — ESC 로 풀어 설정을 여는 동안에는 걷지 않는다.
+    //   2) 말하는 중이 아니다 — 말하기는 **잠금을 유지한 채** 열리므로(page.tsx),
+    //      잠금만 보면 타이핑하는 동안 몸이 걸어간다. 키 핸들러의 typing() 가드가
+    //      이미 한 겹 막지만, 포커스가 어디로 튀든 안전하도록 여기서도 막는다.
+    const active = !composing && document.pointerLockElement !== null;
     const ax = active ? (k.KeyD || k.ArrowRight ? 1 : 0) - (k.KeyA || k.ArrowLeft ? 1 : 0) : 0;
     const az = active ? (k.KeyW || k.ArrowUp ? 1 : 0) - (k.KeyS || k.ArrowDown ? 1 : 0) : 0;
     const running = active && Boolean(k.ShiftLeft || k.ShiftRight);

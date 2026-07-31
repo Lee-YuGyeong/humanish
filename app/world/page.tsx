@@ -10,6 +10,9 @@
  *
  * 이 화면은 Supabase를 직접 읽지 않는다. 게임 규칙·페이즈는 /room/[code]의 몫이고,
  * 여기는 **같이 있는 것**만 책임진다.
+ *
+ * 조작은 전부 키다 — WASD·Shift·Space 로 움직이고, Enter 로 말하고, M·−·+ 로
+ * 소리를 맞춘다. **열고 닫는 판이 없다** (아래 「판은 없다」 상자).
  */
 
 import dynamic from 'next/dynamic';
@@ -43,6 +46,14 @@ interface Ticket {
   role: Role | null;
 }
 
+/** 소리 한 칸. 0.05 면 0→100 이 스무 번이라 길게 누르면 금방 닿는다 */
+const VOLUME_STEP = 0.05;
+
+/** 0~1 안에서 한 칸 움직인다. 부동소수 찌꺼기가 쌓이지 않게 두 자리에서 자른다 */
+function step(current: number, delta: number): number {
+  return Math.round(Math.min(1, Math.max(0, current + delta)) * 100) / 100;
+}
+
 const ROLE_LABEL: Record<Role, string> = {
   citizen: '인간',
   spy: '스파이 — AI인 척해야 한다',
@@ -60,18 +71,36 @@ async function postJson<T>(url: string, body: unknown): Promise<T> {
   return data;
 }
 
+/** 캔버스가 DOM 에 나타나기를 기다리는 간격 · 횟수 (≈5초) */
+const CANVAS_WAIT_MS = 120;
+const CANVAS_WAIT_TRIES = 40;
+
 /**
  * 마우스를 잡는다. 실패하면 잠시 뒤 다시 두드린다.
+ *
+ * ★ 캔버스가 **아직 없을 수 있다.** 씬은 dynamic import 라, `live` 가 된 뒤에도
+ *   청크(three.js)가 도착하기 전까지 화면에 있는 건 로딩 문구뿐이고 <canvas> 는
+ *   없다. 예전엔 여기서 그냥 돌아갔고 재시도도 없었다 — 그래서 **처음 입장한
+ *   사람만** 잠금 요청이 한 번도 나가지 않아 걷지도(이동키는 잠금 상태를 본다)
+ *   시야를 돌리지도 못했다. 두 번째부터는 청크가 캐시돼 멀쩡했으므로 재현이
+ *   "처음 한 번"으로만 보였다. 이제 캔버스가 생길 때까지 짧게 기다린다.
  *
  * ★ 크롬은 **ESC 로 사용자가 직접 푼 잠금**을 곧바로 다시 잡아주지 않는다
  *   (대략 1.25초). 그 사이 요청은 pointerlockerror 로 조용히 튕긴다. 한 번만
  *   요청하면 "ESC 를 눌렀는데 안 돌아간다"가 되므로, 튕길 때마다 간격을 두고
  *   두 번 더 시도한다. 그래도 안 되면 화면은 이미 걷기 모드고(키 조작은 된다)
- *   시야만 안 돌아간다 — 그때는 「게임으로」를 한 번 더 누르면 된다.
+ *   시야만 안 돌아간다 — 그때는 화면을 한 번 클릭하면 된다.
  */
-function requestLock(tries = 3, delayMs = 1400): void {
+function requestLock(tries = 3, delayMs = 1400, waitTries = CANVAS_WAIT_TRIES): void {
   const canvas = document.querySelector('canvas');
-  if (!canvas) return;
+  if (!canvas) {
+    if (waitTries > 0) {
+      window.setTimeout(() => requestLock(tries, delayMs, waitTries - 1), CANVAS_WAIT_MS);
+    }
+    return;
+  }
+  // 이미 잡혀 있으면 다시 두드리지 않는다 (걷는 중의 클릭이 여기로도 온다)
+  if (document.pointerLockElement === canvas) return;
 
   const onError = () => {
     document.removeEventListener('pointerlockchange', onSettled);
@@ -96,17 +125,24 @@ export default function WorldPage() {
   const [ticket, setTicket] = useState<Ticket | null>(null);
   const [locked, setLocked] = useState(false);
   const [draft, setDraft] = useState('');
-  /** ESC 로 마우스를 푼 뒤에만 보이는 판들. 채팅은 기본으로 열어 둔다 */
-  const [chatOpen, setChatOpen] = useState(true);
   /**
-   * 설정판을 띄울 것인가. **잠금 상태와 따로 둔다.**
-   *
-   * 예전엔 `!locked` 로 판을 그렸는데, 크롬은 ESC 로 푼 잠금을 **1.25초쯤 다시
-   * 잡아주지 않는다.** 그래서 ESC 를 한 번 더 눌러도 잠금이 거절돼 locked 가
-   * false 로 남았고, 판이 화면에 붙어 있었다. 이제 판은 이 상태만 보고,
-   * 잠금은 뒤에서 재시도한다 (requestLock).
+   * 캔버스가 실제로 DOM 에 붙었는가. `status === 'live'` 는 **welcome 이 왔다**는
+   * 뜻일 뿐이고, 씬 청크는 그 뒤에 도착한다. 잠금은 이 값을 보고 건다.
    */
-  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [sceneReady, setSceneReady] = useState(false);
+  /**
+   * 한 마디 하는 중인가 (걷기 안의 '말하기' 모드).
+   *
+   * ★ **잠금을 그대로 둔 채** 입력줄에 포커스만 준다. 포인터 잠금은 마우스만
+   *   잡고 키보드는 잡지 않으므로, 잠긴 상태에서 <input> 에 포커스를 줘도
+   *   타이핑이 되고 **시야도 계속 돈다** (실측: focus 후에도 pointerLockElement 유지).
+   *   그래서 말 한 마디에 모드가 바뀌지 않고, requestLock 을 다시 부를 일도 없다
+   *   — 크롬의 재잠금 거절·쿨다운이 대화 경로에서 통째로 빠진다.
+   *   대신 타이핑 중에는 다리가 멈춘다 (WASD 가 글자로 들어가니 어쩔 수 없다).
+   */
+  const [composing, setComposing] = useState(false);
+  /** 볼륨을 방금 건드렸다 — 잠깐 떴다 사라지는 표시용 (VolumeHud) */
+  const [volumeHud, setVolumeHud] = useState(false);
 
   const status = useWorldStore((s) => s.status);
   const errorText = useWorldStore((s) => s.errorText);
@@ -115,7 +151,8 @@ export default function WorldPage() {
   const connRef = useRef<WorldConnection | null>(null);
   if (connRef.current === null) connRef.current = new WorldConnection();
   const conn = connRef.current;
-  const inputRef = useRef<HTMLInputElement>(null);
+  /** 걷는 중에 뜨는 한 줄 입력 */
+  const lineRef = useRef<HTMLInputElement>(null);
 
   /** WS 콜백은 스토어를 **구독하지 않고** getState()로 부른다 (store.ts 머리말). */
   const events = useMemo<WorldEvents>(
@@ -141,6 +178,8 @@ export default function WorldPage() {
       try {
         // 방을 옮길 때는 이전 방 상태를 전부 지운다. 안 지우면 새 방에 새어 나온다
         conn.close();
+        setSceneReady(false);
+        setComposing(false);
         useWorldStore.getState().reset();
         useWorldStore.getState().setStatus('connecting');
 
@@ -172,30 +211,42 @@ export default function WorldPage() {
   const live = status === 'live' && ticket !== null;
 
   /*
-   * ★ 입력창에 포커스를 **강제하지 않는다.** 포커스를 억지로 뺏으면 다시 걷기로
-   *   돌아가 카메라를 돌리려 할 때 방해가 된다(포커스가 창에 묶여 조작이 어긋난다).
-   *   "설정/대화 중에 몸이 걸어다니는" 문제는 포커스가 아니라 **포인터 잠금 상태**로
-   *   막는다 — world-scene.tsx 의 LocalRig 가 잠금이 풀린 동안 이동키를 무시한다.
-   *   말을 하려면 입력창을 한 번 클릭해 포커스를 준다(그래야 카메라도 자유롭다).
+   * ★ 걷는 중에는 입력창에 포커스를 **준다.** 예전에는 "포커스를 강제하면 카메라를
+   *   못 돌린다"고 봤는데 그건 사실이 아니었다 — 포인터 잠금은 마우스만 잡고
+   *   키보드는 잡지 않는다. 잠긴 채로 포커스를 줘도 잠금은 유지되고 시야도 돈다.
+   *   말을 걸려면 클릭이 필요했던 이유가 여기서 사라진다(애초에 잠긴 동안에는
+   *   커서가 없어서 클릭 자체가 불가능했다). 이제 Enter·T 로 연다.
+   *   "몸이 걸어다니는" 문제는 잠금이 아니라 composing 으로 막는다
+   *   — world-scene.tsx 의 LocalRig 가 말하는 동안 이동키를 무시한다.
    */
 
   /*
-   * 브라우저가 잠금을 **풀었다** = 사용자가 ESC 를 눌렀다 = 설정을 열라는 뜻이다.
-   * (잠금 해제는 ESC 말고는 일어나지 않는다 — 클릭으로 잡지도, 풀지도 않는다.)
+   * 브라우저가 잠금을 **풀었다** = 사용자가 ESC 를 눌렀다.
+   * (잠금 해제는 ESC 말고는 일어나지 않는다 — 클릭으로 풀지 않는다.)
    *
-   * '잠긴 적이 있다가 풀렸을 때'만 연다. 그냥 `!locked` 로 열면 입장 직후
-   * 아직 한 번도 안 잠긴 순간에 판이 번쩍 떴다 사라진다.
+   * ★ 이때 **판을 열지 않는다.** 예전에는 여기서 설정판이 떴는데, 설정판이 하던
+   *   일이 이제 전부 걷는 중에 된다 — 대화는 Enter 한 줄, 소리는 M·−·+.
+   *   그래서 ESC 는 '설정 열기'가 아니라 그냥 **잠깐 멈춤**이다. 화면을 클릭하면
+   *   이어서 걷는다. 판이 사라지면서 "판을 만지는 클릭 vs 다시 잠그는 클릭"이라는
+   *   해묵은 충돌도 같이 없어졌다 (commit 68c947d 가 클릭 경로를 지웠던 이유).
+   *
+   * 말하던 중이었다면 그 한 마디를 무른다. 잠금 중의 ESC 는 keydown 이 페이지로
+   * 오지 않으므로(브라우저가 먹는다) '취소'를 키가 아니라 **해제 자체**로 받는다.
+   *
+   * ★ '풀렸다'는 **변화**지 상태가 아니다. `!locked` 로만 보면, 애초에 잠기지 않은
+   *   채로(자동 잠금이 거절됐거나 멈춤 상태에서) Enter 를 눌러 입력줄을 연 순간
+   *   이 효과가 그걸 곧바로 취소해 버린다 — 아무리 눌러도 안 열린다. 실제로
+   *   브라우저에서 그렇게 나왔다. 그래서 직전 값과 비교해 **떨어지는 순간**만 잡는다.
    */
   const wasLocked = useRef(false);
   useEffect(() => {
-    if (locked) {
-      wasLocked.current = true;
-      setSettingsOpen(false);
-    } else if (wasLocked.current) {
-      wasLocked.current = false;
-      setSettingsOpen(true);
-    }
-  }, [locked]);
+    const justUnlocked = wasLocked.current && !locked;
+    wasLocked.current = locked;
+    if (!justUnlocked || !composing) return;
+    setComposing(false);
+    setDraft('');
+    requestLock();
+  }, [locked, composing]);
 
   const send = useCallback(() => {
     const text = draft.trim();
@@ -205,15 +256,18 @@ export default function WorldPage() {
   }, [conn, draft]);
 
   /**
-   * 설정을 닫고 걷기로 돌아간다.
-   *
-   * **판은 즉시 사라진다.** 잠금이 잡히는지와 상관없이 닫는다 — 예전엔 잠금이
-   * 걸려야 판이 사라지는 구조라, 크롬이 거절하는 동안 판이 화면에 남았다.
-   * 잠금은 requestLock 이 뒤에서 몇 번 더 두드린다.
+   * 한 줄 입력에서 보낸다. 판과 달리 **보내고 바로 닫는다** — 한 마디 하고 다시
+   * 걷는 게 이 모드의 전부다. 잠금은 애초에 놓은 적이 없으니 되잡을 것도 없다.
+   * 빈 줄에서 Enter 를 치면 그냥 닫힌다(취소).
    */
-  const backToWalking = useCallback(() => {
-    inputRef.current?.blur();
-    setSettingsOpen(false);
+  const sendLine = useCallback(() => {
+    send();
+    setComposing(false);
+    lineRef.current?.blur();
+  }, [send]);
+
+  /** 걷기로 (되)돌아간다. 잠금이 거절돼도 화면은 그대로고, requestLock 이 더 두드린다 */
+  const resumeWalking = useCallback(() => {
     requestLock();
   }, []);
 
@@ -223,41 +277,124 @@ export default function WorldPage() {
   );
 
   /*
-   * 들어오면 **바로 걷는다.** 예전엔 화면을 한 번 클릭해야 마우스가 잡혔는데,
-   * 그 클릭이 document 전체에 걸려 있어서 설정을 열어 놓고 볼륨을 만지려 해도
-   * 다시 잠겨 버렸다 (world-scene.tsx 의 selector 주석). 이제 모드는 클릭이 아니라
-   * **설정창이 열려 있는가**로만 갈린다.
+   * 들어오면 **바로 걷는다.**
    *
    * 잠금 요청은 사용자 제스처가 필요하다. 여기까지 온 건 「입장」 버튼을 누른
    * 직후라(크롬은 그 활성화를 몇 초 유지한다) 대개 받아준다. 연결이 오래 걸려
-   * 거절당하면 잠기지 않은 채로 도크가 뜨고, 「게임으로」를 누르면 된다.
+   * 거절당하면 아래 '화면 클릭'이 받아 준다.
+   *
+   * ★ live 가 아니라 **sceneReady** 를 본다. live 는 welcome 이 왔다는 뜻일 뿐이라
+   *   그 순간엔 캔버스가 없다 (씬은 dynamic import 다). 예전엔 live 에 걸어 놓고
+   *   한 프레임 뒤에 요청했는데, 그때 잠글 대상이 없어 요청이 통째로 사라졌다.
    */
   useEffect(() => {
-    if (!live) return;
-    const id = requestAnimationFrame(() => backToWalking());
+    if (!live || !sceneReady) return;
+    const id = requestAnimationFrame(() => resumeWalking());
     return () => cancelAnimationFrame(id);
-  }, [live, backToWalking]);
+  }, [live, sceneReady, resumeWalking]);
 
   /*
-   * ESC 는 스위치다.
-   *   잠긴 상태  → 브라우저가 알아서 푼다. 그 해제를 위 효과가 '설정 열기'로 받는다.
-   *   설정 열림  → 닫고 걷기로. (판은 잠금과 무관하게 **바로** 사라진다)
-   *   둘 다 아님 → 입장 직후 잠금이 거절된 경우다. 여기서라도 설정을 열어 준다.
-   * 입력창 안에서 누른 ESC 는 그 입력창이 처리한다 — 여기서 겹쳐 잡지 않는다.
+   * 화면(캔버스)을 클릭하면 걷기로 돌아간다.
+   *
+   * 자동 잠금은 사용자 활성화가 살아 있어야 통한다 — 청크 다운로드가 길어지거나
+   * 파이어폭스처럼 "입력 핸들러 안에서만" 허용하는 브라우저에서는 거절된다.
+   * 거절되면 사용자는 걷지도 돌리지도 못한 채 이유를 알 수 없으므로, **진짜
+   * 클릭**이라는 확실한 길을 하나 열어 둔다.
+   *
+   * ★ `e.target === canvas` 로만 받는다. 예전에 클릭 경로를 없앤 이유(commit
+   *   68c947d)는 drei 가 selector 없이 **document 전체**에 걸어서, 설정판의
+   *   볼륨 슬라이더를 만지는 클릭까지 잠금으로 먹어 판이 사라졌기 때문이다.
+   *   이제 만질 판 자체가 없지만, 조건은 그대로 둔다 — 나중에 무엇을 덧붙이든
+   *   "캔버스를 직접 누른 것만 잠금"이라는 선이 그 사고를 다시 막는다.
    */
   useEffect(() => {
     if (!live) return;
+    const onClick = (e: MouseEvent) => {
+      if (e.target !== document.querySelector('canvas')) return;
+      requestLock();
+    };
+    window.addEventListener('click', onClick);
+    return () => window.removeEventListener('click', onClick);
+  }, [live]);
+
+  /*
+   * Enter(또는 T) 로 한 마디 한다. 걷는 중에만 받는다.
+   *
+   * ★ preventDefault 가 필요하다. 안 하면 그 keydown 의 기본 동작이 방금 포커스를
+   *   준 입력줄로 흘러가 'ㅅ'(T) 한 글자가 미리 박힌다.
+   * ★ 포커스는 여기서 준다. 잠금은 건드리지 않는다 — 이 모드의 핵심이다.
+   */
+  useEffect(() => {
+    if (!live || composing) return;
     const onKey = (e: KeyboardEvent) => {
-      if (e.key !== 'Escape') return;
       const el = e.target as HTMLElement | null;
       if (el?.tagName === 'INPUT' || el?.tagName === 'TEXTAREA' || el?.isContentEditable) return;
-      if (locked) return;
-      if (settingsOpen) backToWalking();
-      else setSettingsOpen(true);
+      if (e.code !== 'Enter' && e.code !== 'NumpadEnter' && e.code !== 'KeyT') return;
+      e.preventDefault();
+      setComposing(true);
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [live, locked, settingsOpen, backToWalking]);
+  }, [live, composing]);
+
+  /** 입력줄이 뜨면 바로 칠 수 있어야 한다. focus 는 잠금을 풀지 않는다(실측) */
+  useEffect(() => {
+    if (composing) lineRef.current?.focus();
+  }, [composing]);
+
+  /*
+   * 소리는 **걸으면서** 맞춘다. M 으로 끄고 켜고, − + 로 올리고 내린다.
+   *
+   * 슬라이더를 없앤 이유: 슬라이더를 잡으려면 커서가 있어야 하고, 커서를 보려면
+   * 잠금을 풀어야 하고, 그러려고 판을 띄웠다 — 소리 한 칸 올리자고 게임이 멈췄다.
+   * 키로 하면 그 사슬이 통째로 사라진다. 대신 지금 몇인지 보이지 않으므로
+   * 만질 때만 잠깐 뜨는 표시를 둔다 (VolumeHud).
+   *
+   * ★ 음소거를 풀 때 **끄기 직전 값**으로 돌아간다. 0.18 같은 기본값으로 되돌리면
+   *   애써 맞춰 둔 크기가 M 한 번에 날아간다.
+   */
+  const lastAudible = useRef(0.18);
+  const hudTimer = useRef<number | null>(null);
+  const flashVolumeHud = useCallback(() => {
+    setVolumeHud(true);
+    if (hudTimer.current !== null) window.clearTimeout(hudTimer.current);
+    hudTimer.current = window.setTimeout(() => setVolumeHud(false), 1400);
+  }, []);
+  useEffect(() => () => {
+    if (hudTimer.current !== null) window.clearTimeout(hudTimer.current);
+  }, []);
+
+  useEffect(() => {
+    if (!live) return;
+    const onKey = (e: KeyboardEvent) => {
+      const el = e.target as HTMLElement | null;
+      if (el?.tagName === 'INPUT' || el?.tagName === 'TEXTAREA' || el?.isContentEditable) return;
+
+      const cur = getMusicVolume();
+      if (e.code === 'KeyM') {
+        if (cur > 0) lastAudible.current = cur;
+        setMusicVolume(cur > 0 ? 0 : lastAudible.current || VOLUME_STEP);
+      } else if (e.code === 'Minus' || e.code === 'NumpadSubtract' || e.code === 'BracketLeft') {
+        setMusicVolume(step(cur, -VOLUME_STEP));
+      } else if (e.code === 'Equal' || e.code === 'NumpadAdd' || e.code === 'BracketRight') {
+        const next = step(cur, VOLUME_STEP);
+        lastAudible.current = next;
+        setMusicVolume(next);
+      } else {
+        return;
+      }
+      e.preventDefault();
+      flashVolumeHud();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [live, flashVolumeHud]);
+
+  /*
+   * ESC 를 위한 핸들러는 **없다.** 잠긴 동안의 ESC 는 브라우저가 먹고(keydown 이
+   * 페이지로 오지 않는다) 잠금만 푼다. 그 해제가 곧 '잠깐 멈춤'이고, 화면을
+   * 클릭하면 이어서 걷는다. 열고 닫을 판이 없으니 스위치도 필요 없다.
+   */
 
   return (
     <main className="relative h-screen w-full overflow-hidden bg-[#07050a]">
@@ -269,7 +406,13 @@ export default function WorldPage() {
         보였다. live 로 미루면 세계가 나타나는 순간에 카운트다운이 20부터 시작된다.
       */}
       {live ? (
-        <WorldScene conn={conn} spawn={spawn} onLockChange={setLocked} />
+        <WorldScene
+          conn={conn}
+          spawn={spawn}
+          composing={composing}
+          onLockChange={setLocked}
+          onReady={() => setSceneReady(true)}
+        />
       ) : (
         <div className="h-full w-full bg-[#07050a]" />
       )}
@@ -293,7 +436,7 @@ export default function WorldPage() {
             </p>
           ) : null}
         </div>
-        {/* 볼륨은 ESC 로 마우스를 푼 뒤 아래 도크에서 바로 조절한다 (창 없음) */}
+        {/* 소리는 걸으면서 M · − + 로 맞춘다 (판 없음) */}
         {live ? <StatusChip /> : null}
       </header>
 
@@ -343,19 +486,26 @@ export default function WorldPage() {
       ) : null}
 
       {/*
-        ┌─ 걸을 때와 만질 때를 나눈다 ─────────────────────────────────────────┐
-        │ 마우스가 잠긴 동안(걷는 중)에는 판을 띄우지 않는다. 판이 떠 있으면    │
-        │ 시야를 가리고, 무엇보다 **클릭이 판에 먹혀** 다시 걸을 수가 없다.     │
-        │ ESC 로 마우스를 풀면 그때 아이콘이 나오고, 거기서 채팅과 소리를      │
-        │ 소리를 만진다. ESC 를 한 번 더 누르거나 「게임으로」를 누르면 걷기로   │
-        │ 돌아간다 — **화면 클릭으로는 돌아가지 않는다.** 설정을 만지는 클릭과   │
-        │ 겹쳤기 때문이다. 즉 ESC 하나가 '조작 ↔ 설정' 스위치다.               │
+        ┌─ 판은 없다 ──────────────────────────────────────────────────────────┐
+        │                                                                      │
+        │  걷기 ──Enter/T──→ 말하기 ──Enter(보냄)/ESC(무름)──→ 걷기            │
+        │   │  ↑                  잠금 유지 · 시야 ○ · 다리 ✕                  │
+        │   └──ESC──→ 잠깐 멈춤 ──클릭──┘   잠금 해제                          │
+        │                                                                      │
+        │ 소리는 모드가 아니다 — 걸으면서 M · − · + 로 맞추고, 만질 때만 눈금이 │
+        │ 잠깐 뜬다 (VolumeHud). 채팅 기록도 판이 아니라 화면 아래로 흐른다.    │
+        │                                                                      │
+        │ 그래서 **화면을 덮는 것이 하나도 없다.** 판이 사라지면서 이 파일의    │
+        │ 오랜 골칫거리도 같이 사라졌다 — "판을 만지는 클릭"과 "다시 잠그는     │
+        │ 클릭"이 겹쳐서 클릭 경로를 통째로 지웠던 그 문제(commit 68c947d).     │
+        │ 무엇을 덧붙이든 이 성질을 깨지 않는 게 좋다: 만질 것이 화면에 있으면  │
+        │ 잠금을 풀어야 하고, 잠금을 풀면 게임이 멈춘다.                        │
         └──────────────────────────────────────────────────────────────────────┘
       */}
       {live ? (
         <>
-          {/* 걷는 중에도 남의 말은 보여야 한다. 판이 아니라 글자만 흐른다 */}
-          {!settingsOpen && messages.length > 0 ? (
+          {/* 남의 말. 판이 아니라 글자만 흐른다 — 이제 **늘** 보인다 */}
+          {messages.length > 0 ? (
             <div className="pointer-events-none absolute inset-x-0 bottom-24 flex flex-col items-start gap-1 px-6">
               {messages.slice(-5).map((m) => (
                 <p
@@ -369,53 +519,47 @@ export default function WorldPage() {
             </div>
           ) : null}
 
-          {/* 마우스를 푼 동안의 판들 (볼륨은 창이 아니라 아래 도크에서 바로 조절한다) */}
-          {settingsOpen ? (
-            <div className="pointer-events-none absolute inset-0 z-20 flex items-end justify-start gap-6 p-6 pb-24 pt-28">
-              {chatOpen ? (
-                <ChatPanel
-                  messages={messages}
-                  draft={draft}
-                  inputRef={inputRef}
-                  onDraft={setDraft}
-                  onSend={send}
-                  onClose={() => setChatOpen(false)}
-                  onLeave={backToWalking}
-                />
-              ) : null}
+          {/*
+            잠깐 멈춤. ESC 를 눌렀거나 자동 잠금이 거절된 상태다.
+            **pointer-events-none 이라 이 글자를 뚫고 캔버스가 클릭된다** — 그래서
+            "클릭하면 계속"이 말 그대로 아무 데나 눌러도 동작한다.
+          */}
+          {!locked && !composing ? (
+            <div className="pointer-events-none absolute inset-0 z-20 flex flex-col items-center justify-center gap-2">
+              <p className="text-lg font-bold text-neutral-100 drop-shadow-[0_2px_12px_rgba(0,0,0,0.9)]">
+                화면을 클릭하면 계속
+              </p>
+              <p className="text-[12px] text-neutral-400 drop-shadow-[0_1px_6px_rgba(0,0,0,0.9)]">
+                ESC 를 누르면 잠깐 멈춥니다
+              </p>
             </div>
           ) : null}
 
-          {/* 아래 가운데 — 상태와 스위치 */}
-          <div className="absolute inset-x-0 bottom-6 z-30 flex justify-center">
-            {!settingsOpen ? (
+          {/* 소리를 만질 때만 잠깐 뜬다 */}
+          <VolumeHud visible={volumeHud} />
+
+          {/* 아래 가운데 — 말하기와 안내가 같은 자리를 쓴다 */}
+          <div className="absolute inset-x-0 bottom-6 z-30 flex justify-center px-6">
+            {composing ? (
+              <ChatLine
+                inputRef={lineRef}
+                draft={draft}
+                onDraft={setDraft}
+                onSend={sendLine}
+                onCancel={() => {
+                  setComposing(false);
+                  setDraft('');
+                  // 잠금이 살아 있으면 그대로 걷는다. 거절당한 상태였다면 다시 두드린다
+                  if (!document.pointerLockElement) requestLock();
+                }}
+              />
+            ) : (
+              /* 조작은 이제 전부 키다. 한 줄에 다 적어 둔다 — 열어 볼 판이 없으므로 */
               <p className="rounded-full border border-white/10 bg-black/60 px-5 py-2.5 text-[12px] text-neutral-300 backdrop-blur">
                 WASD 이동 · Shift 달리기 · Space 점프 ·{' '}
-                <span className="text-[#d4a373]">ESC 로 대화 · 설정</span>
+                <span className="text-[#d4a373]">Enter 로 말하기</span> · M 음소거 ·{' '}
+                <span className="font-mono">−</span> <span className="font-mono">+</span> 소리
               </p>
-            ) : (
-              <div className="pointer-events-auto flex items-center gap-2 rounded-full border border-white/10 bg-black/60 p-1.5 backdrop-blur">
-                <DockButton
-                  active={chatOpen}
-                  onClick={() => setChatOpen((v) => !v)}
-                  label="방 채팅"
-                  badge={messages.length > 0 ? messages.length : undefined}
-                >
-                  <ChatIcon />
-                </DockButton>
-                <VolumeControl />
-                {/*
-                  걷기로 돌아가는 **유일한** 길. 화면 아무 데나 클릭해서 돌아가던
-                  길은 없앴다 — 그 클릭이 설정을 만지는 손과 겹쳤다.
-                */}
-                <button
-                  type="button"
-                  onClick={backToWalking}
-                  className="rounded-full px-3 py-1.5 text-[12px] font-bold text-neutral-300 transition-colors hover:bg-white/10 hover:text-white"
-                >
-                  게임으로 <span className="text-neutral-500">ESC</span>
-                </button>
-              </div>
             )}
           </div>
         </>
@@ -424,209 +568,96 @@ export default function WorldPage() {
   );
 }
 
-/* ─────────────────────────────── 아래 스위치 ─────────────────────────────── */
-
-function DockButton({
-  active,
-  onClick,
-  label,
-  badge,
-  children,
-}: {
-  active: boolean;
-  onClick: () => void;
-  label: string;
-  badge?: number;
-  children: React.ReactNode;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      aria-label={label}
-      aria-pressed={active}
-      className={`relative flex h-9 w-9 items-center justify-center rounded-full transition-colors ${
-        active ? 'bg-[#d4a373] text-black' : 'text-neutral-400 hover:bg-white/10 hover:text-white'
-      }`}
-    >
-      {children}
-      {badge ? (
-        <span className="absolute -right-0.5 -top-0.5 min-w-4 rounded-full bg-[#d4a373] px-1 text-[9px] font-bold leading-4 text-black">
-          {badge > 99 ? '99+' : badge}
-        </span>
-      ) : null}
-    </button>
-  );
-}
-
-/* ─────────────────────────────── 채팅 판 ─────────────────────────────── */
-
-const PANEL = 'pointer-events-auto flex flex-col overflow-hidden rounded-xl border border-white/10 bg-[rgba(28,24,22,0.85)] shadow-2xl backdrop-blur-md';
-
-function ChatPanel({
-  messages,
-  draft,
-  inputRef,
-  onDraft,
-  onSend,
-  onClose,
-  onLeave,
-}: {
-  messages: { key: string; nickname: string; text: string }[];
-  draft: string;
-  inputRef: React.RefObject<HTMLInputElement | null>;
-  onDraft: (v: string) => void;
-  onSend: () => void;
-  onClose: () => void;
-  /** 말하기를 끝내고 다시 걷기로 (ESC). Enter 는 보내기만 하고 머문다 */
-  onLeave: () => void;
-}) {
-  const scroll = useRef<HTMLDivElement>(null);
-
-  // 새 말이 오면 아래로 붙인다. 위를 읽고 있었어도 방금 온 말은 봐야 한다
-  useEffect(() => {
-    const el = scroll.current;
-    if (el) el.scrollTop = el.scrollHeight;
-  }, [messages.length]);
-
-  return (
-    <div className={`${PANEL} h-[420px] w-full max-w-md`}>
-      <header className="flex items-center justify-between border-b border-white/10 bg-black/20 px-5 py-3.5">
-        <div className="flex items-center gap-3">
-          <span className="text-[#d4a373]">
-            <ChatIcon />
-          </span>
-          <h2 className="text-[15px] font-bold text-white">방 채팅</h2>
-        </div>
-        <button
-          type="button"
-          onClick={onClose}
-          aria-label="채팅 닫기"
-          className="text-neutral-500 transition-colors hover:text-white"
-        >
-          <CloseIcon />
-        </button>
-      </header>
-
-      <div ref={scroll} className="flex-1 overflow-y-auto p-5">
-        {messages.length === 0 ? (
-          <div className="flex h-full flex-col items-center justify-center text-center opacity-60">
-            <span className="mb-3 text-neutral-500">
-              <ChatIcon size={34} />
-            </span>
-            <p className="text-[13px] text-neutral-400">아직 메시지가 없어요.</p>
-            <p className="text-[13px] text-neutral-400">같은 방 사람들과 이야기해 보세요.</p>
-          </div>
-        ) : (
-          <div className="flex flex-col gap-4">
-            {messages.map((m) => (
-              <div key={m.key} className="flex items-start gap-3">
-                <span className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-white/10 bg-black/40 text-[11px] font-bold text-neutral-400">
-                  {m.nickname.slice(-1)}
-                </span>
-                <div className="min-w-0">
-                  <p className="mb-1 text-[11px] text-neutral-500">{m.nickname}</p>
-                  <div className="rounded-lg rounded-tl-none border border-white/5 bg-black/40 px-3 py-2 text-[13px] leading-relaxed text-neutral-100">
-                    {m.text}
-                  </div>
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
-
-      <div className="border-t border-white/10 bg-black/30 p-4">
-        <div className="relative">
-          <input
-            ref={inputRef}
-            value={draft}
-            onChange={(e) => onDraft(e.target.value)}
-            onKeyDown={(e) => {
-              /*
-                Enter 는 보내고 **대화창에 그대로 머문다** — 연달아 말할 수 있게
-                마우스를 다시 잡지 않는다. 걷기로 돌아가려면 ESC 를 누르거나
-                아래 「게임으로」를 누른다. 화면 클릭으로는 돌아가지 않는다.
-              */
-              if (e.key === 'Enter') {
-                e.preventDefault();
-                onSend();
-                return;
-              }
-              if (e.key === 'Escape') {
-                e.preventDefault();
-                onLeave();
-              }
-            }}
-            maxLength={200}
-            placeholder="메시지 입력 후 Enter · ESC 로 걷기"
-            className="w-full rounded-lg border border-white/10 bg-black/50 py-3 pl-4 pr-11 text-[13px] text-white outline-none transition-colors placeholder:text-neutral-600 focus:border-[#d4a373]"
-          />
-          <button
-            type="button"
-            onClick={onSend}
-            aria-label="보내기"
-            className="absolute right-3 top-1/2 -translate-y-1/2 text-neutral-500 transition-colors hover:text-[#d4a373]"
-          >
-            <SendIcon />
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-/* ─────────────────────────────── 볼륨 ─────────────────────────────── */
+/* ─────────────────────────────── 한 줄 말하기 ─────────────────────────────── */
 
 /**
- * 도크에 바로 붙는 볼륨 조절기. **창을 열지 않는다** — 곡이 하나뿐이라
- * 목록·재생상태를 보여줄 판이 필요 없다. 음소거 토글 + 슬라이더가 전부다.
- * (곡이 여러 개가 되면 그때 판을 되살린다. music.ts 가 파일을 쥔다.)
+ * 걷는 중에 뜨는 한 줄 입력. **판이 아니다** — 시야를 가리지 않아야 하고,
+ * 마우스 잠금이 유지되므로 배경은 그대로 살아 움직인다.
  *
- * 볼륨은 useSyncExternalStore 로 music.ts 에서 직접 읽는다 — React 상태로
- * 복제하지 않아 다른 곳에서 setVolume 해도 여기 슬라이더가 같이 움직인다.
+ * Enter 로 보내고 즉시 걷기로. ESC 로 무른다.
  */
-function VolumeControl() {
-  const volume = useSyncExternalStore(musicSubscribe, getMusicVolume, () => 0.45);
-
+function ChatLine({
+  inputRef,
+  draft,
+  onDraft,
+  onSend,
+  onCancel,
+}: {
+  inputRef: React.RefObject<HTMLInputElement | null>;
+  draft: string;
+  onDraft: (v: string) => void;
+  onSend: () => void;
+  onCancel: () => void;
+}) {
   return (
-    <div className="flex items-center gap-2 pl-1.5 pr-1">
-      <button
-        type="button"
-        onClick={() => setMusicVolume(volume > 0 ? 0 : 0.45)}
-        aria-label={volume > 0 ? '음소거' : '소리 켜기'}
-        className="flex h-9 w-9 items-center justify-center rounded-full text-neutral-400 transition-colors hover:bg-white/10 hover:text-white"
-      >
-        {volume > 0 ? <VolumeIcon /> : <MuteIcon />}
-      </button>
+    <div className="pointer-events-auto flex w-full max-w-xl items-center gap-3 rounded-full border border-[#d4a373]/40 bg-black/75 px-4 py-2.5 backdrop-blur">
+      <span className="shrink-0 text-[11px] font-bold tracking-wide text-[#d4a373]">말하기</span>
       <input
-        type="range"
-        min={0}
-        max={100}
-        value={Math.round(volume * 100)}
-        aria-label="음악 볼륨"
-        onChange={(e) => setMusicVolume(Number(e.target.value) / 100)}
-        className="h-1.5 w-24 cursor-pointer appearance-none rounded-full bg-white/15 accent-[#d4a373]"
+        ref={inputRef}
+        value={draft}
+        onChange={(e) => onDraft(e.target.value)}
+        onKeyDown={(e) => {
+          /*
+            ★ 한글은 조합 중에도 Enter 가 온다. isComposing 을 안 보면 마지막 글자를
+              확정하는 Enter 가 그대로 '보내기'가 되어, 치던 말이 반 토막 난 채 나간다.
+              (여기서 말하는 composing 은 IME 조합이다 — 이 화면의 말하기 모드와는
+              이름만 같고 다른 것이다.)
+          */
+          if (e.nativeEvent.isComposing) return;
+          if (e.key === 'Enter') {
+            e.preventDefault();
+            onSend();
+            return;
+          }
+          if (e.key === 'Escape') {
+            // 잠긴 상태에서는 이 keydown 이 오지 않는다(브라우저가 먹고 잠금만 푼다).
+            // 그 경로는 page 의 잠금 해제 효과가 받는다. 여기는 안 잠긴 경우다.
+            e.preventDefault();
+            onCancel();
+          }
+        }}
+        onBlur={onCancel}
+        maxLength={200}
+        placeholder="Enter 로 보내기 · ESC 로 취소"
+        className="min-w-0 flex-1 bg-transparent text-[13px] text-white outline-none placeholder:text-neutral-600"
       />
     </div>
   );
 }
 
-/* ─────────────────────────────── 아이콘 ─────────────────────────────── */
-/* CDN(font-awesome) 대신 인라인 SVG — 배포본에서 외부 요청이 나가지 않는다 */
+/* ─────────────────────────────── 소리 표시 ─────────────────────────────── */
 
-function ChatIcon({ size = 16 }: { size?: number }) {
+/**
+ * 소리를 만질 때만 잠깐 뜨는 표시. **조절기가 아니다** — 누르는 건 키(M · − · +)고
+ * 이건 지금 몇인지 보여 주기만 한다. 그래서 pointer-events 가 없다.
+ *
+ * 볼륨은 useSyncExternalStore 로 music.ts 에서 직접 읽는다 — React 상태로 복제하지
+ * 않아 어디서 setVolume 을 하든 이 눈금이 같이 움직인다.
+ */
+function VolumeHud({ visible }: { visible: boolean }) {
+  const volume = useSyncExternalStore(musicSubscribe, getMusicVolume, () => 0.18);
+
   return (
-    <svg width={size} height={size} viewBox="0 0 16 16" fill="none" aria-hidden>
-      <path
-        d="M14 9.5a2 2 0 01-2 2H5l-3 2.5V4a2 2 0 012-2h8a2 2 0 012 2v5.5z"
-        stroke="currentColor"
-        strokeWidth="1.3"
-        strokeLinejoin="round"
-      />
-    </svg>
+    <div
+      aria-hidden={!visible}
+      className={`pointer-events-none absolute left-1/2 top-24 z-30 -translate-x-1/2 transition-opacity duration-300 ${
+        visible ? 'opacity-100' : 'opacity-0'
+      }`}
+    >
+      <div className="flex items-center gap-3 rounded-full border border-white/10 bg-black/70 px-4 py-2 backdrop-blur">
+        <span className="text-neutral-300">{volume > 0 ? <VolumeIcon /> : <MuteIcon />}</span>
+        <div className="h-1.5 w-28 overflow-hidden rounded-full bg-white/15">
+          <div className="h-full rounded-full bg-[#d4a373]" style={{ width: `${volume * 100}%` }} />
+        </div>
+        <span className="w-8 text-right font-mono text-[11px] text-neutral-400">
+          {Math.round(volume * 100)}
+        </span>
+      </div>
+    </div>
   );
 }
+/* ─────────────────────────────── 아이콘 ─────────────────────────────── */
+/* CDN(font-awesome) 대신 인라인 SVG — 배포본에서 외부 요청이 나가지 않는다 */
 
 function VolumeIcon() {
   return (
@@ -642,22 +673,6 @@ function MuteIcon() {
     <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden>
       <path d="M3 6h2.5L9 3v10L5.5 10H3z" stroke="currentColor" strokeWidth="1.3" strokeLinejoin="round" />
       <path d="M11.5 6l3 4M14.5 6l-3 4" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
-    </svg>
-  );
-}
-
-function CloseIcon() {
-  return (
-    <svg width="13" height="13" viewBox="0 0 13 13" aria-hidden>
-      <path d="M1 1l11 11M12 1L1 12" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
-    </svg>
-  );
-}
-
-function SendIcon() {
-  return (
-    <svg width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden>
-      <path d="M15 1L7.5 8.5M15 1l-5 14-2.5-6.5L1 6l14-5z" stroke="currentColor" strokeWidth="1.3" strokeLinejoin="round" />
     </svg>
   );
 }
