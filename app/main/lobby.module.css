@@ -144,22 +144,9 @@
   background: var(--red-dim);
 }
 
-/* 뒷받침할 데이터가 없는 자리 표시. 진짜처럼 보이는 화면이 제일 나쁘다 */
-.mock {
-  font-size: 0.5rem;
-  letter-spacing: 0.2em;
-  text-transform: uppercase;
-  padding: 0.1rem 0.34rem;
-  border: 1px solid var(--dim);
-  border-radius: 0.3rem;
-  color: var(--dim);
-  white-space: nowrap;
-}
-
 /* ── 버튼 ─────────────────────────────────────────────────────────────── */
 .btnAccent,
-.btnGhost,
-.btnSm {
+.btnGhost {
   font-size: 0.72rem;
   font-weight: 700;
   letter-spacing: 0.2em;
@@ -203,42 +190,13 @@
   border-color: rgba(255, 255, 255, 0.2);
 }
 
-.btnSm {
-  padding: 0.5rem 1.2rem;
-  font-size: 0.62rem;
-  border: 1px solid var(--btn);
-  background: var(--btn);
-  color: var(--btn-text);
-}
-.btnSm:hover:not(:disabled) {
-  background: var(--btn-hover);
-  border-color: var(--btn-hover);
-  box-shadow: 0 0 10px var(--btn-glow);
-}
-
-/* 정원이 찬 방 — 눌리기는 한다. 그 방에 앉아 있던 사람은 다시 들어가야 하기 때문이다 */
-.btnQuiet {
-  padding: 0.5rem 1.2rem;
-  font-size: 0.62rem;
-  font-weight: 700;
-  letter-spacing: 0.2em;
-  text-transform: uppercase;
-  cursor: pointer;
-  background: transparent;
-  color: var(--muted);
-  border: 1px solid var(--border2);
-  border-radius: 0.6rem;
-  transition: color 0.2s;
-  white-space: nowrap;
-}
-.btnQuiet:hover:not(:disabled) {
-  color: var(--text);
-}
+/*
+  줄 안에 있던 작은 「입장하기 · 다시 입장」 버튼(.btnSm · .btnQuiet)은 없앴다.
+  이제 줄 전체가 버튼이다 — .roomRow 를 볼 것.
+*/
 
 .btnAccent:disabled,
-.btnSm:disabled,
-.btnGhost:disabled,
-.btnQuiet:disabled {
+.btnGhost:disabled {
   opacity: 0.4;
   cursor: not-allowed;
 }
@@ -359,10 +317,17 @@
   border-radius: 0.75rem;
 }
 
-/* 방 한 줄 */
+/*
+  방 한 줄 — 번호 · 제목 · 상태 · 인원.
+
+  ★ 줄 전체가 <button> 이다 (lobby.tsx 의 RoomRow). 그래서 브라우저가 버튼에 기본으로
+    씌우는 것들을 되돌린다 — 가운데 정렬 · 굵은 테두리 · 시스템 글꼴. 이걸 빼먹으면
+    글자가 줄 한가운데로 몰린다. 목록 머리(<div>)도 같은 클래스를 쓰므로 아래
+    선언들은 둘 다에서 안전해야 한다.
+*/
 .roomRow {
   display: grid;
-  grid-template-columns: 1fr 90px 78px 92px 108px;
+  grid-template-columns: 34px 1fr 72px 84px 76px;
   gap: 1rem;
   align-items: center;
   padding: 0.9rem 1.2rem;
@@ -372,22 +337,84 @@
   transition:
     background-color 0.2s,
     border-color 0.2s;
+
+  width: 100%;
+  text-align: left;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
 }
-.roomRow:hover {
+.roomRow:hover:not(:disabled) {
   border-color: var(--border2);
   background: var(--surface2);
 }
-/* 정원이 찬 방은 흐리게. 다만 클릭 자체를 막지는 않는다 (btnQuiet 주석 참고) */
+/* 키보드로 옮겨 다닐 때 어느 줄에 있는지 보여야 한다 — 줄이 곧 버튼이라 더 중요하다 */
+.roomRow:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.roomRow:disabled {
+  cursor: default;
+}
+/* 게임 중이거나 정원이 찬 방은 흐리게. 다만 누르는 것 자체를 막지는 않는다 —
+   그 방에 있던 사람은 여기로 복귀한다 (RoomRow 주석) */
 .roomFull {
   opacity: 0.5;
 }
 
-@media (max-width: 900px) {
+/*
+  목록 머리의 누를 수 있는 칸 — 번호 · 제목 · 인원.
+  머리 줄도 .roomRow 를 쓰므로 여기서도 버튼 기본값을 되돌린다.
+*/
+.sortHead {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  font: inherit;
+  color: inherit;
+  transition: color 0.2s;
+}
+.sortHead:hover .label,
+.sortHeadOn .label {
+  color: var(--text);
+}
+.sortHead:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+  border-radius: 0.3rem;
+}
+/*
+  화살표 자리는 걸리지 않은 열에서도 잡아 둔다. 없을 때 폭이 0이 되면 누를 때마다
+  열 이름이 옆으로 밀린다.
+*/
+.sortMark {
+  display: inline-block;
+  min-width: 0.6em;
+  font-size: 0.5rem;
+  line-height: 1;
+  color: var(--accent);
+}
+
+/*
+  ★ 접는 기준을 함부로 올리지 않는다. 900px 로 뒀더니 **노트북 창 하나 줄인 것만으로**
+    모드·상태가 통째로 사라졌다 — 열을 넣어 달라고 한 사람 화면에서 그 열이 안 보였다.
+    5열이 실제로 안 들어가기 시작하는 폭에서만 접는다.
+
+    고정 폭 합이 34+72+84+76 = 266px, 사이 간격 4×1rem = 64px → 330px 이 늘 필요하다.
+    바깥 여백까지 빼면 520px 아래에서야 제목 칸이 못 쓰게 좁아진다.
+*/
+@media (max-width: 520px) {
   .roomRow {
     grid-template-columns: 1fr auto;
     row-gap: 0.6rem;
   }
-  .roomRow > :nth-child(2),
+  /* 이때만 번호·모드·상태를 접는다. 제목과 인원은 끝까지 남긴다 */
+  .roomRow > :nth-child(1),
+  .roomRow > :nth-child(3),
   .roomRow > :nth-child(4) {
     display: none;
   }
@@ -414,37 +441,6 @@
 .tabOn {
   color: #fff;
   border-bottom-color: var(--accent);
-}
-
-/* 참가자 슬롯 — 방장 자리와 빈자리 */
-.slotHost {
-  display: flex;
-  align-items: center;
-  gap: 0.7rem;
-  padding: 0.65rem 0.85rem;
-  border: 1px solid rgba(53, 208, 127, 0.3);
-  border-radius: 0.75rem;
-  background: rgba(53, 208, 127, 0.06);
-}
-.slotEmpty {
-  display: flex;
-  align-items: center;
-  gap: 0.7rem;
-  padding: 0.65rem 0.85rem;
-  border: 1px dashed var(--border2);
-  border-radius: 0.75rem;
-  background: rgba(10, 10, 10, 0.3);
-}
-.slotDot {
-  display: grid;
-  place-items: center;
-  width: 26px;
-  height: 26px;
-  border-radius: 50%;
-  border: 1px dashed var(--dim);
-  color: var(--dim);
-  font-size: 0.66rem;
-  flex-shrink: 0;
 }
 
 /* 이니셜 아바타. 외부 이미지 호스트에 기대지 않는다 */
