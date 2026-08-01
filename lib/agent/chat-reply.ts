@@ -69,6 +69,20 @@ export function capChatReply(text: string, maxLen = 25): string {
 }
 
 /**
+ * 순수 — 상한 안이면 다듬은 텍스트, 넘치면 null.
+ *
+ * capChatReply(자르기)와 계약이 다르다: 월드 말풍선처럼 **잘린 말끝을 내보내느니
+ * 통째로 버리는** 소비자용이다 — 잘린 문장("…주말에 일도 많이")은 폴백 문구보다
+ * 봇 티가 난다 (world-agent 실측). "capChatReply를 돌려서 결과가 원문과 다른지
+ * 비교"하는 우회는 capChatReply 내부가 바뀌는 순간 상한 안의 멀쩡한 발화까지
+ * 조용히 버리게 된다 — 넘침 판정은 이 함수가 직접 계약한다.
+ */
+export function fitChatReply(text: string, maxLen: number): string | null {
+  const t = text.trim();
+  return t !== '' && t.length <= maxLen ? t : null;
+}
+
+/**
  * 사람 메시지 처리(send_message → bot_reply) 성공 직후,
  * app/api/message/route.ts가 응답 반환 뒤(after)에 부른다.
  */

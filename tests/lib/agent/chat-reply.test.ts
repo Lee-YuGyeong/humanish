@@ -5,7 +5,7 @@
  * 않는다(CLAUDE.md). 그건 로컬 실플레이와 supabase 검사의 몫이다.
  */
 import { describe, expect, it } from 'vitest';
-import { buildChatReplyJobs, capChatReply } from '@/lib/agent/chat-reply';
+import { buildChatReplyJobs, capChatReply, fitChatReply } from '@/lib/agent/chat-reply';
 import { personaForSeat } from '@/lib/agent/persona';
 import { DEFAULT_STYLE } from '@/lib/agent/disguise';
 
@@ -75,5 +75,24 @@ describe('capChatReply — 풀 문구 길이대에 맞춘 공백 경계 컷 (I1 
 
   it('공백이 없으면 상한에서 자른다', () => {
     expect(capChatReply('ㅋ'.repeat(40))).toBe('ㅋ'.repeat(25));
+  });
+});
+
+describe('fitChatReply — 잘라 내보내느니 버리는 소비자용 (월드 말풍선)', () => {
+  it('상한 안이면 다듬어서 돌려준다', () => {
+    expect(fitChatReply(' 소파 푹신하네 ', 25)).toBe('소파 푹신하네');
+  });
+
+  it('정확히 상한이면 살린다', () => {
+    expect(fitChatReply('ㅋ'.repeat(25), 25)).toBe('ㅋ'.repeat(25));
+  });
+
+  it('상한을 넘으면 자르지 않고 null — 잘린 말끝은 폴백 문구보다 봇 티가 난다', () => {
+    expect(fitChatReply('나 어제 야식으로 엽떡 시켰는데 진짜 맛있었음 완전 추천함', 25)).toBeNull();
+  });
+
+  it('빈 문자열·공백뿐이면 null', () => {
+    expect(fitChatReply('', 25)).toBeNull();
+    expect(fitChatReply('   ', 25)).toBeNull();
   });
 });
