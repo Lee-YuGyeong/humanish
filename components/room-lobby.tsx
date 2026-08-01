@@ -29,7 +29,6 @@ import {
   useLeaveRoomOnExit,
   useSayLobbyLine,
   useSetLobbyReady,
-  useSetLobbyName,
   useStartRoom,
 } from "@/lib/queries/mutations";
 import { useLobbyLines, useServerClock } from "@/lib/queries/room";
@@ -207,8 +206,11 @@ export function RoomLobby({
             />
           </section>
 
-          <NamePanel code={code} roomId={room.id} mine={mine} />
-
+          {/*
+            ★ 이름을 고치는 판을 여기 두지 않는다. 이름은 계정에서 한 번 짓고
+              못 바꾼다 — 앉는 순간 profiles 에서 lobby_name 으로 베껴져 오므로
+              대기실에서 다시 물을 것이 없다. 머리말 오른쪽이 그 이름을 보여준다.
+          */}
           <RulePanel capacity={room.capacity} />
         </main>
 
@@ -519,102 +521,6 @@ function RulePanel({ capacity }: { capacity: number }) {
  * ★ 문구를 화면에 적어두지 않는다. 목록의 원본은 서버 하나뿐이다.
  *   두 군데로 갈리면 화면에는 있는데 서버가 모르는 버튼이 생기고, 눌러도 400만 뜬다.
  */
-/**
- * 대기방에서 부를 이름 (SPEC §15-2-결정).
- *
- * ★ **로그인이 없어도 쓸 수 있다.** 계정이 있으면 앉을 때 지어둔 이름이 이미
- *   채워져 있고, 없는 사람은 여기서 그 방에서만 쓸 이름을 친다. 그래야 대기방이
- *   절반은 이름 절반은 '익명N' 인 상태가 되지 않는다.
- *
- * ★ **게임이 시작되면 사라진다는 것을 화면에 적어둔다.** 본명을 넣었다가 게임
- *   중에도 뜨는 줄 알고 놀라는 일이 없어야 한다. 실제 보장은 두 겹이다 —
- *   shuffle_seats 가 지우고, public_players 뷰가 lobby 밖에서는 안 내려준다.
- */
-function NamePanel({
-  code,
-  roomId,
-  mine,
-}: {
-  code: string;
-  roomId: string;
-  mine: PublicPlayer | null;
-}) {
-  const setName = useSetLobbyName(code, roomId);
-  const busy = useRoomUi(selectIsBusy);
-
-  const saved = mine?.lobby_name ?? "";
-  const [draft, setDraft] = useState(saved);
-  const [editing, setEditing] = useState(false);
-
-  // 남이 바꾼 것이 아니라 **내 것**이 서버에서 새로 오면 입력칸도 따라간다.
-  // 편집 중에는 덮지 않는다 — 타이핑하던 글자가 사라지면 안 된다.
-  useEffect(() => {
-    if (!editing) setDraft(saved);
-  }, [saved, editing]);
-
-  const trimmed = draft.trim();
-  const changed = trimmed !== saved;
-
-  const submit = () => {
-    if (!changed || busy) return;
-    setEditing(false);
-    setName.run(trimmed || null);
-  };
-
-  return (
-    <section
-      className="flex flex-col gap-2 rounded-[3px] border p-4"
-      style={{ borderColor: "var(--border)" }}
-      aria-label="대기방 이름"
-    >
-      <div className="flex items-baseline justify-between gap-3">
-        <span
-          className="text-[0.62rem] font-semibold uppercase tracking-[0.1em]"
-          style={{ color: "var(--muted)" }}
-        >
-          내 이름
-        </span>
-        <span className={`${styles.mono} text-[0.58rem]`} style={{ color: "var(--dim)" }}>
-          게임이 시작되면 익명으로 바뀐다
-        </span>
-      </div>
-
-      <div className="flex gap-2">
-        <input
-          className="min-w-0 flex-1 rounded-[2px] border px-3 py-2 text-[0.8rem] outline-none"
-          style={{
-            borderColor: "var(--border2)",
-            background: "var(--bg2, rgba(0,0,0,.25))",
-            color: "var(--text)",
-          }}
-          value={draft}
-          maxLength={20}
-          disabled={busy}
-          placeholder={mine ? `익명${mine.seat}` : "이름"}
-          onFocus={() => setEditing(true)}
-          onBlur={() => setEditing(false)}
-          onChange={(e) => setDraft(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === "Enter") submit();
-            if (e.key === "Escape") {
-              setDraft(saved);
-              setEditing(false);
-            }
-          }}
-        />
-        <button
-          type="button"
-          className={styles.btnGhost}
-          disabled={!changed || busy}
-          onClick={submit}
-        >
-          {trimmed ? "바꾸기" : "지우기"}
-        </button>
-      </div>
-    </section>
-  );
-}
-
 function SayPanel({
   code,
   roomId,
