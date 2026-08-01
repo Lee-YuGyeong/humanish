@@ -161,6 +161,82 @@ end;
 $$;
 
 ------------------------------------------------------------------------------
+-- 나가기 — 마지막 사람이 나가면 방을 지운다
+------------------------------------------------------------------------------
+-- ┌─ 왜 나가는 김에 방까지 보나 ────────────────────────────────────────────┐
+-- │ 아무도 없는 대기방은 목록에 계속 뜨고, 들어가 보면 혼자다. 방 코드도     │
+-- │ 24시간(cleanup_stale_rooms) 동안 점유한다. "마지막 한 명이 나갔다"를     │
+-- │ 알 수 있는 자리가 여기뿐이라, 자리를 빼는 것과 같은 트랜잭션에서 센다.   │
+-- │                                                                        │
+-- │ 방을 잠근 채로 센다. 안 잠그면 두 사람이 동시에 나갈 때 서로 상대를 세서 │
+-- │ **둘 다 "아직 남아 있다"로 보고 빈 방이 남는다.**                       │
+-- └────────────────────────────────────────────────────────────────────────┘
+--
+-- ★ 세는 것은 is_bot = false 뿐이다 (I5 와 같은 이유). 봇까지 세면 fill_with_bots 가
+--   이미 돈 방은 사람이 다 나가도 "다섯 명 남았다"가 되어 영영 안 지워진다.
+--
+-- ★ lobby 에서만 자리를 뺀다. 게임 중 이탈 처리는 SPEC §15-4 미결정이다 —
+--   행을 지우면 answers·votes 가 cascade 로 같이 사라져서 그 판의 집계가 어긋나고,
+--   빈자리를 봇이 이어받을지 비워둘지도 아직 정하지 않았다. 정해지기 전까지 거절한다.
+--
+-- 방장이 나가면 남은 사람 중 가장 앞자리에게 넘긴다. 안 넘기면 host_id 가
+-- 없는 사람을 가리켜 **그 방은 아무도 시작 버튼을 못 누른다**(advance_phase 가
+-- actor = host_id 를 본다). host_id 가 봇을 가리키는 일은 생기지 않는다 —
+-- 사람이 0이면 그 앞 분기에서 방이 통째로 사라진다.
+create or replace function leave_room(p_room_id uuid, p_player_id uuid)
+returns table (room_deleted boolean, new_host_id uuid)
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+declare
+  v_room   rooms%rowtype;
+  v_humans int;
+  v_host   uuid;
+begin
+  select * into v_room from rooms where id = p_room_id for update;
+
+  -- 방이 이미 없다. 나가려던 사람 입장에서는 성공이다 (두 번 눌렀거나 정리가 먼저 돌았거나).
+  if not found then
+    return query select true, null::uuid;
+    return;
+  end if;
+
+  if v_room.phase <> 'lobby' then
+    raise exception '시작한 방에서는 자리를 뺄 수 없다' using errcode = 'P0001';
+  end if;
+
+  -- room_id 를 조건에 같이 건다. player_id 만 믿으면 남의 방 사람을 뺄 수 있다 (I9).
+  delete from players where id = p_player_id and room_id = p_room_id;
+
+  select count(*) into v_humans
+    from players where room_id = p_room_id and is_bot = false;
+
+  if v_humans = 0 then
+    -- players·questions·answers·votes 는 전부 on delete cascade 다 (schema.sql).
+    -- 봇만 남은 방도 여기서 같이 사라진다.
+    delete from rooms where id = p_room_id;
+    return query select true, null::uuid;
+    return;
+  end if;
+
+  v_host := v_room.host_id;
+  if v_host = p_player_id or v_host is null then
+    select id into v_host
+      from players
+     where room_id = p_room_id and is_bot = false
+     order by seat
+     limit 1;
+    update rooms set host_id = v_host where id = p_room_id;
+  end if;
+
+  -- 명단이 바뀐 신호(roster_seq)는 players 트리거가 이미 올렸다 (schema.sql).
+  -- 여기서 또 올리지 않는다 — shuffle_seats 주석과 같은 이유다.
+  return query select false, v_host;
+end;
+$$;
+
+------------------------------------------------------------------------------
 -- 빈 자리를 봇으로 채운다 — SPEC §17.4
 ------------------------------------------------------------------------------
 -- 몇 명을 채웠는지는 클라이언트에 알리지 않는다. 반환값은 서버만 본다.
@@ -288,10 +364,12 @@ revoke all on function room_capacity(uuid)        from public, anon, authenticat
 revoke all on function pick_free_seat(uuid)       from public, anon, authenticated;
 revoke all on function create_room(text,int,text)  from public, anon, authenticated;
 revoke all on function join_room(text)            from public, anon, authenticated;
+revoke all on function leave_room(uuid,uuid)      from public, anon, authenticated;
 revoke all on function fill_with_bots(uuid)       from public, anon, authenticated;
 revoke all on function shuffle_seats(uuid)        from public, anon, authenticated;
 
 grant execute on function create_room(text,int,text) to service_role;
 grant execute on function join_room(text)         to service_role;
+grant execute on function leave_room(uuid,uuid)   to service_role;
 grant execute on function fill_with_bots(uuid)    to service_role;
 grant execute on function shuffle_seats(uuid)     to service_role;

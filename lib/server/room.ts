@@ -137,8 +137,12 @@ const UNIQUE_VIOLATION = '23505';
 /**
  * Room 하나를 통째로 읽는 컬럼 목록. 화면이 Room 타입으로 받는 곳은 전부 이걸 쓴다.
  * 여기서 capacity를 빠뜨리면 room.capacity가 undefined가 되어 좌석 그리드가 0칸이 된다.
+ *
+ * ★ 라우트에서 목록을 손으로 다시 적지 않는다 — 그때마다 한 컬럼씩 빠진다.
+ *   실제로 name 이 그렇게 빠져 있었다: 방을 시작하거나 페이즈를 넘긴 응답만
+ *   제목 없는 Room 이었다. 그래서 export 한다 (app/api/room/start, app/api/phase/advance).
  */
-const ROOM_COLUMNS =
+export const ROOM_COLUMNS =
   'id, code, name, capacity, phase, phase_seq, phase_ends_at, round, host_id, roster_seq';
 
 async function fetchRoom(roomId: string): Promise<Room> {
@@ -237,6 +241,39 @@ export async function joinRoom(code: string): Promise<JoinResult> {
 
   const row = (data as SeatRow[])[0];
   return toResult(row, await fetchRoom(row.room_id));
+}
+
+/** 나가기 결과. 방이 통째로 사라졌는지가 화면이 알아야 할 전부다. */
+export interface LeaveResult {
+  /** true면 그 방은 이제 없다. 마지막 사람이 나갔다는 뜻이다. */
+  roomDeleted: boolean;
+}
+
+/**
+ * 자리를 빼고, 사람이 하나도 안 남으면 방을 지운다.
+ *
+ * 세는 것과 지우는 것은 SQL 한 함수 안에서 한다 (`supabase/functions/room.sql`의
+ * leave_room). 여기서 "나가기 → 세기 → 지우기"를 세 번 왕복으로 하면 두 사람이
+ * 동시에 나갈 때 서로 상대를 세서 **빈 방이 그대로 남는다.**
+ *
+ * ★ 게임 중에는 거절한다 (409). 이탈 처리는 SPEC §15-4 미결정이다 — 행을 지우면
+ *   answers·votes 가 cascade 로 같이 사라져 집계가 어긋나고, 빈자리를 봇이
+ *   이어받을지도 아직 정하지 않았다.
+ */
+export async function leaveRoom(roomId: string, playerId: string): Promise<LeaveResult> {
+  const { data, error } = await getServiceClient().rpc('leave_room', {
+    p_room_id: roomId,
+    p_player_id: playerId,
+  });
+
+  if (error) {
+    // SQL이 raise한 것은 사용자에게 그대로 보여줘도 되는 문장이다 (room.sql 참고)
+    if (error.code === 'P0001') throw new ApiError(409, error.message);
+    throw new ApiError(500, `나가기 실패: ${error.message}`);
+  }
+
+  const row = (data as { room_deleted: boolean }[] | null)?.[0];
+  return { roomDeleted: row?.room_deleted === true };
 }
 
 /**

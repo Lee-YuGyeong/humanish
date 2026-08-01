@@ -45,6 +45,7 @@ const api = vi.hoisted(() => ({
   fetchServerTime: vi.fn(),
   fetchLobbyLines: vi.fn(),
   startRoom: vi.fn(),
+  leaveRoom: vi.fn(),
   submitAnswer: vi.fn(),
   castVote: vi.fn(),
   sendMessage: vi.fn(),
@@ -169,6 +170,7 @@ beforeEach(() => {
   api.fetchServerTime.mockResolvedValue({ now: new Date().toISOString() });
   api.fetchLobbyLines.mockResolvedValue(LOBBY_LINES);
   api.startRoom.mockResolvedValue({});
+  api.leaveRoom.mockResolvedValue({ ok: true, room_deleted: false });
   api.submitAnswer.mockResolvedValue({});
   api.sayLobbyLine.mockResolvedValue({});
   api.setLobbyReady.mockResolvedValue({});
@@ -179,18 +181,61 @@ afterEach(cleanup);
 /* ─────────────────────────────── 검사 ─────────────────────────────── */
 
 describe('대기실', () => {
-  it('방 코드와 정원을 그린다', async () => {
+  it('이름 없는 방은 코드를 이름 자리에 그린다', async () => {
     renderRoom();
-    // 코드는 두 군데 뜬다 — 머리말의 번호판과 영사막의 큰 글씨. 둘 다 있는 게 맞다.
-    expect(await screen.findAllByText('UFJR')).toHaveLength(2);
-    // 좌석 2명 / 정원 5
-    expect(await screen.findByText('/5')).toBeInTheDocument();
+    // ★ 코드가 뜨는 자리는 **머리말 하나뿐이다.** 예전에는 큰 판이 같은 코드를
+    //   한 번 더 그렸다. 여기서 개수를 세는 이유가 그거다 — 판을 되살리면 걸린다.
+    expect(await screen.findAllByText('UFJR')).toHaveLength(1);
+    // 정원은 좌석 수 옆 눈금이 들고 있다 (좌석 칸 자체는 아래 검사가 센다)
+    expect(await screen.findByText('정원 5')).toBeInTheDocument();
+  });
+
+  it('제목이 있으면 제목만 그리고 코드는 감춘다', async () => {
+    db.fetchRoomByCode.mockResolvedValue(room({ name: '제목 확인' }));
+    renderRoom();
+
+    expect(await screen.findByRole('heading', { name: '제목 확인' })).toBeInTheDocument();
+    // 코드는 복사 버튼이 맡는다. 글자로는 어디에도 없다.
+    expect(screen.queryByText('UFJR')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /코드 복사/ })).toBeInTheDocument();
   });
 
   it('capacity 만큼 좌석 칸이 그려진다 (SPEC §17.6)', async () => {
     db.fetchRoomByCode.mockResolvedValue(room({ capacity: 8 }));
     renderRoom();
     await waitFor(() => expect(screen.getAllByRole('listitem').length).toBe(8));
+  });
+});
+
+describe('대기실에서 나가기', () => {
+  it('★ 링크가 아니라 자리를 빼는 요청이다', async () => {
+    // 예전에는 /main 으로 가는 <Link> 였다. 화면만 떠나고 **자리는 그대로 남아서**
+    // 아무도 없는 방이 목록에 계속 떴고 방 코드도 24시간 묶였다.
+    // role 이 다시 link 가 되면 그 상태로 돌아간 것이라 여기서 걸린다.
+    renderRoom();
+    fireEvent.click(await screen.findByRole('button', { name: /방 나가기/ }));
+    await waitFor(() => expect(api.leaveRoom).toHaveBeenCalledWith(ROOM_ID));
+  });
+
+  it('★ 머리말의 ← 로비도 같은 동작이다', async () => {
+    // 떠나는 길이 둘인데 한쪽만 자리를 빼면, 어느 쪽을 눌렀느냐로 빈 방이 남는지가
+    // 갈린다. 화면에는 그 차이가 안 보이므로 검사로 묶어둔다.
+    renderRoom();
+    fireEvent.click(await screen.findByRole('button', { name: '로비' }));
+    await waitFor(() => expect(api.leaveRoom).toHaveBeenCalledWith(ROOM_ID));
+  });
+
+  it('연타해도 요청은 한 번이다', async () => {
+    // 두 번 나가면 두 번째는 이미 없는 자리를 다시 빼려 든다. 서버는 조용히
+    // 넘기지만(라우트가 200), 화면에서 먼저 막는 편이 요청 하나를 아낀다.
+    api.leaveRoom.mockImplementation(() => new Promise(() => {})); // 끝나지 않는 요청
+
+    renderRoom();
+    const button = await screen.findByRole('button', { name: /방 나가기/ });
+    fireEvent.click(button);
+    fireEvent.click(button);
+
+    await waitFor(() => expect(api.leaveRoom).toHaveBeenCalledTimes(1));
   });
 });
 

@@ -191,5 +191,41 @@ chk "DB·앱 서버 시계 차이를 숫자로 보고한다 (§12.5)" "yes" \
   "$(python3 -c 'import json; d=json.load(open("/tmp/admin_rooms.json")); print("yes" if isinstance(d.get("drift_ms"),(int,float)) else "no")' 2>/dev/null)"
 
 echo ""
+echo "── 나가기: 마지막 사람이 나가면 방이 사라진다 ──"
+# 위의 방($ROOM)은 이미 reveal 이다. 게임 중 이탈은 SPEC §15-4 미결정이라 거절한다 —
+# 행을 지우면 answers·votes 가 cascade 로 같이 사라져 그 판의 집계가 어긋난다.
+LEAVE_BODY="{\"room_id\":\"$ROOM\"}"
+C=$(code_of "$A_JAR" /api/room/leave "$LEAVE_BODY"); chk "시작한 방에서는 못 나간다 (409)" "409" "$C"
+
+# 대기실은 새 방으로 본다. 쿠키 항아리도 새로 판다 — 쿠키는 방마다 따로라
+# (hp_<room_id>) 앞 방 것을 재활용하면 어느 방의 토큰인지 헷갈린다.
+C_JAR=$(mktemp); D_JAR=$(mktemp)
+R3=$(curl -s -c "$C_JAR" -X POST "$B/api/room")
+ROOM2=$(echo "$R3" | python3 -c 'import sys,json; print(json.load(sys.stdin)["room"]["id"])' 2>/dev/null)
+CODE2=$(echo "$R3" | python3 -c 'import sys,json; print(json.load(sys.stdin)["room"]["code"])' 2>/dev/null)
+[ -n "$ROOM2" ] || { bad "두 번째 방 생성" "$R3"; }
+JOIN2_BODY="{\"code\":\"$CODE2\"}"
+LEAVE2_BODY="{\"room_id\":\"$ROOM2\"}"
+post "$D_JAR" /api/room/join "$JOIN2_BODY" > /dev/null
+chk "새 방에 둘이 앉았다" "2" "$(psql "$DBURL" -tAqc "select count(*) from players where room_id='$ROOM2';")"
+
+body_flag() { python3 -c "import json;print(str(json.load(open('/tmp/last_body.txt'))['$1']).lower())" 2>/dev/null; }
+
+C=$(code_of "$C_JAR" /api/room/leave "$LEAVE2_BODY"); chk "방장이 나간다 (200)" "200" "$C"
+chk "아직 방은 남아 있다" "false" "$(body_flag room_deleted)"
+chk "나간 사람의 자리도 빠졌다" "1" "$(psql "$DBURL" -tAqc "select count(*) from players where room_id='$ROOM2';")"
+# ★ 방장이 나갔는데 host_id 가 그대로면 남은 사람이 시작 버튼을 눌러도 403 이다.
+#   그 방은 영영 시작되지 않는다 — 사람이 있는데 못 노는 방이 목록에 남는다.
+chk "남은 사람이 방장이 된다" "1" \
+  "$(psql "$DBURL" -tAqc "select count(*) from rooms r join players p on p.id = r.host_id where r.id='$ROOM2' and not p.is_bot;")"
+# 나갈 때 쿠키를 지웠으므로 같은 브라우저가 또 눌러도 401 이 아니라 조용한 200 이다.
+C=$(code_of "$C_JAR" /api/room/leave "$LEAVE2_BODY"); chk "또 눌러도 조용하다 (200)" "200" "$C"
+
+C=$(code_of "$D_JAR" /api/room/leave "$LEAVE2_BODY"); chk "마지막 사람이 나간다 (200)" "200" "$C"
+chk "방이 사라졌다고 알려준다" "true" "$(body_flag room_deleted)"
+chk "방 행이 없다" "0" "$(psql "$DBURL" -tAqc "select count(*) from rooms where id='$ROOM2';")"
+chk "자리도 같이 사라진다 (cascade)" "0" "$(psql "$DBURL" -tAqc "select count(*) from players where room_id='$ROOM2';")"
+
+echo ""
 [ "$FAIL" -eq 0 ] && echo "전부 통과" || echo "실패 있음"
 exit "$FAIL"

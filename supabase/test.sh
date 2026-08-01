@@ -359,6 +359,44 @@ check "capacity 9인 방은 만들 수 없다"   "denied" \
   "$(denied_if "insert into rooms (code,capacity) values ('CAPZ',9);" 'rooms_capacity_check')"
 
 echo ""
+echo "── 나가기: 마지막 사람이 나가면 방이 사라진다 ──"
+# ★ 이 블록도 방을 만든다. 위의 "rooms 조회 (코드로 방 찾기)"가 방 개수를 세므로
+#   반드시 그 뒤에 둔다. 코드는 앞의 것들과 겹치지 않아야 한다.
+LV_R="$(q "select room_id from create_room('LEVA', 4);")"
+LV_HOST="$(q "select id from players where room_id='$LV_R';")"
+LV_P2="$(q "select player_id from join_room('LEVA');")"
+check "둘이 앉아 있다"                  "2" "$(q "select count(*) from players where room_id='$LV_R';")"
+
+check "한 명 나가도 방은 남는다"         "f" "$(q "select room_deleted from leave_room('$LV_R','$LV_HOST');")"
+check "나간 사람의 자리도 빠진다"        "1" "$(q "select count(*) from players where room_id='$LV_R';")"
+# ★ 방장이 나갔는데 host_id 가 그대로면 남은 사람은 시작 버튼을 눌러도 거절당한다
+#   (advance_phase 가 actor = host_id 를 본다). 그 방은 영영 시작되지 않는다.
+check "방장이 나가면 남은 사람이 방장"    "$LV_P2" "$(q "select host_id from rooms where id='$LV_R';")"
+
+check "마지막 사람이 나가면 방이 사라진다" "t" "$(q "select room_deleted from leave_room('$LV_R','$LV_P2');")"
+check "방 행이 없다"                    "0" "$(q "select count(*) from rooms where id='$LV_R';")"
+check "자리도 같이 사라진다 (cascade)"    "0" "$(q "select count(*) from players where room_id='$LV_R';")"
+# 두 번 눌러도 에러가 아니다 — 이미 없는 방은 나가려던 사람 입장에서 성공이다.
+check "없는 방에 또 나가도 조용하다"      "t" "$(q "select room_deleted from leave_room('$LV_R','$LV_P2');")"
+
+# ★ 봇까지 세면(I5 위반) fill_with_bots 가 돈 방은 사람이 다 나가도 영영 안 지워진다.
+LV_B="$(q "select room_id from create_room('LEVB', 5);")"
+LV_BH="$(q "select id from players where room_id='$LV_B';")"
+q "select fill_with_bots('$LV_B');" >/dev/null
+check "봇으로 5자리가 찼다"             "5" "$(q "select count(*) from players where room_id='$LV_B';")"
+check "봇만 남아도 방은 사라진다 (I5)"   "t" "$(q "select room_deleted from leave_room('$LV_B','$LV_BH');")"
+check "봇도 같이 사라진다"              "0" "$(q "select count(*) from players where room_id='$LV_B';")"
+
+# 게임 중 이탈은 SPEC §15-4 미결정이다. 행을 지우면 answers·votes 가 cascade 로
+# 같이 사라져 그 판의 집계가 어긋난다 — 정해지기 전까지는 거절하는 편이 맞다.
+LV_C="$(q "select room_id from create_room('LEVC', 3);")"
+LV_CH="$(q "select id from players where room_id='$LV_C';")"
+psql -q -c "update rooms set phase='question' where id='$LV_C';"
+check "시작한 방에서는 자리를 못 뺀다 (§15-4)" "denied" \
+  "$(denied_if "select * from leave_room('$LV_C','$LV_CH');" '시작한 방')"
+check "거절된 뒤에도 자리는 그대로"      "1" "$(q "select count(*) from players where room_id='$LV_C';")"
+
+echo ""
 if [ "$FAIL" -eq 0 ]; then
   echo "전부 통과 (SPEC §14.2 · §14.3 · §14.4)"
 else

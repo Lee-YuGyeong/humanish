@@ -14,7 +14,7 @@
 
 import { assignRoles } from '@/lib/game/rules';
 import { advancePhase } from '@/lib/server/phase';
-import { MIN_HUMANS_TO_START, fillWithBots, shuffleSeats } from '@/lib/server/room';
+import { MIN_HUMANS_TO_START, ROOM_COLUMNS, fillWithBots, shuffleSeats } from '@/lib/server/room';
 import { getServiceClient } from '@/lib/server/supabase';
 import { ApiError, apiError, readJson, requirePlayer } from '@/lib/server/auth';
 
@@ -99,7 +99,7 @@ export async function POST(req: Request): Promise<Response> {
 
     const { data: after, error: afterErr } = await db
       .from('rooms')
-      .select('id, code, capacity, phase, phase_seq, phase_ends_at, round, host_id, roster_seq')
+      .select(ROOM_COLUMNS)
       .eq('id', roomId)
       .single();
     if (afterErr) throw new ApiError(500, `방 조회 실패: ${afterErr.message}`);

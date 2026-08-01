@@ -18,13 +18,14 @@
  *   리스트 태그를 쓰지 않는다 — 좌석 수를 세는 검사가 그것까지 세게 된다.
  */
 
-import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 
 import type { MeResponse } from "@/lib/api/room";
 import type { PublicPlayer, Room } from "@/lib/game/types";
 import {
   REQUEST,
+  useLeaveRoom,
   useSayLobbyLine,
   useSetLobbyReady,
   useStartRoom,
@@ -77,6 +78,23 @@ export function RoomLobby({
   const busy = useRoomUi(selectIsBusy);
   const starting = useRoomUi(selectIsPending(REQUEST.start));
 
+  /*
+   * 나가기. **링크가 아니라 버튼이어야 한다** — 자리를 실제로 빼는 쓰기이기 때문이다.
+   * 예전에는 /main 으로 가는 <Link> 라서 화면만 떠나고 자리는 그대로 남았다.
+   * 아무도 안 남은 방이 목록에 계속 뜨고, 방 코드도 24시간 동안 묶여 있었다.
+   *
+   * ★ 대기실을 떠나는 길(머리말의 ← 로비, 오른쪽 아래 방 나가기)이 **전부 이걸 지난다.**
+   *   하나만 자리를 빼면 어느 쪽을 눌렀느냐로 빈 방이 남는지가 갈리는데,
+   *   화면에는 그 차이가 보이지 않는다.
+   *
+   * 화면 이동은 서버가 답한 **뒤에** 한다. 먼저 넘어가면 요청이 언마운트와 함께
+   * 끊길 수 있고, 그러면 자리가 남는다 — 지금 고치려던 그 상태로 돌아간다.
+   * 마지막 한 명이었으면 그 방은 이 요청에서 사라진다 (lib/queries/mutations).
+   */
+  const router = useRouter();
+  const leave = useLeaveRoom(room.id, () => router.push("/main"));
+  const leaving = useRoomUi(selectIsPending(REQUEST.leave));
+
   return (
     <div className={`${styles.root} flex h-screen flex-col overflow-hidden`}>
       <div aria-hidden className={styles.backdrop} />
@@ -89,38 +107,44 @@ export function RoomLobby({
         style={{ background: "var(--bg)", borderColor: "var(--border)" }}
       >
         <div className="flex min-w-0 items-center gap-4">
-          <Link
-            href="/main"
-            className="flex shrink-0 items-center gap-2 no-underline"
+          {/*
+            ★ 이 화살표도 **나가기와 같은 동작이다.** 링크로 두면 "로비로 돌아간다"는
+              같은 뜻의 조작이 자리를 빼는 것과 안 빼는 것으로 갈린다 — 어느 쪽을
+              눌렀는지에 따라 빈 방이 남는지가 달라지는데, 화면에는 그 차이가 안 보인다.
+              대기실을 떠나는 길은 이 화살표와 오른쪽 아래 버튼 둘뿐이고, 둘 다 여기를 지난다.
+          */}
+          <button
+            type="button"
+            className="flex shrink-0 cursor-pointer items-center gap-2 font-[inherit] disabled:cursor-not-allowed disabled:opacity-40"
             style={{ color: "var(--muted)" }}
+            disabled={busy}
+            onClick={() => leave.run()}
           >
             <ArrowLeftIcon />
             <span className="text-[0.58rem] uppercase tracking-[0.18em]">로비</span>
-          </Link>
+          </button>
           <span className="h-4 w-px shrink-0" style={{ background: "var(--border2)" }} />
           {/*
-            제목이 있으면 위층이 제목, 아래층이 코드다. 없으면 예전처럼 라벨 + 코드.
-            코드는 어느 쪽이든 남는다 — 들어올 사람에게 불러줘야 하는 값이라
-            제목이 그 자리를 대신할 수 없다.
+            ★ 방을 가리키는 이름은 **여기 한 곳에서만** 쓴다. 예전에는 이 줄과
+              아래 큰 판이 같은 말을 두 번 했다 — 화면에서 같은 글자가 두 번 나오면
+              둘 중 어느 쪽이 진짜 조작 자리인지 흐려진다.
+            ★ 코드는 글자로 띄우지 않는다. 이미 들어온 사람에게 코드는 읽을 것이
+              아니라 넘길 것이라, 오른쪽 복사 버튼 하나로 충분하다.
+              제목이 없는 방은 코드가 그 자리에 선다 — 가리킬 이름이 그것뿐이다.
           */}
-          <div className="min-w-0">
-            {room.name ? (
-              <div className="truncate text-[0.85rem] font-semibold leading-tight">
-                {room.name}
-              </div>
-            ) : (
-              <div className={`${styles.label} ${styles.labelStrong}`}>room</div>
-            )}
-            <div
-              className={`${styles.mono} truncate text-[0.85rem] font-bold tracking-[0.12em]`}
-              style={room.name ? { fontSize: "0.66rem", color: "var(--muted)" } : undefined}
-            >
-              {room.code}
-            </div>
-          </div>
+          <h1
+            className={
+              room.name
+                ? "min-w-0 truncate text-[0.95rem] font-semibold leading-tight"
+                : `${styles.mono} min-w-0 truncate text-[0.9rem] font-bold tracking-[0.14em]`
+            }
+          >
+            {room.name ?? room.code}
+          </h1>
         </div>
 
         <div className="flex shrink-0 items-center gap-4 sm:gap-6">
+          <CopyCodeButton code={room.code} />
           <span className="hidden items-center gap-2 sm:flex">
             <span className={styles.dot} />
             <span
@@ -148,8 +172,12 @@ export function RoomLobby({
         <main className={`${styles.scroll} flex flex-1 flex-col gap-6 overflow-y-auto p-5 sm:p-8`}>
           {error && <p className={styles.alert}>{error}</p>}
 
-          <CodeBanner code={room.code} seated={seated} capacity={room.capacity} />
-
+          {/*
+            ★ 방 이름 · 코드 · 인원을 다시 그리는 판을 여기 두지 않는다.
+              머리말이 이미 그 셋을 들고 있다. 두 번 그리면 방에 들어온 사람이
+              **아무것도 조작하지 않는 덩어리**를 먼저 보게 된다 — 여기서
+              첫 화면은 좌석이어야 한다.
+          */}
           <section>
             <div className={`${styles.label} mb-3`}>참가자 현황</div>
             <SeatGrid
@@ -211,13 +239,15 @@ export function RoomLobby({
               </p>
             )}
 
-            <Link
-              href="/main"
+            <button
+              type="button"
               className={styles.btnGhost}
               style={{ width: "100%", marginTop: "0.5rem", padding: "0.6rem", fontSize: "0.56rem" }}
+              disabled={busy}
+              onClick={() => leave.run()}
             >
-              <ExitIcon /> 방 나가기
-            </Link>
+              <ExitIcon /> {leaving ? "나가는 중…" : "방 나가기"}
+            </button>
           </div>
         </aside>
       </div>
@@ -225,17 +255,18 @@ export function RoomLobby({
   );
 }
 
-/* ─────────────────────────────── 코드 ─────────────────────────────── */
+/* ────────────────────────────── 코드 넘기기 ────────────────────────────── */
 
-function CodeBanner({
-  code,
-  seated,
-  capacity,
-}: {
-  code: string;
-  seated: number;
-  capacity: number;
-}) {
+/**
+ * 입장 코드를 넘기는 버튼. **코드를 글자로 띄우는 자리는 화면에 없다.**
+ *
+ * ★ 이미 들어온 사람에게 코드는 읽을 것이 아니라 넘길 것이라, 버튼 하나면 된다.
+ *   눌러서 복사한 게 맞는지는 버튼 자신이 "복사 완료"로 답한다 — 확인하라고
+ *   코드를 옆에 적어두면 그 순간 다시 읽을 글자가 는다.
+ * ★ 복사에 실패해도 오류를 띄우지 않는다. 주소창의 /room/<코드> 가 같은 값이라
+ *   막다른 길이 아니다.
+ */
+function CopyCodeButton({ code }: { code: string }) {
   const [copied, setCopied] = useState(false);
 
   const copy = async () => {
@@ -244,43 +275,19 @@ function CodeBanner({
       setCopied(true);
       setTimeout(() => setCopied(false), 1500);
     } catch {
-      // https 가 아닌 곳에는 clipboard API 가 없다. 코드가 화면에 크게 떠 있으니
-      // 눈으로 옮겨 적으면 된다 — 실패를 오류로 띄우지 않는다.
+      // https 가 아닌 곳에는 clipboard API 가 없다 (위 주석)
     }
   };
 
   return (
-    <div className={`${styles.panel} flex flex-wrap items-center justify-between gap-6 p-6 sm:p-8`}>
-      <div className="min-w-0">
-        <div className={`${styles.label} mb-2`}>입장 코드</div>
-        {/* 코드는 한 덩어리로 둔다 — 글자를 쪼개면 복사도 읽기도 나빠진다 */}
-        <div
-          className={`${styles.mono} text-[clamp(2.4rem,7vw,3.5rem)] font-bold leading-none tracking-[0.28em]`}
-        >
-          {code}
-        </div>
-      </div>
-
-      <div className="flex flex-col items-end gap-3">
-        <button
-          type="button"
-          onClick={() => void copy()}
-          className={`${styles.copy} ${copied ? styles.copyDone : ""}`}
-        >
-          {copied ? <CheckIcon /> : <CopyIcon />}
-          {copied ? "복사 완료" : "코드 복사"}
-        </button>
-        <div className="flex items-center gap-2">
-          <span style={{ color: "var(--muted)" }}>
-            <UsersIcon />
-          </span>
-          <span className={`${styles.mono} text-[1.1rem] font-bold`}>
-            {seated}
-            <span style={{ color: "var(--muted)" }}>/{capacity}</span>
-          </span>
-        </div>
-      </div>
-    </div>
+    <button
+      type="button"
+      onClick={() => void copy()}
+      className={`${styles.copy} ${copied ? styles.copyDone : ""}`}
+    >
+      {copied ? <CheckIcon /> : <CopyIcon />}
+      {copied ? "복사 완료" : "코드 복사"}
+    </button>
   );
 }
 
@@ -537,14 +544,11 @@ function SayPanel({
 
       <div className={`${styles.scroll} flex flex-1 flex-col gap-3 overflow-y-auto p-4`}>
         {/*
-          남긴 건 **이유 한 줄뿐이다.** "정해진 말만 할 수 있다"는 버튼 목록이 이미
-          말하고 있고, "고른 말은 내 자리 위에 뜬다"는 한 번 누르면 바로 보인다.
-          화면이 보여주는 걸 글로 또 적으면 읽을 것만 늘어난다.
+          ★ 안내 문구를 두지 않는다. 왜 정해진 말만 있는지는 버튼 목록이 이미
+            말하고 있고(고를 수 있는 게 그것뿐이다), 고른 말이 내 자리 위에 뜬다는
+            것도 한 번 누르면 바로 보인다. 규칙을 코드에 남기는 건 이 파일 머리말이
+            맡는다 — 화면에까지 적으면 읽을 것만 는다.
         */}
-        <p className="text-[0.65rem] leading-[1.8]" style={{ color: "var(--muted)" }}>
-          미리 짜는 걸 막으려고 정해진 말만 둔다.
-        </p>
-
         {/* 리스트 태그를 쓰지 않는다 — 좌석 수를 세는 검사가 이것까지 센다 */}
         <div className="grid grid-cols-2 gap-1.5">
           {(cfg?.lines ?? []).map((l) => (

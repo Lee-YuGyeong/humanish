@@ -78,6 +78,17 @@ export async function setPlayerCookie(roomId: string, token: string): Promise<vo
   });
 }
 
+/**
+ * 토큰을 지운다. 방에서 나갈 때 부른다.
+ *
+ * ★ 쿠키를 남겨두면 같은 방 코드로 다시 들어올 때 join_room 앞의 "이미 이 방 사람인가"
+ *   검사가 **없어진 자리**를 되찾으려 한다. 지금은 행이 지워져 currentPlayer 가 null 이라
+ *   결과가 같지만, 그건 우연이다 — 나간 사람에게 그 방의 열쇠를 남길 이유가 없다.
+ */
+export async function clearPlayerCookie(roomId: string): Promise<void> {
+  (await cookies()).delete(playerCookieName(roomId));
+}
+
 /** 라우트의 catch에서 쓴다. ApiError면 그 상태로, 아니면 500. */
 export function apiError(e: unknown): Response {
   if (e instanceof ApiError) {

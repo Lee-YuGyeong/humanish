@@ -366,19 +366,26 @@
   cursor: not-allowed;
 }
 
-/* 코드 복사 배지 */
+/*
+ * 코드 복사 — 머리말에 얹히는 작은 조작.
+ *
+ * ★ 예전에는 큰 판 안의 배지라 두툼했다. 지금은 h-12 머리말에서 접속 인원 ·
+ *   닉네임과 같은 줄에 서므로 **그 줄의 글자 크기(0.55~0.62rem)에 맞춘다.**
+ *   여기서 혼자 크면 방에서 제일 눈에 띄는 게 복사 버튼이 된다.
+ */
 .copy {
   display: inline-flex;
   align-items: center;
-  gap: 0.6rem;
-  padding: 0.6rem 1.2rem;
-  border: 1px solid var(--border2);
-  background: var(--surface2);
+  gap: 0.4rem;
+  padding: 0.3rem 0.65rem;
+  border: 1px solid var(--border);
+  background: transparent;
   color: var(--muted);
   font-family: inherit;
-  font-size: 0.6rem;
-  letter-spacing: 0.2em;
+  font-size: 0.55rem;
+  letter-spacing: 0.12em;
   text-transform: uppercase;
+  white-space: nowrap;
   cursor: pointer;
   transition:
     border-color 0.2s,

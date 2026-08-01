@@ -216,16 +216,26 @@ export function RoomView({ code }: { code: string }) {
               <ArrowLeftIcon className="h-4 w-4" />
             </Link>
             {/*
-              제목이 있으면 라벨 자리를 제목이 차지한다. 없으면 예전 그대로 'room'.
-              코드는 어느 쪽이든 남는다 — 방을 가리키는 이름은 결국 코드다.
+              ★ 방을 가리키는 이름은 **제목 하나다.** 방에 들어온 사람이 확인하는 건
+                "여기가 그 방이 맞나"이고 그 답은 코드가 아니라 제목이다.
+                코드는 아직 안 들어온 사람을 부를 때 쓰는 값이라 게임이 시작된
+                뒤에는 화면에 글자로 남기지 않는다 (대기실 머리말의 복사 버튼이
+                맡는다). 제목이 없는 방만 코드가 그 자리에 선다 —
+                가리킬 이름이 그것뿐이다.
             */}
             <div className="min-w-0">
               {room.name ? (
-                <p className="truncate text-[11px] leading-tight text-dust">{room.name}</p>
+                <h1 className="truncate text-base font-bold leading-tight text-linen">
+                  {room.name}
+                </h1>
               ) : (
-                <p className="stencil text-[8px] text-ash">room</p>
+                <>
+                  <p className="stencil text-[8px] text-ash">room</p>
+                  <h1 className="readout truncate text-xl tracking-[0.3em] text-linen">
+                    {room.code}
+                  </h1>
+                </>
               )}
-              <h1 className="readout truncate text-xl tracking-[0.3em] text-linen">{room.code}</h1>
             </div>
           </div>
 

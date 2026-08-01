@@ -154,6 +154,7 @@ schema_checks() {
     "advance_expired_rooms(int)" \
     "create_room(text,int,text)" \
     "join_room(text)" \
+    "leave_room(uuid,uuid)" \
     "fill_with_bots(uuid)" \
     "shuffle_seats(uuid)" \
     "send_message(uuid,uuid,text,int)" \
@@ -198,6 +199,7 @@ schema_checks() {
     "send_message(uuid,uuid,text,int)" \
     "create_room(text,int,text)" \
     "join_room(text)" \
+    "leave_room(uuid,uuid)" \
     "fill_with_bots(uuid)" \
     "shuffle_seats(uuid)" \
     "say_lobby_line(uuid,uuid,text,int,int)" \

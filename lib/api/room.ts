@@ -163,3 +163,13 @@ export function createRoom(capacity?: number, name?: string): Promise<RoomAndPla
 export function joinRoom(code: string): Promise<RoomAndPlayer> {
   return postJson<RoomAndPlayer>('/api/room/join', { code: code.toUpperCase() });
 }
+
+/**
+ * 방에서 나간다. 자리가 빠지고, **마지막 사람이었으면 방 자체가 사라진다.**
+ *
+ * ★ room_deleted 는 화면 문구를 위한 값이지 판정이 아니다. 지울지 말지는 서버가
+ *   한 트랜잭션 안에서 이미 정했다 (lib/server/room.ts의 leaveRoom).
+ */
+export function leaveRoom(roomId: string): Promise<{ ok: boolean; room_deleted: boolean }> {
+  return postJson<{ ok: boolean; room_deleted: boolean }>('/api/room/leave', { room_id: roomId });
+}

@@ -16,13 +16,14 @@
  * └────────────────────────────────────────────────────────────────────────────┘
  */
 
-import { useMutation, type UseMutationResult } from '@tanstack/react-query';
+import { useMutation, useQueryClient, type UseMutationResult } from '@tanstack/react-query';
 import { useCallback } from 'react';
 
 import { ApiRequestError } from '@/lib/api/client';
 import {
   advancePhase,
   castVote,
+  leaveRoom,
   sayLobbyLine,
   sendMessage,
   setLobbyReady,
@@ -30,6 +31,7 @@ import {
   submitAnswer,
 } from '@/lib/api/room';
 import { dispatchRoom, readRoomUi, roomActions } from '@/lib/store/room';
+import { openRoomsKey } from './keys';
 import { useInvalidateRoom } from './room';
 
 /** 요청 이름. 버튼 문구와 게이트 판정에 같이 쓰이므로 문자열을 흩뿌리지 않는다. */
@@ -41,6 +43,7 @@ export const REQUEST = {
   advance: '전환',
   lobbyLine: '대기방 발화',
   lobbyReady: '준비',
+  leave: '나가기',
 } as const;
 
 function messageOf(e: unknown): string {
@@ -135,6 +138,46 @@ export function useSetLobbyReady(code: string, roomId: string | undefined) {
   return useRoomWrite<boolean>(REQUEST.lobbyReady, code, roomId, (ready) =>
     setLobbyReady(roomId!, ready),
   );
+}
+
+/**
+ * 방에서 나간다. 자리가 빠지고, **마지막 사람이었으면 방 자체가 사라진다.**
+ *
+ * ★ 그 방 쿼리를 무효화하지 않는다. 다른 쓰기와 반대다 —
+ *   나간 뒤에는 그 방을 읽을 자격이 없다(쿠키를 지웠고, 방은 아예 없을 수도 있다).
+ *   무효화하면 아직 화면에 붙어 있는 me·roster 가 즉시 다시 요청을 보내 401·404 를
+ *   받아오고, **나가는 데 성공했는데 빨간 배너가 뜬다.** 대신 방 목록만 새로 읽는다 —
+ *   /main 으로 돌아갔을 때 사라진 방이 남아 있으면 안 되기 때문이다.
+ *
+ * 초안·잠금 같은 화면 상태는 room-view 가 언마운트될 때 roomLeft 로 스스로 지운다.
+ *
+ * @param onLeft 성공했을 때 부른다. **화면 이동은 여기서 하지 않는다** —
+ *               라우터는 화면의 것이고, 이 계층은 요청까지만 맡는다.
+ */
+export function useLeaveRoom(
+  roomId: string | undefined,
+  onLeft?: (roomDeleted: boolean) => void,
+) {
+  const qc = useQueryClient();
+
+  const mutation = useMutation({
+    mutationFn: () => leaveRoom(roomId!),
+    onSuccess: (res) => {
+      dispatchRoom(roomActions.requestSucceeded());
+      onLeft?.(res.room_deleted);
+    },
+    onError: (e) => dispatchRoom(roomActions.requestFailed(messageOf(e))),
+    onSettled: () => void qc.invalidateQueries({ queryKey: openRoomsKey }),
+  });
+
+  const run = useCallback(() => {
+    // 다른 쓰기와 같은 게이트. 연타로 두 번 나가는 것도 여기서 막힌다.
+    if (readRoomUi().pending !== null) return;
+    dispatchRoom(roomActions.requestStarted(REQUEST.leave));
+    mutation.mutate();
+  }, [mutation]);
+
+  return { run, mutation };
 }
 
 /**

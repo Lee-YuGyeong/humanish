@@ -18,6 +18,7 @@
  */
 
 import { advancePhase } from '@/lib/server/phase';
+import { ROOM_COLUMNS } from '@/lib/server/room';
 import { getServiceClient } from '@/lib/server/supabase';
 import { ApiError, apiError, readJson, requirePlayer } from '@/lib/server/auth';
 
@@ -39,7 +40,7 @@ export async function POST(req: Request): Promise<Response> {
 
     const { data: room, error } = await getServiceClient()
       .from('rooms')
-      .select('id, code, capacity, phase, phase_seq, phase_ends_at, round, host_id, roster_seq')
+      .select(ROOM_COLUMNS)
       .eq('id', roomId)
       .single();
     if (error) throw new ApiError(500, `방 조회 실패: ${error.message}`);
