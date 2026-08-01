@@ -61,11 +61,17 @@ $$;
 --   지운 목록은 supabase/checks.sh가 "옛 create_room이 남아 있지 않다"로 다시 확인한다.
 drop function if exists create_room(text);
 drop function if exists create_room(text, int);
+drop function if exists create_room(text, int, text);
 
 create or replace function create_room(
   p_code text,
   p_capacity int default null,
-  p_name text default null
+  p_name text default null,
+  -- 방을 만든 사람의 계정 (SPEC §15-2-결정). 없어도 방은 만들어진다 —
+  -- 계정은 전적을 위한 것이지 입장 조건이 아니다.
+  -- ★ 호출자가 준 값을 그대로 믿지 않는다. 이 자리에 오는 값은 라우트가
+  --   쿠키 세션에서 되찾은 것이다 (app/api/room/route.ts). I9와 같은 규칙이다.
+  p_user_id uuid default null
 )
 returns table (room_id uuid, player_id uuid, player_token text, seat int, nickname text)
 language plpgsql
@@ -108,8 +114,8 @@ begin
   v_seat := pick_free_seat(v_room);
   v_nick := '익명' || v_seat;
 
-  insert into players (room_id, nickname, mask_id, seat, is_bot)
-  values (v_room, v_nick, 'mask-' || lpad(v_seat::text, 2, '0'), v_seat, false)
+  insert into players (room_id, nickname, mask_id, seat, is_bot, user_id)
+  values (v_room, v_nick, 'mask-' || lpad(v_seat::text, 2, '0'), v_seat, false, p_user_id)
   returning id, token into v_player, v_token;
 
   update rooms set host_id = v_player where id = v_room;
@@ -121,7 +127,16 @@ $$;
 ------------------------------------------------------------------------------
 -- 입장
 ------------------------------------------------------------------------------
-create or replace function join_room(p_code text)
+-- 인자가 늘었으므로 옛 시그니처를 지운다. 남겨두면 오버로드가 공존해서
+-- PostgREST가 어느 쪽을 부를지 정하지 못하고 PGRST203으로 죽는다 (위 create_room 참고).
+drop function if exists join_room(text);
+
+create or replace function join_room(
+  p_code text,
+  -- 들어온 사람의 계정 (SPEC §15-2-결정). create_room의 p_user_id와 같은 규칙 —
+  -- 라우트가 쿠키 세션에서 되찾아 넘긴다. 없으면 null이고 게임은 그대로 된다.
+  p_user_id uuid default null
+)
 returns table (room_id uuid, player_id uuid, player_token text, seat int, nickname text)
 language plpgsql
 security definer
@@ -152,8 +167,8 @@ begin
   end if;
   v_nick := '익명' || v_seat;
 
-  insert into players (room_id, nickname, mask_id, seat, is_bot)
-  values (v_room.id, v_nick, 'mask-' || lpad(v_seat::text, 2, '0'), v_seat, false)
+  insert into players (room_id, nickname, mask_id, seat, is_bot, user_id)
+  values (v_room.id, v_nick, 'mask-' || lpad(v_seat::text, 2, '0'), v_seat, false, p_user_id)
   returning id, token into v_player, v_token;
 
   return query select v_room.id, v_player, v_token, v_seat, v_nick;
@@ -362,14 +377,14 @@ $$;
 revoke all on function default_room_capacity()    from public, anon, authenticated;
 revoke all on function room_capacity(uuid)        from public, anon, authenticated;
 revoke all on function pick_free_seat(uuid)       from public, anon, authenticated;
-revoke all on function create_room(text,int,text)  from public, anon, authenticated;
-revoke all on function join_room(text)            from public, anon, authenticated;
+revoke all on function create_room(text,int,text,uuid) from public, anon, authenticated;
+revoke all on function join_room(text,uuid)       from public, anon, authenticated;
 revoke all on function leave_room(uuid,uuid)      from public, anon, authenticated;
 revoke all on function fill_with_bots(uuid)       from public, anon, authenticated;
 revoke all on function shuffle_seats(uuid)        from public, anon, authenticated;
 
-grant execute on function create_room(text,int,text) to service_role;
-grant execute on function join_room(text)         to service_role;
+grant execute on function create_room(text,int,text,uuid) to service_role;
+grant execute on function join_room(text,uuid)    to service_role;
 grant execute on function leave_room(uuid,uuid)   to service_role;
 grant execute on function fill_with_bots(uuid)    to service_role;
 grant execute on function shuffle_seats(uuid)     to service_role;

@@ -9,7 +9,7 @@
  */
 
 import { joinRoom, findRoomByCode } from '@/lib/server/room';
-import { apiError, currentPlayer, readJson, setPlayerCookie } from '@/lib/server/auth';
+import { apiError, currentPlayer, currentUser, readJson, setPlayerCookie } from '@/lib/server/auth';
 
 interface Body {
   code?: string;
@@ -40,7 +40,13 @@ export async function POST(req: Request): Promise<Response> {
       });
     }
 
-    const joined = await joinRoom(code);
+    /*
+     * 계정은 **쿠키 세션에서 되찾는다** (SPEC §15-2-결정).
+     * 요청 본문의 값을 쓰지 않는다 — 그러면 남의 계정으로 전적을 쌓을 수 있다 (I9).
+     * 로그인 전이면 null 이고, 그래도 방에는 들어간다.
+     */
+    const user = await currentUser();
+    const joined = await joinRoom(code, user?.id ?? null);
     await setPlayerCookie(joined.room.id, joined.token);
     return Response.json({ room: joined.room, player: joined.player }, { status: 201 });
   } catch (e) {

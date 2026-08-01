@@ -14,7 +14,7 @@
  */
 
 import { createRoom, listOpenRooms } from '@/lib/server/room';
-import { apiError, setPlayerCookie } from '@/lib/server/auth';
+import { apiError, currentUser, setPlayerCookie } from '@/lib/server/auth';
 
 /** 목록이 캐시되면 방금 만든 방이 안 보인다. */
 export const dynamic = 'force-dynamic';
@@ -43,7 +43,9 @@ async function readBody(req: Request): Promise<Body> {
 export async function POST(req: Request): Promise<Response> {
   try {
     const { capacity, name } = await readBody(req);
-    const { room, player, token } = await createRoom(capacity, name);
+    // 계정은 쿠키 세션에서 되찾는다. 본문의 값을 쓰지 않는다 (SPEC §15-2-결정, I9).
+    const user = await currentUser();
+    const { room, player, token } = await createRoom(capacity, name, user?.id ?? null);
     await setPlayerCookie(room.id, token);
     return Response.json({ room, player }, { status: 201 });
   } catch (e) {

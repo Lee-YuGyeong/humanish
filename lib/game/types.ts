@@ -58,6 +58,31 @@ export interface Player {
   seat: number; // 1 ~ room.capacity(최대 8). 표시 순서 고정
   is_bot: boolean;
   connected: boolean;
+  /**
+   * 이 자리에 앉은 사람의 계정 (SPEC §15-2-결정). 봇은 null, 로그인 전 브라우저도 null.
+   *
+   * ★ **PublicPlayer 에 절대 옮겨 적지 않는다** (I1). 봇에게는 계정이 없으므로
+   *   이 값이 새면 `user_id 가 null 인 자리 = 봇`이 되어 명단이 통째로 드러난다.
+   *   is_bot 과 정확히 같은 급이다.
+   */
+  user_id: string | null;
+}
+
+/**
+ * 계정의 프로필 (SPEC §15-2-결정). `profiles` 테이블과 1:1이다.
+ *
+ * ★ **랭킹 · 친구 화면에만 나온다. 방 안에서는 끝까지 '익명N'이다.**
+ *   이 이름이 방 화면 어딘가에 뜨는 순간 익명성이 끝나고, 그게 이 게임의 전부다.
+ *   PublicPlayer 와 한 화면에서 만나지 않게 두는 것이 이 타입을 따로 둔 이유다.
+ *
+ * ★ 익명 계정에는 행이 없다 — 아직 부를 이름이 없기 때문이다.
+ *   구글을 연결하는 순간 서버가 만든다 (app/api/auth/callback).
+ */
+export interface Profile {
+  user_id: string;
+  display_name: string; // 1~20자
+  avatar_url: string | null;
+  created_at: string;
 }
 
 /**

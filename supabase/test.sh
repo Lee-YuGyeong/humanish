@@ -48,6 +48,30 @@ psql -q -d whois_test \
   -c "alter default privileges in schema public grant all on functions to anon, authenticated, service_role;" \
   -c "alter default privileges in schema public grant all on sequences to anon, authenticated, service_role;"
 
+# ★ Supabase의 auth 스키마를 흉내 낸다 (SPEC §15-2-결정).
+#
+#   맨 Postgres에는 auth.users도 auth.uid()도 없다. 없으면 schema.sql이 첫 줄에서
+#   "스키마 auth 없음"으로 죽어서 이 파일 전체가 안 돈다. 위의 기본 권한 흉내와
+#   같은 이유로 여기 둔다 — **로컬이 실제와 다르게 동작하면 검사가 거짓말을 한다.**
+#
+#   auth.uid()는 실제 Supabase와 **같은 GUC**를 읽는다. 그래서 아래 침투 테스트가
+#   `set request.jwt.claim.sub` 한 줄로 "남으로 로그인한 척"을 그대로 흉내 낼 수 있다.
+#   상수를 돌려주게 만들면 정책이 통과하는지 아닌지를 영영 확인하지 못한다.
+psql -q -d whois_test <<'EOSQL'
+create schema if not exists auth;
+create table if not exists auth.users (
+  id           uuid primary key,
+  email        text,
+  is_anonymous boolean not null default true,
+  created_at   timestamptz not null default now()
+);
+create or replace function auth.uid() returns uuid
+language sql stable as $$
+  select nullif(current_setting('request.jwt.claim.sub', true), '')::uuid
+$$;
+grant usage on schema auth to anon, authenticated, service_role;
+EOSQL
+
 echo "▸ SQL 적용"
 for f in schema.sql policies.sql seed.sql functions/advance_phase.sql functions/room.sql functions/chat.sql functions/lobby.sql; do
   psql -v ON_ERROR_STOP=1 -q -f "$ROOT/supabase/$f" >/dev/null 2>&1 \
@@ -298,6 +322,10 @@ blocked "봇 문구 풀 (I1)"                    "select count(*) from bot_line_
 blocked "질문 풀"                            "select count(*) from question_pool;"
 blocked "public_players.created_at (I1)"    "select created_at from public_players limit 1;"
 blocked "public_players.token"              "select token from public_players limit 1;"
+# ★ 봇에게는 계정이 없다. 이 컬럼이 뷰에 새면 `where user_id is null` 한 줄로
+#   봇 명단이 나온다 (I1, §15-2-결정).
+blocked "public_players.user_id (I1)"       "select user_id from public_players limit 1;"
+blocked "profiles (anon은 권한 자체가 없다)"  "select count(*) from profiles;"
 blocked "advance_phase 직접 호출"            "select advance_phase('$R',99);"
 blocked "advance_expired_rooms 직접 호출"    "select advance_expired_rooms();"
 blocked "rooms 쓰기"                         "update rooms set phase='reveal' where id='$R';"
@@ -395,6 +423,43 @@ psql -q -c "update rooms set phase='question' where id='$LV_C';"
 check "시작한 방에서는 자리를 못 뺀다 (§15-4)" "denied" \
   "$(denied_if "select * from leave_room('$LV_C','$LV_CH');" '시작한 방')"
 check "거절된 뒤에도 자리는 그대로"      "1" "$(q "select count(*) from players where room_id='$LV_C';")"
+
+echo ""
+echo "── 계정: 방과 이어지되 새어 나가지 않는다 (SPEC §15-2-결정) ──"
+# ★ 이 블록도 방을 만든다. 위의 "rooms 조회 (코드로 방 찾기)"가 방 개수를 세므로
+#   반드시 그 뒤에 둔다. 코드는 앞의 것들과 겹치지 않아야 한다.
+UA=aaaaaaaa-0000-0000-0000-00000000000a
+UB=aaaaaaaa-0000-0000-0000-00000000000b
+psql -q -c "
+insert into auth.users (id, is_anonymous) values ('$UA', false), ('$UB', false);
+insert into profiles (user_id, display_name) values ('$UA','가가'), ('$UB','나나');"
+
+# 자리에 계정이 찍히지 않으면 나중에 전적을 누구 것으로 쌓을지 알 수 없다.
+ACC_R="$(q "select room_id from create_room('ACCT', 4, null, '$UA');")"
+check "방을 만들면 만든 사람 계정이 찍힌다" "$UA" \
+  "$(q "select user_id from players where room_id='$ACC_R';")"
+ACC_P2="$(q "select player_id from join_room('ACCT', '$UB');")"
+check "들어온 사람 계정도 찍힌다"          "$UB" "$(q "select user_id from players where id='$ACC_P2';")"
+
+# ★ 계정 없이도 게임은 된다. 계정은 전적을 위한 것이지 입장 조건이 아니다.
+#   여기가 f로 바뀌면 로그인이 실패한 사람이 방에 못 들어오는 상태가 된 것이다.
+ACC_P3="$(q "select player_id from join_room('ACCT');")"
+check "계정 없이도 들어온다 (user_id는 null)" "" \
+  "$(q "select coalesce(user_id::text,'') from players where id='$ACC_P3';")"
+
+# ★ 이 기능에서 제일 미끄러운 자리다. **봇에게는 계정이 없다.** user_id가 뷰에
+#   새면 `where user_id is null` 한 줄이 그대로 봇 명단이다 (I1).
+#   위의 blocked가 anon 시점에서 보고, 여기서는 뷰 컬럼 목록 자체를 다시 본다.
+check "public_players에 user_id가 없다 (I1)" "0" \
+  "$(q "select count(*) from information_schema.columns where table_name='public_players' and column_name='user_id';")"
+
+# 프로필은 본인 것만. 실제 Supabase와 같은 GUC를 읽으므로 "남으로 로그인한 척"이 된다.
+own() { psql -tAq -c "set role authenticated; set request.jwt.claim.sub = '$1';
+                      select coalesce(string_agg(display_name,','),'') from profiles;"; }
+check "가가로 로그인하면 자기 것만 보인다"  "가가" "$(own "$UA")"
+check "나나로 로그인하면 자기 것만 보인다"  "나나" "$(own "$UB")"
+check "로그인 안 하면 아무것도 안 보인다"    "" \
+  "$(psql -tAq -c "set role authenticated; select coalesce(string_agg(display_name,','),'') from profiles;")"
 
 echo ""
 if [ "$FAIL" -eq 0 ]; then

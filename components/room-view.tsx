@@ -31,8 +31,10 @@ import {
   SpyIcon,
   UserPlusIcon,
 } from '@/components/ui/icons';
+import { linkGoogle, signInWithGoogle } from '@/lib/auth';
 import type { AnswerRow, VoteRow } from '@/lib/api/db';
 import type { MeResponse } from '@/lib/api/room';
+import { useAuthUser } from '@/lib/queries/auth';
 import { currentQuestion, nicknameOf, revealedAnswers } from '@/lib/queries/derive';
 import {
   REQUEST,
@@ -1063,7 +1065,93 @@ function RevealPanel({
           로비로
         </Link>
       </Box>
+
+      <SaveRecordBox roomCode={room.code} />
     </>
+  );
+}
+
+/**
+ * 기록 저장 — 익명 계정에 구글을 잇는다 (SPEC §15-2-결정).
+ *
+ * ★ **결과 화면에만 둔다.** 첫 화면에 로그인 벽을 세우지 않는 것이 §15-2-결정의 전부다.
+ *   한 판을 끝낸 사람에게만, 저장할 것이 생긴 시점에 묻는다.
+ *
+ * ★ 여기 뜨는 이름은 **계정의 표시 이름**이다. 위의 순위표에 있는 '익명N' 과
+ *   같은 사람이라는 표시를 절대 하지 않는다 (I1). 두 이름이 이어지면 익명성이 끝난다.
+ */
+function SaveRecordBox({ roomCode }: { roomCode: string }) {
+  const { data: user } = useAuthUser();
+  const [busy, setBusy] = useState(false);
+  const [failed, setFailed] = useState<string | null>(null);
+  /** 그 구글 계정이 이미 다른 계정에 물려 있을 때. 물어보고 넘어간다 */
+  const [conflict, setConflict] = useState(false);
+
+  // 계정 자체가 없으면(익명 로그인 실패) 저장할 방법이 없다. 조용히 감춘다 —
+  // 누를 수 없는 버튼을 보여주는 것보다 낫다.
+  if (!user) return null;
+
+  // 이미 연결됨. 더 물을 것이 없다.
+  if (!user.isAnonymous) {
+    return (
+      <Box>
+        <Label>기록</Label>
+        <p className="text-[13px] text-bone">
+          <span className="text-tung">{user.displayName ?? '연결된 계정'}</span> 으로 저장된다
+        </p>
+      </Box>
+    );
+  }
+
+  const save = async () => {
+    setBusy(true);
+    setFailed(null);
+    const r = await linkGoogle(`/room/${roomCode}`);
+    if (r.ok) return; // 구글로 넘어간다. 이 화면은 곧 사라진다
+    setBusy(false);
+    if (r.reason === 'already-linked') setConflict(true);
+    else setFailed(r.message);
+  };
+
+  return (
+    <Box>
+      <Label>기록</Label>
+      {conflict ? (
+        <>
+          <p className="text-[13px] leading-relaxed text-bone">
+            이 구글 계정에는 이미 기록이 있다.
+            <br />
+            <span className="text-signal">그쪽으로 들어가면 지금 판의 기록은 저장되지 않는다.</span>
+          </p>
+          <div className="flex flex-wrap gap-2">
+            <button
+              type="button"
+              className={PRIMARY_BUTTON}
+              onClick={() => void signInWithGoogle(`/room/${roomCode}`)}
+            >
+              그 계정으로 들어가기
+            </button>
+            <button
+              type="button"
+              className="stencil px-4 py-3 text-[10px] text-ash hover:text-bone"
+              onClick={() => setConflict(false)}
+            >
+              취소
+            </button>
+          </div>
+        </>
+      ) : (
+        <>
+          <p className="text-[13px] leading-relaxed text-grime">
+            지금은 이 브라우저에만 남는다. 구글을 연결하면 전적이 이어진다.
+          </p>
+          <button type="button" className={PRIMARY_BUTTON} disabled={busy} onClick={() => void save()}>
+            {busy ? '여는 중…' : '기록 저장하기'}
+          </button>
+          {failed && <p className="text-[12px] text-signal">연결 실패: {failed}</p>}
+        </>
+      )}
+    </Box>
   );
 }
 

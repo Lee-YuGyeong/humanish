@@ -12,13 +12,26 @@
 -- │ 결론: 클라이언트는 읽기만 한다. 모든 쓰기는 service_role을 쥔 서버      │
 -- │ (Route Handler)를 거치고, 거기서 쿠키의 player_token으로 player_id를   │
 -- │ 되찾는다 (SPEC §17.4). RLS는 "읽으면 안 되는 것"만 막는 역할로 좁힌다. │
+-- └───────────────────────────────────────────────────────────────────────┘
+--
+-- ┌─ 익명 인증이 붙은 뒤에도 위 전제는 그대로다 (SPEC §15-2-결정) ─────────┐
+-- │ auth.uid()를 쓰는 정책은 **새로 만든 profiles 하나뿐**이다.            │
+-- │ rooms · players · answers · messages · votes 의 정책은 한 줄도 안      │
+-- │ 바꿨다. 방 안의 본인 확인은 여전히 player_token이 한다 (§17.4).        │
 -- │                                                                       │
--- │ 익명 인증(auth.signInAnonymously)은 여전히 미결정이다 (SPEC §15-2).    │
--- │ 붙이면 방 격리를 DB로 내릴 수 있다 (SPEC §7.3, §15-6).                 │
+-- │ 왜 안 바꾸는가: Realtime Postgres Changes는 **배달 시점에** RLS를      │
+-- │ 평가한다. rooms에 auth.uid() 조건을 걸면 토큰이 없거나 만료된 순간     │
+-- │ 이벤트가 **에러 없이 아무에게도 안 간다.** 방이 통째로 멈춘다 (§7.3).  │
+-- │ 방 격리를 DB로 내리는 것은 여전히 별도 결정이다 (§15-6).               │
+-- │                                                                       │
+-- │ 기존 정책이 전부 `to anon, authenticated` 라서 로그인한 사용자로       │
+-- │ 바뀌어도 읽기가 하나도 안 깨진다. 이 파일에서 그게 지켜져야 한다 —     │
+-- │ 새 정책에 authenticated를 빠뜨리면 로그인한 사람만 화면이 빈다.        │
 -- └───────────────────────────────────────────────────────────────────────┘
 
 alter table rooms         enable row level security;
 alter table players       enable row level security;
+alter table profiles      enable row level security;
 alter table player_roles  enable row level security;
 alter table questions     enable row level security;
 alter table answers       enable row level security;
@@ -194,6 +207,27 @@ create policy votes_select on votes
   );
 
 ------------------------------------------------------------------------------
+-- profiles — 본인 것만. auth.uid()를 쓰는 유일한 정책이다 (SPEC §15-2-결정)
+------------------------------------------------------------------------------
+-- ★ anon에게는 아예 주지 않는다. 로그인하지 않은 사람이 남의 표시 이름을 훑을
+--   이유가 없다. 랭킹 화면은 나중에 집계 뷰(leaderboard)로 따로 연다 —
+--   거기에는 room_id도 user_id도 없어서 계정과 방이 이어지지 않는다.
+--
+-- ★ 쓰기 권한은 authenticated에게도 주지 않는다 (I9). 프로필을 만드는 곳은
+--   구글 연결 콜백(app/api/auth/callback) 하나뿐이고 service role로 쓴다.
+--   열어두면 남이 자기 display_name을 20자 아무 문자열로 바꿔 랭킹을 어지럽힌다.
+--
+-- ★ profiles는 Realtime publication에 넣지 않는다. 넣는 순간 이 정책이
+--   배달 시점에 평가되기 시작하고, §7.3의 함정이 여기까지 따라온다.
+revoke all on profiles from anon, authenticated;
+grant select on profiles to authenticated;
+
+drop policy if exists profiles_select_own on profiles;
+create policy profiles_select_own on profiles
+  for select to authenticated
+  using (auth.uid() = user_id);
+
+------------------------------------------------------------------------------
 -- 검증 (SPEC §14.2) — anon 키로 직접 뚫어본다. 이 기록이 기술 문서 근거가 된다.
 ------------------------------------------------------------------------------
 -- 아래는 전부 0행 또는 에러여야 한다.
@@ -207,3 +241,6 @@ create policy votes_select on votes
 --   select * from question_pool;
 --   select created_at from public_players;     -- 컬럼이 없어야 한다 (I1)
 --   select token from public_players;          -- 컬럼이 없어야 한다
+--   select user_id from public_players;        -- 컬럼이 없어야 한다 (I1, §15-2-결정)
+--   select * from profiles;                    -- anon은 권한 자체가 없다
+--   select * from profiles;                    -- 남으로 로그인한 상태에서 0행

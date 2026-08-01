@@ -135,6 +135,42 @@ alter table players add column if not exists lobby_line text;
 alter table players add column if not exists lobby_line_at timestamptz;
 alter table players add column if not exists lobby_line_count int not null default 0;
 
+-- ── 계정 (SPEC §15-2-결정) ───────────────────────────────────────────────────
+--
+-- ★ 계정 세계와 방 세계를 잇는 다리는 이 컬럼 **하나뿐**이고,
+--   public_players 뷰에 절대 들어가지 않는다 (I1).
+--
+--   왜 위험한가: **봇에게는 계정이 없다.** user_id가 뷰에 새면
+--       select seat from public_players where user_id is null;
+--   한 줄로 봇 명단 전체가 나온다. is_bot · created_at · token과 같은 급이다.
+--   supabase/checks.sh의 "public_players 컬럼이 정확히 9개다"가 이걸 잡는다 —
+--   뷰에 컬럼을 하나라도 더하면 그 검사가 먼저 빨간불이 된다.
+--
+-- ★ nullable이다. 봇은 null이고, 익명 인증이 아직 안 붙은 브라우저도 null이다.
+--   not null로 조이면 로그인이 실패한 사람이 방에 못 들어온다 — 게임이 인증에
+--   묶이면 안 된다. 계정은 전적을 위한 것이지 입장 조건이 아니다.
+--
+-- ★ on delete set null — 계정을 지워도 진행 중인 방이 깨지지 않는다.
+--   cascade로 두면 탈퇴 한 번에 남의 게임에서 자리가 사라진다.
+alter table players add column if not exists user_id uuid
+  references auth.users(id) on delete set null;
+
+create index if not exists players_user_idx on players (user_id) where user_id is not null;
+
+-- 프로필. auth.users와 1:1이고, **이름이 붙은 계정만** 행을 갖는다.
+--
+-- 익명 계정에는 행이 없다 — 아직 부를 이름이 없기 때문이다. 구글을 연결하는
+-- 순간(app/api/auth/callback) 서버가 여기에 한 행을 넣는다.
+--
+-- ★ display_name은 랭킹·친구 화면에만 나온다. 방 안에서는 끝까지 '익명N'이다.
+--   두 이름이 한 화면에서 만나면 그 순간 익명성이 끝난다.
+create table if not exists profiles (
+  user_id      uuid primary key references auth.users(id) on delete cascade,
+  display_name text not null check (char_length(display_name) between 1 and 20),
+  avatar_url   text,
+  created_at   timestamptz not null default now()
+);
+
 -- 절대 클라이언트에 노출되지 않는다 (SPEC §7.2 — 정책을 만들지 않는다)
 create table if not exists player_roles (
   player_id uuid primary key references players(id) on delete cascade,

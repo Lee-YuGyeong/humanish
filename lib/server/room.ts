@@ -181,8 +181,16 @@ function toResult(row: SeatRow, room: Room): JoinResult {
  *
  * @param capacity 3~8. 생략하면 SQL 쪽 기본값(DEFAULT_ROOM_CAPACITY)이 들어간다.
  * @param name     방 제목. 생략하거나 공백뿐이면 이름 없는 방이 된다(null).
+ * @param userId   만든 사람의 계정 (SPEC §15-2-결정). **라우트가 쿠키 세션에서
+ *                 되찾은 값이어야 한다** — 클라이언트가 보낸 값을 그대로 넘기면
+ *                 남의 계정으로 전적을 쌓을 수 있다 (I9).
+ *                 null이어도 방은 만들어진다. 계정은 입장 조건이 아니다.
  */
-export async function createRoom(capacity?: number, name?: unknown): Promise<JoinResult> {
+export async function createRoom(
+  capacity?: number,
+  name?: unknown,
+  userId?: string | null,
+): Promise<JoinResult> {
   const db = getServiceClient();
 
   // 범위는 rooms.capacity check로도 막히지만 그건 23514라 500으로 보인다.
@@ -203,6 +211,7 @@ export async function createRoom(capacity?: number, name?: unknown): Promise<Joi
       p_code: code,
       p_capacity: capacity ?? null,
       p_name: roomName,
+      p_user_id: userId ?? null,
     });
 
     if (!error) {
@@ -223,14 +232,20 @@ export async function createRoom(capacity?: number, name?: unknown): Promise<Joi
 /**
  * 코드로 방을 찾아 빈 자리에 앉힌다.
  * 정원 초과나 이미 시작된 방이면 SQL 쪽에서 거절한다.
+ *
+ * @param userId 들어온 사람의 계정. createRoom의 userId와 같은 규칙이다 —
+ *               라우트가 쿠키 세션에서 되찾아 넘긴다 (SPEC §15-2-결정, I9).
  */
-export async function joinRoom(code: string): Promise<JoinResult> {
+export async function joinRoom(code: string, userId?: string | null): Promise<JoinResult> {
   const normalized = code.trim().toUpperCase();
   if (!/^[A-Z]{4}$/.test(normalized)) {
     throw new ApiError(400, '방 코드는 알파벳 4자다');
   }
 
-  const { data, error } = await getServiceClient().rpc('join_room', { p_code: normalized });
+  const { data, error } = await getServiceClient().rpc('join_room', {
+    p_code: normalized,
+    p_user_id: userId ?? null,
+  });
 
   if (error) {
     // SQL이 raise한 것은 사용자에게 그대로 보여줘도 되는 문장이다 (room.sql 참고)

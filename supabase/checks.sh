@@ -105,6 +105,52 @@ schema_checks() {
     "$(q "select count(*) from pg_publication_tables where pubname='supabase_realtime' and tablename='rooms';")"
 
   echo ""
+  echo "── 계정 (SPEC §15-2-결정) ──"
+
+  # ★ 이 컬럼이 뷰에 새면 게임이 끝난다 — **봇에게는 계정이 없기 때문이다.**
+  #     select seat from public_players where user_id is null;
+  #   한 줄이면 봇 명단 전체다. 뷰 쪽은 위의 "컬럼이 정확히 9개다"가 이미 잡는다.
+  #   여기서는 **테이블에 컬럼이 있는가**를 본다 — 없으면 입장이 42703으로 죽는다.
+  check "players에 user_id 컬럼이 있다" "1" \
+    "$(q "select count(*) from information_schema.columns where table_name='players' and column_name='user_id';")"
+
+  # 계정을 지워도 진행 중인 방이 깨지면 안 된다. cascade면 탈퇴 한 번에 남의
+  # 게임에서 자리가 사라지고, 그 자리만 비어서 그게 또 신호가 된다 (I1).
+  check "players.user_id는 on delete set null이다" "n" \
+    "$(q "select confdeltype from pg_constraint
+           where conrelid='players'::regclass and contype='f'
+             and conkey = array[(select attnum from pg_attribute
+                                  where attrelid='players'::regclass and attname='user_id')];")"
+
+  check "profiles 테이블이 있다" "1" \
+    "$(q "select count(*) from information_schema.tables where table_name='profiles';")"
+
+  check "profiles에 RLS가 켜져 있다" "t" \
+    "$(q "select relrowsecurity from pg_class where oid='profiles'::regclass;")"
+
+  # ★ 정책이 있는 것과 정책이 **행을 가르는** 것은 다르다. using(true)로 두면
+  #   검사는 전부 초록인데 남의 프로필이 통째로 보인다. 조건식을 직접 읽는다.
+  check "profiles 정책이 auth.uid()로 본인을 가른다" "t" \
+    "$(q "select coalesce(bool_or(qual like '%uid()%'), false) from pg_policies where tablename='profiles';")"
+
+  check "anon은 profiles를 못 읽는다" "f" \
+    "$(q "select has_table_privilege('anon','profiles','select');")"
+  check "authenticated는 profiles를 읽는다 (행은 정책이 가른다)" "t" \
+    "$(q "select has_table_privilege('authenticated','profiles','select');")"
+
+  # 프로필을 만드는 곳은 구글 연결 콜백 하나뿐이고 service role로 쓴다 (I9).
+  # 열어두면 남이 display_name을 마음대로 바꿔 랭킹을 어지럽힌다.
+  for r in anon authenticated; do
+    check "$r 는 profiles에 쓰기 권한이 없다 (I9)" "f" \
+      "$(q "select has_table_privilege('$r','profiles','insert') or has_table_privilege('$r','profiles','update') or has_table_privilege('$r','profiles','delete');")"
+  done
+
+  # ★ profiles가 Realtime publication에 들어가면 이 정책이 **배달 시점에** 평가되기
+  #   시작하고, §7.3의 함정(이벤트가 조용히 안 배달됨)이 여기까지 따라온다.
+  check "profiles는 Realtime publication에 없다 (§7.3)" "0" \
+    "$(q "select count(*) from pg_publication_tables where pubname='supabase_realtime' and tablename='profiles';")"
+
+  echo ""
   echo "── 문구 풀 (seed.sql) ──"
   check "질문 풀이 차 있다" "t" "$(q "select count(*) > 0 from question_pool;")"
   check "봇 문구 풀이 차 있다" "t" "$(q "select count(*) > 0 from bot_line_pool;")"
@@ -152,8 +198,8 @@ schema_checks() {
   for sig in \
     "advance_phase(uuid,int,uuid)" \
     "advance_expired_rooms(int)" \
-    "create_room(text,int,text)" \
-    "join_room(text)" \
+    "create_room(text,int,text,uuid)" \
+    "join_room(text,uuid)" \
     "leave_room(uuid,uuid)" \
     "fill_with_bots(uuid)" \
     "shuffle_seats(uuid)" \
@@ -168,7 +214,7 @@ schema_checks() {
   # ★ 시그니처가 바뀔 때마다 **옛 것이 지워졌는지**를 같이 본다. 남아 있으면 인자
   #   개수가 다른 오버로드가 공존하고, PostgREST가 어느 쪽을 부를지 정하지 못해
   #   PGRST203으로 죽는다. 화면에는 "방 생성 실패"만 뜬다.
-  for old in "create_room(text)" "create_room(text,int)"; do
+  for old in "create_room(text)" "create_room(text,int)" "create_room(text,int,text)" "join_room(text)"; do
     check "옛 ${old} 이 남아 있지 않다" "f" \
       "$(q "select (to_regprocedure('$old') is not null);")"
   done
@@ -197,8 +243,8 @@ schema_checks() {
     "cleanup_stale_rooms(interval)" \
     "bot_reply(uuid,int)" \
     "send_message(uuid,uuid,text,int)" \
-    "create_room(text,int,text)" \
-    "join_room(text)" \
+    "create_room(text,int,text,uuid)" \
+    "join_room(text,uuid)" \
     "leave_room(uuid,uuid)" \
     "fill_with_bots(uuid)" \
     "shuffle_seats(uuid)" \

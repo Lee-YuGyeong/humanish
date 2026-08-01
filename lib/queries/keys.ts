@@ -53,3 +53,17 @@ export const openRoomsKey = ['open-rooms'] as const;
  * scope(roomId) 안에 두면 방 무효화 때마다 같은 목록을 다시 받는다.
  */
 export const lobbyLinesKey = ['lobby-lines'] as const;
+
+/**
+ * 내 계정 (SPEC §15-2-결정).
+ *
+ * ★ **scope(roomId) 밖이다. 안에 두면 안 된다.**
+ *   계정은 방보다 오래 살고 여러 방에 걸쳐 같다. 방 스코프에 넣으면
+ *   방을 옮길 때마다 다시 받고, 무엇보다 **계정과 방이 키 모양으로 묶인다** —
+ *   여기서부터 "이 방의 그 계정" 같은 조회가 자연스러워 보이기 시작하고,
+ *   그게 I1 이 무너지는 첫걸음이다. 계정 세계와 방 세계는 분리한다.
+ */
+export const authUserKey = ['auth-user'] as const;
+
+/** 내 프로필. 익명 계정에는 없다(null). 계정과 같은 이유로 스코프 밖이다. */
+export const profileKey = ['profile'] as const;

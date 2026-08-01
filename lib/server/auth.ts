@@ -12,7 +12,7 @@
  */
 
 import { cookies } from 'next/headers';
-import { getServiceClient } from '@/lib/server/supabase';
+import { getServerAuthClient, getServiceClient } from '@/lib/server/supabase';
 
 /** 방마다 쿠키를 따로 둔다. 한 사람이 방 여러 개에 들어갈 수 있고, 코드는 재사용된다 (SPEC §16.4). */
 export function playerCookieName(roomId: string): string {
@@ -87,6 +87,53 @@ export async function setPlayerCookie(roomId: string, token: string): Promise<vo
  */
 export async function clearPlayerCookie(roomId: string): Promise<void> {
   (await cookies()).delete(playerCookieName(roomId));
+}
+
+/* ────────────────────────────────────────────────────────────────────────────
+ * 계정 — SPEC §15-2-결정
+ *
+ * ★ 위의 player_token 과 **역할이 다르다. 대체하지 않는다.**
+ *
+ *     player_token  "이 브라우저가 그 방 그 자리에 앉았다"  → 방 안의 모든 쓰기
+ *     계정(user_id) "이 사람이 누구다"                      → 전적 · 랭킹 · 친구
+ *
+ *   방 안의 본인 확인을 계정으로 바꾸지 않는다. 바꾸면 로그인이 실패한 사람이
+ *   게임을 못 하게 되고, 한 사람이 방 여러 개에 앉는 경우(§17.4)도 표현이 안 된다.
+ *   계정은 전적을 위한 것이지 입장 조건이 아니다.
+ * ──────────────────────────────────────────────────────────────────────────── */
+
+export interface SessionUser {
+  id: string;
+  /** 익명 계정이면 true. 구글을 연결하면 false 가 된다 */
+  is_anonymous: boolean;
+}
+
+/**
+ * 쿠키의 세션으로 계정을 되찾는다. 로그인 전이면 null.
+ *
+ * ★ getUser() 를 쓴다. getSession() 은 **쿠키에 든 값을 그대로 믿는다** —
+ *   서버에서 그걸 신뢰하면 위조된 쿠키로 남의 user_id 를 주장할 수 있다.
+ *   getUser() 는 Auth 서버에 물어 서명을 확인한다. I9 와 같은 이유다.
+ *
+ * ★ 던지지 않는다. 계정이 없어도 게임은 돌아야 하므로, 실패는 "계정 없음"으로
+ *   접는다. 이 값이 null 이면 players.user_id 가 null 로 들어갈 뿐이다.
+ */
+export async function currentUser(): Promise<SessionUser | null> {
+  try {
+    const db = await getServerAuthClient();
+    const { data, error } = await db.auth.getUser();
+    if (error || !data.user) return null;
+    return { id: data.user.id, is_anonymous: data.user.is_anonymous ?? false };
+  } catch {
+    return null;
+  }
+}
+
+/** 위와 같되 없으면 401로 끊는다. 계정이 꼭 필요한 라우트(전적·친구)에서 쓴다. */
+export async function requireUser(): Promise<SessionUser> {
+  const user = await currentUser();
+  if (!user) throw new ApiError(401, '로그인이 필요하다');
+  return user;
 }
 
 /** 라우트의 catch에서 쓴다. ApiError면 그 상태로, 아니면 500. */
