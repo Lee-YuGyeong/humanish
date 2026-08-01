@@ -8,7 +8,7 @@
 
 import { getServiceClient } from '@/lib/server/supabase';
 import { ApiError } from '@/lib/server/auth';
-import type { PublicPlayer, Room } from '@/lib/game/types';
+import type { Phase, PublicPlayer, Room } from '@/lib/game/types';
 
 /**
  * 방 정원의 범위. supabase/functions/room.sql의 default_room_capacity()·room_capacity(),
@@ -322,70 +322,119 @@ export async function findRoomByCode(code: string): Promise<Room> {
   return data as Room;
 }
 
-/** 대기 중인 방 목록의 한 줄. room_id는 넣지 않는다 — 입장은 code로 한다. */
+/** 방 목록의 한 줄. room_id는 넣지 않는다 — 입장은 code로 한다. */
 export interface OpenRoom {
   code: string;
+  /** 방 제목. 없으면 null — 화면이 코드로 대신 부른다 (lib/game/types.ts의 Room.name). */
+  name: string | null;
   capacity: number;
-  /** 지금 앉아 있는 사람 수. lobby라 전부 사람이다 (아래 주석 참고). */
+  /**
+   * 그 방에 앉아 있는 수.
+   *
+   * ★ 세는 대상이 상태에 따라 다르다 — lobby는 **사람만**, 시작한 방은 **봇까지 전부**.
+   *   왜 그래야 하는지는 아래 listOpenRooms 주석에 있다 (I1). 한쪽으로 통일하면
+   *   둘 중 하나가 반드시 샌다.
+   */
   players: number;
   created_at: string;
+  /**
+   * 'lobby'면 대기 중, 그 밖은 전부 게임 중.
+   *
+   * 방 하나의 상태일 뿐 **자리와 묶이지 않는다** — 어느 자리가 봇인지와 무관하다 (I1).
+   */
+  phase: Phase;
 }
 
-/** 목록에 한 번에 싣는 방 수. 더 오래된 방은 코드를 직접 입력해 들어간다. */
-const OPEN_ROOM_LIMIT = 50;
+/**
+ * 목록에 한 번에 싣는 방 수. 더 오래된 방은 코드를 직접 입력해 들어간다.
+ *
+ * 대기 방과 게임 중인 방을 따로 센다. 하나로 묶어 최근 50개만 가져오면, 게임이 몰린
+ * 시간대에 **들어갈 수 있는 방이 목록에서 통째로 밀려난다** — 목록의 목적이 사라진다.
+ */
+const WAITING_ROOM_LIMIT = 50;
+const PLAYING_ROOM_LIMIT = 20;
 
 /**
- * 아직 시작하지 않은(lobby) 방 목록. 화면의 "방 골라 들어가기"가 쓴다.
+ * 방 목록. 화면의 "방 골라 들어가기"가 쓴다.
  *
  * ★ 왜 서버를 거치나: players 테이블은 anon에게 revoke돼 있고(I1), public_players로
  *   방 여러 개를 한꺼번에 세는 건 방 필터 없는 쿼리라 I10 위반이다. 그래서 service role
  *   서버가 세어서 숫자만 내려보낸다.
  *
- * ★ 왜 lobby만: fill_with_bots는 시작 버튼에서 돈다(SPEC §17.4). lobby 단계의 참가자는
- *   전부 사람이라 인원수로 봇을 유추할 수 없다. 시작한 방까지 목록에 올리면, 그 방의
- *   사람 수를 알던 사람이 정원에서 빼서 봇 수를 계산할 수 있다 (I1).
- *   시작한 방은 join_room이 어차피 거절하므로 목록에 있을 이유도 없다.
+ * ┌─ ★ 시작한 방도 싣는다. 대신 세는 방법을 바꾼다 (I1) ──────────────────────┐
+ * │ 예전에는 lobby인 방만 내려보냈다. 이유는 "정원 − 표시 인원 = 봇 수"가       │
+ * │ 새기 때문이었다 (SPEC §17.6).                                              │
+ * │                                                                           │
+ * │ 그 구멍을 목록에서 빼는 대신 **숫자를 바꿔 막는다.** 시작한 방은 사람이     │
+ * │ 아니라 **앉아 있는 전부**(봇 포함)를 센다. 시작한 방은 fill_with_bots 가    │
+ * │ 자리를 다 채웠으므로 언제나 '정원/정원'이고, 거기서 빼면 0이다 — 뺄 것이    │
+ * │ 없으니 샐 것도 없다. 화면에도 이쪽이 사실이다: 5자리가 다 찬 방을 '3/5'로   │
+ * │ 그리는 게 오히려 거짓말이었다.                                             │
+ * │                                                                           │
+ * │ lobby 는 반대로 **사람만** 세야 한다. "lobby면 아직 봇이 없다"로는 부족하다 │
+ * │ — /api/room/start 는 fillWithBots 를 먼저 커밋하고 몇 번의 왕복 뒤에        │
+ * │ advance_phase 를 부른다. 그 사이 방은 아직 lobby인데 봇은 이미 앉아 있어서, │
+ * │ 3초 폴링이 하필 그 틈에 걸리면 줄이 '2/5'에서 '5/5'로 바뀌는 게 보이고      │
+ * │ 그 차이가 곧 봇 수다. 조건 하나로 그 창을 없앤다.                          │
+ * └───────────────────────────────────────────────────────────────────────────┘
+ *
+ * 순서는 **대기 중인 방이 먼저, 게임 중인 방이 뒤**다. 들어갈 수 있는 방이 위에 와야
+ * 목록이 쓸모가 있다. 화면에서 다르게 정렬하더라도 이 갈래는 유지한다.
  */
 export async function listOpenRooms(): Promise<OpenRoom[]> {
   const db = getServiceClient();
 
-  const { data: rooms, error } = await db
-    .from('rooms')
-    .select('id, code, capacity, created_at')
-    .eq('phase', 'lobby')
-    .order('created_at', { ascending: false })
-    .limit(OPEN_ROOM_LIMIT);
+  const columns = 'id, code, name, capacity, created_at, phase';
+  const [waiting, playing] = await Promise.all([
+    db
+      .from('rooms')
+      .select(columns)
+      .eq('phase', 'lobby')
+      .order('created_at', { ascending: false })
+      .limit(WAITING_ROOM_LIMIT),
+    db
+      .from('rooms')
+      .select(columns)
+      .neq('phase', 'lobby')
+      .order('created_at', { ascending: false })
+      .limit(PLAYING_ROOM_LIMIT),
+  ]);
 
-  if (error) throw new ApiError(500, `방 목록 조회 실패: ${error.message}`);
-  if (!rooms || rooms.length === 0) return [];
+  const failed = waiting.error ?? playing.error;
+  if (failed) throw new ApiError(500, `방 목록 조회 실패: ${failed.message}`);
+
+  // 대기 방이 앞, 게임 중인 방이 뒤. 각 묶음 안은 최신순이다.
+  const rooms = [...(waiting.data ?? []), ...(playing.data ?? [])];
+  if (rooms.length === 0) return [];
 
   const ids = rooms.map((r) => r.id as string);
-  // 방마다 한 번씩 세면 왕복이 50번이다. 목록에 올린 방으로 범위를 좁혀 한 번에 읽고
-  // 메모리에서 센다. is_bot은 세는 조건으로만 쓰고 값은 밖으로 내보내지 않는다 (I1).
-  //
-  // ★ 사람만 센다. "lobby면 아직 봇이 없다"는 것만으로는 부족하다 —
-  //   /api/room/start는 fillWithBots를 먼저 커밋하고 몇 번의 왕복 뒤에
-  //   advance_phase를 부른다. 그 사이 방은 아직 lobby인데 봇은 이미 앉아 있어서,
-  //   3초 폴링이 하필 그 틈에 걸리면 카드가 '2 / 5'에서 '5 / 5'로 바뀌는 게 보이고
-  //   그 차이가 곧 봇 수다. 조건 하나로 그 창을 없앤다.
+  // 방마다 한 번씩 세면 왕복이 70번이다. 목록에 올린 방으로 범위를 좁혀 한 번에 읽고
+  // 메모리에서 센다. is_bot은 세는 데만 쓰고 값 자체는 밖으로 내보내지 않는다 (I1).
   const { data: seats, error: seatErr } = await db
     .from('players')
-    .select('room_id')
-    .eq('is_bot', false)
+    .select('room_id, is_bot')
     .in('room_id', ids);
 
   if (seatErr) throw new ApiError(500, `참가자 수 조회 실패: ${seatErr.message}`);
 
-  const counts = new Map<string, number>();
+  const humans = new Map<string, number>();
+  const everyone = new Map<string, number>();
   for (const s of seats ?? []) {
     const roomId = s.room_id as string;
-    counts.set(roomId, (counts.get(roomId) ?? 0) + 1);
+    everyone.set(roomId, (everyone.get(roomId) ?? 0) + 1);
+    if (s.is_bot === false) humans.set(roomId, (humans.get(roomId) ?? 0) + 1);
   }
 
-  return rooms.map((r) => ({
-    code: r.code as string,
-    capacity: r.capacity as number,
-    players: counts.get(r.id as string) ?? 0,
-    created_at: r.created_at as string,
-  }));
+  return rooms.map((r) => {
+    const id = r.id as string;
+    const phase = r.phase as Phase;
+    return {
+      code: r.code as string,
+      name: (r.name as string | null) ?? null,
+      capacity: r.capacity as number,
+      players: (phase === 'lobby' ? humans.get(id) : everyone.get(id)) ?? 0,
+      created_at: r.created_at as string,
+      phase,
+    };
+  });
 }
