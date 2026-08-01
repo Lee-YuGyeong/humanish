@@ -489,6 +489,30 @@ check "들어온 사람 이름도 베껴 온다"      "나나" "$(q "select coal
 NM_P3="$(q "select player_id from join_room('NAME');")"
 check "계정 없으면 이름도 없다"           "" "$(q "select coalesce(lobby_name,'') from players where id='$NM_P3';")"
 
+# ★ 로그인 없이도 대기방 이름을 정할 수 있다. 이게 없으면 대기방이 '익명N' 반쪽이 된다.
+q "select set_lobby_name('$NM_R','$NM_P3','다다');" >/dev/null
+check "로그인 없이도 이름을 정한다"       "다다" "$(q "select lobby_name from players where id='$NM_P3';")"
+
+check "같은 방에 같은 이름은 못 쓴다"     "denied" \
+  "$(denied_if "select set_lobby_name('$NM_R','$NM_P3','가가');" '이미 그 이름을 쓰는')"
+
+# ★ 대소문자 검사는 라틴 문자로 한다. 한글에는 대소문자가 없어서 '가가'로 시험하면
+#   lower() 를 빼먹어도 통과하는 가짜 검사가 된다 (위 profiles 검사와 같은 이유).
+q "select set_lobby_name('$NM_R','$NM_P3','Chulsoo');" >/dev/null
+check "대소문자만 달라도 같은 이름이다"   "denied" \
+  "$(denied_if "select set_lobby_name('$NM_R','$NM_P2','CHULSOO');" '이미 그 이름을 쓰는')"
+# ★ 자기 자신은 걸러야 한다. 안 그러면 이름을 대소문자만 고치는 것조차 막힌다.
+#   set_lobby_name 은 void 를 돌려주므로 `is null` 로는 성공을 못 잰다 —
+#   void 는 null 이 아니라 빈 문자열이다. 거절 문구가 안 나오는 것으로 판정한다.
+check "자기 이름은 다시 정해도 된다"      "allowed" \
+  "$(denied_if "select set_lobby_name('$NM_R','$NM_P3','CHULSOO');" '이미 그 이름을 쓰는')"
+
+# 비우면 '익명N' 으로 돌아간다
+q "select set_lobby_name('$NM_R','$NM_P3',null);" >/dev/null
+check "이름을 비울 수 있다"               "" "$(q "select coalesce(lobby_name,'') from players where id='$NM_P3';")"
+check "비운 사람이 여럿이어도 된다 (부분 인덱스)" "t" \
+  "$(q "select count(*) >= 1 from players where room_id='$NM_R' and lobby_name is null;")"
+
 # 대기방에서는 보인다
 check "대기방에서는 뷰에 이름이 나온다"   "가가,나나" \
   "$(psql -tAq -c "set role anon; select string_agg(lobby_name, ',' order by lobby_name) from public_players where room_id='$NM_R' and lobby_name is not null;")"
@@ -502,8 +526,9 @@ psql -q -c "update rooms set phase='question' where id='$NM_R';"
 check "게임 중에는 뷰가 안 내려준다 (2겹)" "0" \
   "$(psql -tAq -c "set role anon; select count(*) from public_players where room_id='$NM_R' and lobby_name is not null;")"
 
-# 지우기가 빠져도 뷰가 막는지 — 한 겹만 남았을 때를 흉내 낸다
-psql -q -c "update players set lobby_name='되살아난이름' where room_id='$NM_R';"
+# 지우기가 빠져도 뷰가 막는지 — 한 겹만 남았을 때를 흉내 낸다.
+# ★ 한 사람만 되살린다. 방 전체에 같은 이름을 넣으면 방 안 유니크에 걸려 죽는다.
+psql -q -c "update players set lobby_name='되살아난이름' where id='$NM_P3';"
 check "원본이 남아 있어도 게임 중엔 안 샌다" "0" \
   "$(psql -tAq -c "set role anon; select count(*) from public_players where room_id='$NM_R' and lobby_name is not null;")"
 

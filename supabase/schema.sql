@@ -152,6 +152,20 @@ alter table players add column if not exists lobby_line_count int not null defau
 --   해서 봇이 드러나지는 않는다 — 그 전제가 깨지면 아래 ☐ 를 볼 것.
 alter table players add column if not exists lobby_name text;
 
+-- ★ 한 방에 같은 이름이 둘이면 대기방에서 누가 누구인지 못 가린다.
+--
+--   **방 안에서만** 겹치지 않으면 된다. 계정 이름(profiles.display_name)은 전체
+--   유니크지만, 로그인하지 않은 사람이 그때그때 치는 이름까지 전역으로 묶을
+--   수는 없다 — 그러면 남이 쓰는 이름이라는 이유로 못 들어오는 방이 생긴다.
+--
+--   lower() 로 묶는 이유는 계정 이름과 같다. 'Chulsoo' 와 'chulsoo' 가 대기방에
+--   나란히 서면 눈으로 구별이 안 된다.
+--
+-- ★ 부분 인덱스다(where lobby_name is not null). 이름이 없는 사람은 여럿이어도
+--   되고, shuffle_seats 가 전원을 null 로 만들 때 서로 부딪히지 않아야 한다.
+create unique index if not exists players_room_lobby_name_key
+  on players (room_id, lower(lobby_name)) where lobby_name is not null;
+
 -- ── 계정 (SPEC §15-2-결정) ───────────────────────────────────────────────────
 --
 -- ★ 계정 세계와 방 세계를 잇는 다리는 이 컬럼 **하나뿐**이고,

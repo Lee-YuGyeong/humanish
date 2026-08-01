@@ -121,12 +121,68 @@ end;
 $$;
 
 ------------------------------------------------------------------------------
+-- 대기방 이름 — SPEC §15-2-결정
+------------------------------------------------------------------------------
+-- 로그인하지 않은 사람도 대기방에서 부를 이름을 정할 수 있다. 계정이 있으면
+-- 앉을 때 이미 베껴져 있고(create_room · join_room), 여기서 고칠 수도 있다.
+--
+-- ★ **대기방에서만 바꾼다.** 게임이 시작되면 이 값은 shuffle_seats 가 지웠고,
+--   phase 검사가 되살리는 것도 막는다. 게임 중에 이름이 붙으면 그 자리가
+--   사람으로 확정된다 (I1).
+--
+-- ★ 이름을 비우는 것(null)도 허용한다. '익명N' 으로 돌아가고 싶을 수 있다.
+create or replace function set_lobby_name(
+  p_room_id   uuid,
+  p_player_id uuid,
+  p_name      text
+) returns void
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+declare
+  v_name text;
+begin
+  perform 1 from rooms where id = p_room_id and phase = 'lobby' for update;
+  if not found then
+    raise exception '대기방에서만 이름을 바꿀 수 있다' using errcode = 'P0001';
+  end if;
+
+  -- 다듬는 일은 app/api/lobby/name 의 normalizeDisplayName 이 이미 했다.
+  -- 여기 있는 건 그 경로를 타지 않은 호출을 위한 두 번째 겹이다.
+  v_name := nullif(btrim(coalesce(p_name, '')), '');
+  if v_name is not null and char_length(v_name) > 20 then
+    raise exception '이름은 20자까지다' using errcode = 'P0001';
+  end if;
+
+  -- ★ 유니크 인덱스가 어차피 막지만, 23505 는 사용자에게 보여줄 문장이 안 된다.
+  --   방을 잠근 채로 먼저 물어보고 P0001 로 바꿔 던진다 (create_room 의 정원과 같은 방식).
+  if v_name is not null and exists (
+    select 1 from players
+     where room_id = p_room_id
+       and id <> p_player_id
+       and lower(lobby_name) = lower(v_name)
+  ) then
+    raise exception '이 방에 이미 그 이름을 쓰는 사람이 있다' using errcode = 'P0001';
+  end if;
+
+  update players
+     set lobby_name = v_name
+   where id = p_player_id
+     and room_id = p_room_id
+     and lobby_name is distinct from v_name;
+end;
+$$;
+
+------------------------------------------------------------------------------
 -- 권한 — I9
 ------------------------------------------------------------------------------
 -- Supabase는 새 함수에 anon execute를 자동으로 깔아준다. security definer라
 -- 그대로 두면 anon이 남의 대기방에 말풍선을 띄운다. 명시해서 회수한다.
 revoke all on function say_lobby_line(uuid, uuid, text, int, int) from public, anon, authenticated;
 revoke all on function set_lobby_ready(uuid, uuid, boolean)       from public, anon, authenticated;
+revoke all on function set_lobby_name(uuid, uuid, text)           from public, anon, authenticated;
 
 grant execute on function say_lobby_line(uuid, uuid, text, int, int) to service_role;
 grant execute on function set_lobby_ready(uuid, uuid, boolean)       to service_role;
+grant execute on function set_lobby_name(uuid, uuid, text)           to service_role;

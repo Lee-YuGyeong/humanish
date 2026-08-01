@@ -132,6 +132,14 @@ export function setLobbyReady(roomId: string, ready: boolean): Promise<unknown> 
 }
 
 /**
+ * 대기방에서 부를 이름을 정한다 (SPEC §15-2-결정).
+ * null 이면 지운다 — '익명N' 으로 돌아간다.
+ */
+export function setLobbyName(roomId: string, name: string | null): Promise<unknown> {
+  return postJson('/api/lobby/name', { room_id: roomId, name });
+}
+
+/**
  * 페이즈 전환 요청.
  *
  * ★ expected_seq 를 **인자에서 뺄 수 없게** 한다 (I6). 낙관적 잠금 키라서

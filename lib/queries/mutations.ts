@@ -27,6 +27,7 @@ import {
   sayLobbyLine,
   sendMessage,
   setLobbyReady,
+  setLobbyName,
   startRoom,
   submitAnswer,
 } from '@/lib/api/room';
@@ -43,6 +44,7 @@ export const REQUEST = {
   advance: '전환',
   lobbyLine: '대기방 발화',
   lobbyReady: '준비',
+  lobbyName: '이름',
   leave: '나가기',
 } as const;
 
@@ -137,6 +139,19 @@ export function useSayLobbyLine(code: string, roomId: string | undefined) {
 export function useSetLobbyReady(code: string, roomId: string | undefined) {
   return useRoomWrite<boolean>(REQUEST.lobbyReady, code, roomId, (ready) =>
     setLobbyReady(roomId!, ready),
+  );
+}
+
+/**
+ * 대기방에서 부를 이름 (SPEC §15-2-결정).
+ *
+ * ★ 성공하면 방 쿼리가 무효화되어 roster 를 다시 읽는다(useRoomWrite 가 한다).
+ *   그래야 내가 바꾼 이름이 좌석 카드에 바로 뜬다 — 다른 사람 화면은
+ *   roster_seq 신호가 알려준다 (§17.3).
+ */
+export function useSetLobbyName(code: string, roomId: string | undefined) {
+  return useRoomWrite<string | null>(REQUEST.lobbyName, code, roomId, (name) =>
+    setLobbyName(roomId!, name),
   );
 }
 

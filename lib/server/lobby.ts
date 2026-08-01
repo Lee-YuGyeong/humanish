@@ -45,3 +45,30 @@ export async function setLobbyReady(
     throw new ApiError(500, `준비 상태 변경 실패: ${error.message}`);
   }
 }
+
+/**
+ * 대기방에서 부를 이름을 정한다 (SPEC §15-2-결정).
+ *
+ * 로그인하지 않은 사람도 쓸 수 있다 — 계정이 있으면 앉을 때 이미 베껴져 있고,
+ * 여기서 고칠 수도 있다. null 을 주면 지우고 '익명N' 으로 돌아간다.
+ *
+ * ★ 게임이 시작되면 SQL 이 거절한다(P0001). 게임 중에 이름이 붙으면 그 자리가
+ *   사람으로 확정되기 때문이다 (I1).
+ */
+export async function setLobbyName(
+  roomId: string,
+  playerId: string,
+  name: string | null,
+): Promise<void> {
+  const { error } = await getServiceClient().rpc('set_lobby_name', {
+    p_room_id: roomId,
+    p_player_id: playerId,
+    p_name: name,
+  });
+
+  if (error) {
+    // 이름이 겹쳤거나 대기방이 아니다. 둘 다 사용자에게 그대로 보여줄 문장이다.
+    if (error.code === 'P0001') throw new ApiError(409, error.message);
+    throw new ApiError(500, `이름 변경 실패: ${error.message}`);
+  }
+}

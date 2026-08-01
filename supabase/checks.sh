@@ -92,6 +92,13 @@ schema_checks() {
   check "profiles.display_name 이 대소문자 무시 유니크다" "1" \
     "$(q "select count(*) from pg_indexes where tablename='profiles' and indexname='profiles_display_name_key';")"
 
+  # ★ 한 방에 같은 이름이 둘이면 대기방에서 누가 누구인지 못 가린다.
+  #   **부분 인덱스**여야 한다 — 이름 없는 사람은 여럿이어도 되고, shuffle_seats 가
+  #   전원을 null 로 만들 때 서로 부딪히면 게임 시작이 통째로 죽는다.
+  check "대기방 이름이 방 안에서 유니크다" "t" \
+    "$(q "select (indexdef like '%lower(lobby_name)%' and indexdef like '%WHERE%')
+            from pg_indexes where indexname='players_room_lobby_name_key';")"
+
   # ★ 함수만 있고 제약이 옛날이면 검사는 전부 초록인데 방 시작만 죽는다.
   #   shuffle_seats(§15-3-결정)는 전원의 자리를 한 순열로 다시 배정하므로 update 도중
   #   두 사람이 잠깐 같은 자리를 갖는 순간이 **반드시** 생긴다. 유니크가 즉시 검사면
@@ -217,6 +224,7 @@ schema_checks() {
     "send_message(uuid,uuid,text,int)" \
     "say_lobby_line(uuid,uuid,text,int,int)" \
     "set_lobby_ready(uuid,uuid,boolean)" \
+    "set_lobby_name(uuid,uuid,text)" \
     "room_capacity(uuid)" \
     "default_room_capacity()" \
     "server_now()"; do
@@ -261,6 +269,7 @@ schema_checks() {
     "shuffle_seats(uuid)" \
     "say_lobby_line(uuid,uuid,text,int,int)" \
     "set_lobby_ready(uuid,uuid,boolean)" \
+    "set_lobby_name(uuid,uuid,text)" \
     "server_now()" \
     "default_room_capacity()" \
     "room_capacity(uuid)" \

@@ -176,6 +176,20 @@ begin
   -- create_room 과 같다 — 계정 이름을 자리로 베껴 온다 (SPEC §15-2-결정).
   select display_name into v_lobby_name from profiles where user_id = p_user_id;
 
+  -- ★ 그 이름을 방 안의 누군가가 이미 쓰고 있으면 **비운 채로 앉힌다.**
+  --   유니크에 걸려 insert 가 죽으면 "이름이 겹친다"는 이유로 방에 못 들어오게 된다.
+  --   들어오는 것이 먼저다 — 이름은 대기방에서 직접 고치면 된다.
+  --   방은 위에서 for update 로 잠갔으므로 이 검사와 insert 사이에 끼어들 수 없다.
+  -- ★ 별칭으로 한정한다. 이 함수의 returns table 에 room_id 가 있어서 그냥 쓰면
+  --   "column reference room_id is ambiguous" 로 죽는다 (PL/pgSQL 은 OUT 파라미터를
+  --   변수로도 본다). 실제로 여기서 한 번 걸렸다.
+  if v_lobby_name is not null and exists (
+    select 1 from players pp
+     where pp.room_id = v_room.id and lower(pp.lobby_name) = lower(v_lobby_name)
+  ) then
+    v_lobby_name := null;
+  end if;
+
   insert into players (room_id, nickname, mask_id, seat, is_bot, user_id, lobby_name)
   values (v_room.id, v_nick, 'mask-' || lpad(v_seat::text, 2, '0'), v_seat, false, p_user_id, v_lobby_name)
   returning id, token into v_player, v_token;

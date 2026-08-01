@@ -22,7 +22,8 @@ import { Suspense, useEffect, useState } from 'react';
 import { saveDisplayName } from '@/lib/api/profile';
 import { useInvalidateAuthUser, useAuthUser, useProfile } from '@/lib/queries/auth';
 
-/** app/api/profile 의 MAX_NAME_LEN · profiles 체크 제약과 같은 값이어야 한다. */
+/** app/api/profile 의 MIN_NAME_LEN · MAX_NAME_LEN · profiles 체크 제약과 같은 값이어야 한다. */
+const MIN_LEN = 1;
 const MAX_LEN = 20;
 
 function safeNext(raw: string | null): string {
@@ -95,7 +96,7 @@ function NicknameForm() {
           value={name}
           maxLength={MAX_LEN}
           disabled={loading || busy}
-          placeholder={loading ? '불러오는 중…' : '2~20자'}
+          placeholder={loading ? '불러오는 중…' : `${MIN_LEN}~${MAX_LEN}자`}
           onChange={(e) => {
             setTouched(true);
             setName(e.target.value);
