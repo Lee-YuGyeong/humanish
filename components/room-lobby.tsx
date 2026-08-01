@@ -160,7 +160,9 @@ export function RoomLobby({
               className="text-[0.62rem] font-semibold uppercase tracking-[0.1em]"
               style={{ color: "var(--accent)" }}
             >
-              {me.player.nickname}
+              {/* 지은 이름이 있으면 그걸로 (§15-2-결정). mine 은 public_players 행이라
+                  게임이 시작되면 lobby_name 이 null 이 되어 자동으로 '익명N' 으로 돌아온다 */}
+              {mine?.lobby_name ?? me.player.nickname}
             </span>
             <span className={`${styles.tag} ${styles.tagGreen}`}>나</span>
           </span>
@@ -368,7 +370,12 @@ function SeatGrid({
                   className="block truncate text-[0.72rem] font-semibold uppercase tracking-[0.06em]"
                   style={{ color: p == null ? "var(--dim)" : isMe ? "var(--accent)" : "var(--text)" }}
                 >
-                  {p ? p.nickname : "빈자리"}
+                  {/*
+                    본인이 지은 이름이 있으면 그걸로 부른다 (SPEC §15-2-결정).
+                    ★ 대기방에서만이다. 게임 화면(room-view)은 이 값을 쓰지 않는다 —
+                      뷰가 phase='lobby' 밖에서 null 을 주므로 자동으로 '익명N' 이 된다.
+                  */}
+                  {p ? (p.lobby_name ?? p.nickname) : "빈자리"}
                 </span>
                 <span
                   className={`${styles.mono} mt-1 block text-[0.58rem]`}

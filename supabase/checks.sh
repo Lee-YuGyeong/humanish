@@ -44,8 +44,8 @@ schema_checks() {
   # is_ready·lobby_line·lobby_line_at 은 대기방 값이라 뷰가 phase='lobby' 일 때만
   # 내려준다 (policies.sql). 대기방엔 사람만 있으므로 게임까지 따라가면
   # **값이 있는 자리 = 사람**이 되어 봇 명단이 통째로 드러난다.
-  check "public_players 컬럼이 정확히 9개다" \
-    "id,room_id,nickname,mask_id,seat,connected,is_ready,lobby_line,lobby_line_at" \
+  check "public_players 컬럼이 정확히 10개다" \
+    "id,room_id,nickname,mask_id,seat,connected,is_ready,lobby_line,lobby_line_at,lobby_name" \
     "$(q "select string_agg(column_name, ',' order by ordinal_position) from information_schema.columns where table_name='public_players';")"
 
   # 같은 이유로 채팅 뷰도 본다. created_at이 있으면 봇의 타이핑 지연이 드러난다 (I1).
@@ -71,15 +71,26 @@ schema_checks() {
                    where conname = 'rooms_name_check') t;")"
 
   # 대기방 프리셋 발화 (§15-3-결정). 넷이 다 있어야 쿨다운·총량이 성립한다.
-  check "players에 대기방 컬럼 4개가 있다" "4" \
+  check "players에 대기방 컬럼 5개가 있다" "5" \
     "$(q "select count(*) from information_schema.columns where table_name='players'
-           and column_name in ('is_ready','lobby_line','lobby_line_at','lobby_line_count');")"
+           and column_name in ('is_ready','lobby_line','lobby_line_at','lobby_line_count','lobby_name');")"
 
   # ★ 지우기가 shuffle_seats 안에 들어 있는가. 빠지면 게임이 시작된 뒤에도
   #   사람 자리에만 발화가 남아 봇 명단이 드러난다 (I1). 함수의 존재만 보는
   #   시그니처 검사로는 절대 못 잡는 자리다.
+  # ★ lobby_name 은 본인이 지은 이름이다 (§15-2-결정). 안 지우면 대기방의 '철수'가
+  #   게임의 그 자리로 이어져 자리를 섞은 의미가 사라지고, 사람만 이름이 있으므로
+  #   **이름이 있는 자리 = 사람**이 된다. lobby_line 과 함께 본다 — 하나만 보면
+  #   나머지가 빠져도 초록불이다.
   check "shuffle_seats가 대기방 흔적을 지운다 (I1)" "t" \
-    "$(q "select pg_get_functiondef(to_regprocedure('shuffle_seats(uuid)')) like '%lobby_line%';")"
+    "$(q "select (d like '%lobby_line%' and d like '%lobby_name%')
+            from (select pg_get_functiondef(to_regprocedure('shuffle_seats(uuid)')) d) t;")"
+
+  # ★ 대기방 이름은 겹치면 안 된다 (§15-2-결정). 같은 방에 '철수'가 둘이면 누가
+  #   누구인지 못 가리고, 나중에 붙일 친구 찾기가 아예 성립하지 않는다.
+  #   lower() 표현식이라 유니크 "제약"이 아니라 인덱스로만 존재한다.
+  check "profiles.display_name 이 대소문자 무시 유니크다" "1" \
+    "$(q "select count(*) from pg_indexes where tablename='profiles' and indexname='profiles_display_name_key';")"
 
   # ★ 함수만 있고 제약이 옛날이면 검사는 전부 초록인데 방 시작만 죽는다.
   #   shuffle_seats(§15-3-결정)는 전원의 자리를 한 순열로 다시 배정하므로 update 도중

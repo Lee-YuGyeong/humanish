@@ -119,6 +119,19 @@ export interface PublicPlayer {
   /** 지금 떠 있는 말풍선. 기록이 아니라 현재 한 줄이다 (순서가 신호가 되는 걸 막는다). */
   lobby_line: string | null;
   lobby_line_at: string | null;
+
+  /**
+   * 계정을 만들 때 본인이 지은 이름 (SPEC §15-2-결정).
+   * **대기방에서만 보인다.** 게임이 시작되면 null 이다 — 두 겹으로 막혀 있다:
+   * shuffle_seats 가 원본을 지우고, 뷰가 phase='lobby' 일 때만 내려준다.
+   *
+   * 로그인하지 않은 사람은 null 이고, 화면은 그때 nickname('익명N')으로 부른다.
+   * 대기방에는 사람만 있으므로(봇은 시작할 때 앉는다) 비어 있다고 봇이 드러나지 않는다.
+   *
+   * ★ 게임 화면에서 이 값을 쓰지 않는다. 쓰는 순간 대기방의 그 사람과 게임의
+   *   이 자리가 다시 이어져서 shuffle_seats 가 한 일이 무의미해진다 (I1).
+   */
+  lobby_name: string | null;
 }
 
 export interface Question {

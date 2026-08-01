@@ -461,6 +461,52 @@ check "나나로 로그인하면 자기 것만 보인다"  "나나" "$(own "$UB"
 check "로그인 안 하면 아무것도 안 보인다"    "" \
   "$(psql -tAq -c "set role authenticated; select coalesce(string_agg(display_name,','),'') from profiles;")"
 
+# 같은 방에 '철수'가 둘이면 누가 누구인지 못 가린다.
+UC=aaaaaaaa-0000-0000-0000-00000000000c
+UD=aaaaaaaa-0000-0000-0000-00000000000d
+psql -q -c "insert into auth.users (id, is_anonymous) values ('$UC', false), ('$UD', false);"
+check "같은 이름은 못 쓴다"             "denied" \
+  "$(denied_if "insert into profiles (user_id, display_name) values ('$UC','가가');" 'profiles_display_name_key')"
+
+# ★ 대소문자 검사는 **라틴 문자로 해야 한다.** 한글은 대소문자가 없어서
+#   '가가'/'GAGA' 로 시험하면 그냥 서로 다른 이름이고, 검사가 늘 통과한다 —
+#   lower() 를 빼먹어도 초록불인 가짜 검사가 된다. 실제로 그렇게 짰다가 걸렸다.
+psql -q -c "insert into profiles (user_id, display_name) values ('$UC','Chulsoo');"
+check "대소문자만 달라도 같은 이름이다"  "denied" \
+  "$(denied_if "insert into profiles (user_id, display_name) values ('$UD','CHULSOO');" 'profiles_display_name_key')"
+
+echo ""
+echo "── 대기방 이름: 대기방까지만 (SPEC §15-2-결정) ──"
+# ★ 이 블록이 이 기능의 핵심이다. 이름이 게임까지 따라가면 대기방의 '가가'가
+#   게임의 그 자리로 확정되고, 사람만 이름이 있으므로 봇 명단이 통째로 드러난다 (I1).
+NM_R="$(q "select room_id from create_room('NAME', 4, null, '$UA');")"
+check "앉을 때 계정 이름을 베껴 온다"     "가가" \
+  "$(q "select coalesce(lobby_name,'') from players where room_id='$NM_R';")"
+
+NM_P2="$(q "select player_id from join_room('NAME', '$UB');")"
+check "들어온 사람 이름도 베껴 온다"      "나나" "$(q "select coalesce(lobby_name,'') from players where id='$NM_P2';")"
+
+NM_P3="$(q "select player_id from join_room('NAME');")"
+check "계정 없으면 이름도 없다"           "" "$(q "select coalesce(lobby_name,'') from players where id='$NM_P3';")"
+
+# 대기방에서는 보인다
+check "대기방에서는 뷰에 이름이 나온다"   "가가,나나" \
+  "$(psql -tAq -c "set role anon; select string_agg(lobby_name, ',' order by lobby_name) from public_players where room_id='$NM_R' and lobby_name is not null;")"
+
+# ★ 게임이 시작되면 사라져야 한다. 두 겹이라 각각 확인한다.
+q "select shuffle_seats('$NM_R');" >/dev/null
+check "시작하면 원본이 지워진다 (1겹)"     "0" \
+  "$(q "select count(*) from players where room_id='$NM_R' and lobby_name is not null;")"
+
+psql -q -c "update rooms set phase='question' where id='$NM_R';"
+check "게임 중에는 뷰가 안 내려준다 (2겹)" "0" \
+  "$(psql -tAq -c "set role anon; select count(*) from public_players where room_id='$NM_R' and lobby_name is not null;")"
+
+# 지우기가 빠져도 뷰가 막는지 — 한 겹만 남았을 때를 흉내 낸다
+psql -q -c "update players set lobby_name='되살아난이름' where room_id='$NM_R';"
+check "원본이 남아 있어도 게임 중엔 안 샌다" "0" \
+  "$(psql -tAq -c "set role anon; select count(*) from public_players where room_id='$NM_R' and lobby_name is not null;")"
+
 echo ""
 if [ "$FAIL" -eq 0 ]; then
   echo "전부 통과 (SPEC §14.2 · §14.3 · §14.4)"

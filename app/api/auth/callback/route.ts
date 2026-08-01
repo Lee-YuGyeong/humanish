@@ -10,17 +10,14 @@
  *
  * 하는 일은 셋이다.
  *   1. 인증 코드를 세션으로 바꾼다 (쿠키가 갱신된다)
- *   2. 구글이 준 이름·사진으로 profiles 한 행을 만든다
- *   3. 원래 보던 화면으로 돌려보낸다
+ *   2. 이름이 없으면 이름 짓는 화면으로, 있으면 원래 화면으로
+ *   3. 이름을 실제로 만드는 것은 여기가 아니라 app/api/profile 이다
  */
 
 import { apiError } from '@/lib/server/auth';
 import { getServerAuthClient, getServiceClient } from '@/lib/server/supabase';
 
 export const dynamic = 'force-dynamic';
-
-/** profiles.display_name 의 제약과 같은 값이어야 한다 (supabase/schema.sql). */
-const MAX_DISPLAY_NAME = 20;
 
 /**
  * 돌아갈 경로를 고른다.
@@ -33,14 +30,6 @@ const MAX_DISPLAY_NAME = 20;
 function safeNext(raw: string | null): string {
   if (!raw || !raw.startsWith('/') || raw.startsWith('//')) return '/';
   return raw;
-}
-
-/** 구글이 주는 이름은 길이가 제각각이다. 제약(1~20자)에 맞춰 자른다. */
-function pickDisplayName(meta: Record<string, unknown>, fallback: string): string {
-  const raw = meta.full_name ?? meta.name ?? meta.email;
-  const text = typeof raw === 'string' ? raw.trim() : '';
-  if (!text) return fallback;
-  return text.slice(0, MAX_DISPLAY_NAME);
 }
 
 export async function GET(req: Request): Promise<Response> {
@@ -75,29 +64,30 @@ export async function GET(req: Request): Promise<Response> {
     }
 
     /*
-     * 프로필을 남긴다. 익명 계정에는 행이 없다가 여기서 처음 생긴다.
+     * ★ 이름을 **여기서 짓지 않는다** (SPEC §15-2-결정).
      *
-     * ★ service role 로 쓴다. profiles 는 authenticated 에게 읽기만 열려 있다 (I9) —
-     *   쓰기를 열면 남이 자기 display_name 을 마음대로 바꿔 랭킹을 어지럽힌다.
+     *   구글이 준 이름을 그대로 박아 넣으면 본명이 대기방에 뜬다. 익명으로 노는
+     *   게임에서 그건 사용자가 고른 적 없는 노출이다. 그래서 프로필이 없으면
+     *   **이름 짓는 화면으로 보낸다.** 거기서 구글 이름을 제안으로만 보여준다
+     *   (app/api/profile 의 suggested).
      *
-     * ★ 실패해도 로그인은 성공으로 친다. 세션은 이미 쿠키에 들어갔고, 프로필은
-     *   다음 로그인 때 다시 시도된다. 여기서 막으면 로그인은 됐는데 화면은
-     *   실패라고 말하는 상태가 된다.
+     *   이미 이름이 있으면 아무것도 묻지 않고 원래 보던 화면으로 돌려보낸다.
      */
-    const meta = (data.user.user_metadata ?? {}) as Record<string, unknown>;
-    const avatar = meta.avatar_url ?? meta.picture;
-
-    const { error: profileError } = await getServiceClient().from('profiles').upsert(
-      {
-        user_id: data.user.id,
-        display_name: pickDisplayName(meta, '이름없음'),
-        avatar_url: typeof avatar === 'string' ? avatar : null,
-      },
-      { onConflict: 'user_id' },
-    );
+    const { data: profile, error: profileError } = await getServiceClient()
+      .from('profiles')
+      .select('user_id')
+      .eq('user_id', data.user.id)
+      .maybeSingle();
 
     if (profileError) {
-      console.error('[auth] 프로필 저장 실패:', profileError.message);
+      // 조회가 실패해도 로그인은 성공이다. 세션은 이미 쿠키에 들어갔다.
+      // 이름 짓는 화면이 다시 물어보므로 그쪽으로 보낸다.
+      console.error('[auth] 프로필 조회 실패:', profileError.message);
+    }
+
+    if (!profile) {
+      const q = new URLSearchParams({ next });
+      return Response.redirect(`${origin}/account/nickname?${q}`, 303);
     }
 
     return Response.redirect(`${origin}${next}?auth=linked`, 303);

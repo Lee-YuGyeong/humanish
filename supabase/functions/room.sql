@@ -86,6 +86,7 @@ declare
   v_nick   text;
   v_cap    int;
   v_name   text;
+  v_lobby_name text;
 begin
   v_cap := coalesce(p_capacity, default_room_capacity());
 
@@ -114,8 +115,12 @@ begin
   v_seat := pick_free_seat(v_room);
   v_nick := '익명' || v_seat;
 
-  insert into players (room_id, nickname, mask_id, seat, is_bot, user_id)
-  values (v_room, v_nick, 'mask-' || lpad(v_seat::text, 2, '0'), v_seat, false, p_user_id)
+  -- 계정에 지어둔 이름을 자리로 베껴 온다 (SPEC §15-2-결정). 없으면 null 이고
+  -- 화면이 '익명N' 으로 부른다. shuffle_seats 가 시작할 때 지운다.
+  select display_name into v_lobby_name from profiles where user_id = p_user_id;
+
+  insert into players (room_id, nickname, mask_id, seat, is_bot, user_id, lobby_name)
+  values (v_room, v_nick, 'mask-' || lpad(v_seat::text, 2, '0'), v_seat, false, p_user_id, v_lobby_name)
   returning id, token into v_player, v_token;
 
   update rooms set host_id = v_player where id = v_room;
@@ -148,6 +153,7 @@ declare
   v_seat   int;
   v_token  text;
   v_nick   text;
+  v_lobby_name text;
 begin
   -- 방을 잠근 채로 자리를 고른다. 두 사람이 같은 자리를 잡는 일이 없다.
   select * into v_room from rooms where code = upper(p_code) for update;
@@ -167,8 +173,11 @@ begin
   end if;
   v_nick := '익명' || v_seat;
 
-  insert into players (room_id, nickname, mask_id, seat, is_bot, user_id)
-  values (v_room.id, v_nick, 'mask-' || lpad(v_seat::text, 2, '0'), v_seat, false, p_user_id)
+  -- create_room 과 같다 — 계정 이름을 자리로 베껴 온다 (SPEC §15-2-결정).
+  select display_name into v_lobby_name from profiles where user_id = p_user_id;
+
+  insert into players (room_id, nickname, mask_id, seat, is_bot, user_id, lobby_name)
+  values (v_room.id, v_nick, 'mask-' || lpad(v_seat::text, 2, '0'), v_seat, false, p_user_id, v_lobby_name)
   returning id, token into v_player, v_token;
 
   return query select v_room.id, v_player, v_token, v_seat, v_nick;
@@ -343,7 +352,11 @@ begin
          is_ready         = false,
          lobby_line       = null,
          lobby_line_at    = null,
-         lobby_line_count = 0
+         lobby_line_count = 0,
+         -- 본인이 지은 이름도 여기서 끊는다 (SPEC §15-2-결정). 남겨두면 대기방의
+         -- '철수'가 게임의 그 자리로 그대로 이어져서, 자리를 섞은 의미가 사라진다.
+         -- 사람만 이름이 있으므로 남는 순간 **이름이 있는 자리 = 사람**이다 (I1).
+         lobby_name       = null
     from shuffled s
    where p.id = s.id;
 

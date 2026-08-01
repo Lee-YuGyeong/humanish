@@ -170,6 +170,19 @@ function toResult(row: SeatRow, room: Room): JoinResult {
       is_ready: false,
       lobby_line: null,
       lobby_line_at: null,
+      /*
+       * ★ 이름은 여기서 채우지 않는다 (SPEC §15-2-결정).
+       *
+       *   SQL 은 앉는 순간 profiles 에서 lobby_name 을 베껴 오지만, RPC 의
+       *   returns table 에는 그 컬럼이 없다. 굳이 넣지 않는 이유는 **화면이 이
+       *   값을 안 보기 때문**이다 — 대기방 좌석은 public_players(roster)에서
+       *   읽는다(components/room-lobby.tsx 의 mine · bySeat). 여기에 넣으면
+       *   같은 값이 두 군데 살면서 어긋날 수 있다.
+       *
+       *   반환 타입을 바꾸려면 함수를 drop 해야 하고, 그건 이미 올라간 배포 DB 를
+       *   한 번 더 건드리는 일이다. 보이지도 않는 값 때문에 할 일이 아니다.
+       */
+      lobby_name: null,
     },
     token: row.player_token,
   };

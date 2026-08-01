@@ -27,6 +27,8 @@ function seatPlayers(n: number): PublicPlayer[] {
     connected: true,
     // 대기방 값. 게임 중에는 전원 빈 값이다 — 시작할 때 shuffle_seats가 비운다.
     // 여기 값이 남으면 값이 있는 자리 = 사람이 되어 봇이 드러난다 (I1, §15-3-결정).
+    // lobby_name(본인이 지은 이름, §15-2-결정)도 같은 이유로 게임 중에는 null 이다.
+    lobby_name: null,
     is_ready: false,
     lobby_line: null,
     lobby_line_at: null,

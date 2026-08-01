@@ -34,7 +34,7 @@ import {
 import { linkGoogle, signInWithGoogle } from '@/lib/auth';
 import type { AnswerRow, VoteRow } from '@/lib/api/db';
 import type { MeResponse } from '@/lib/api/room';
-import { useAuthUser } from '@/lib/queries/auth';
+import { useAuthUser, useProfile } from '@/lib/queries/auth';
 import { currentQuestion, nicknameOf, revealedAnswers } from '@/lib/queries/derive';
 import {
   REQUEST,
@@ -1082,6 +1082,7 @@ function RevealPanel({
  */
 function SaveRecordBox({ roomCode }: { roomCode: string }) {
   const { data: user } = useAuthUser();
+  const { data: profileData } = useProfile();
   const [busy, setBusy] = useState(false);
   const [failed, setFailed] = useState<string | null>(null);
   /** 그 구글 계정이 이미 다른 계정에 물려 있을 때. 물어보고 넘어간다 */
@@ -1093,11 +1094,27 @@ function SaveRecordBox({ roomCode }: { roomCode: string }) {
 
   // 이미 연결됨. 더 물을 것이 없다.
   if (!user.isAnonymous) {
+    const mine = profileData?.profile;
+    // 연결은 했는데 이름을 안 지었다 — 이름 화면에서 나가버린 경우다. 마저 짓게 한다.
+    if (!mine) {
+      return (
+        <Box>
+          <Label>기록</Label>
+          <p className="text-[13px] text-grime">이름을 정해야 기록이 남는다.</p>
+          <Link
+            href={`/account/nickname?next=${encodeURIComponent(`/room/${roomCode}`)}`}
+            className={PRIMARY_BUTTON}
+          >
+            이름 정하기
+          </Link>
+        </Box>
+      );
+    }
     return (
       <Box>
         <Label>기록</Label>
         <p className="text-[13px] text-bone">
-          <span className="text-tung">{user.displayName ?? '연결된 계정'}</span> 으로 저장된다
+          <span className="text-tung">{mine.display_name}</span> 으로 저장된다
         </p>
       </Box>
     );

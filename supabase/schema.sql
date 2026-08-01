@@ -135,6 +135,23 @@ alter table players add column if not exists lobby_line text;
 alter table players add column if not exists lobby_line_at timestamptz;
 alter table players add column if not exists lobby_line_count int not null default 0;
 
+-- ★ 대기방에서 부를 이름 (SPEC §15-2-결정). 계정을 만들 때 본인이 지은 이름을
+--   **앉는 순간 여기로 베껴 온다.**
+--
+--   왜 profiles 를 조인해서 보여주지 않는가: 조인이면 게임이 시작돼도 그 이름이
+--   계정에 그대로 남아 있어서, 뷰의 `phase = 'lobby'` 조건 **한 겹만** 방어가 된다.
+--   여기로 베껴 오면 shuffle_seats 가 다른 대기방 값들과 함께 지울 수 있다.
+--   이 저장소는 정체가 새는 자리를 늘 두 겹으로 막는다 — 한쪽이 빠져도 게임이
+--   끝나지 않도록. lobby_line 과 정확히 같은 취급이다.
+--
+--   베껴 오는 시점이 고정이라는 이점도 있다. 대기 중에 계정 이름을 바꿔도 이미
+--   앉은 자리의 이름은 흔들리지 않는다.
+--
+-- ★ null 일 수 있다. 로그인하지 않은 사람은 이름이 없고, 화면은 그때 '익명N' 으로
+--   부른다. 대기방에는 사람만 있으므로(봇은 시작할 때 앉는다) 이 값이 비어 있다고
+--   해서 봇이 드러나지는 않는다 — 그 전제가 깨지면 아래 ☐ 를 볼 것.
+alter table players add column if not exists lobby_name text;
+
 -- ── 계정 (SPEC §15-2-결정) ───────────────────────────────────────────────────
 --
 -- ★ 계정 세계와 방 세계를 잇는 다리는 이 컬럼 **하나뿐**이고,
@@ -170,6 +187,17 @@ create table if not exists profiles (
   avatar_url   text,
   created_at   timestamptz not null default now()
 );
+
+-- ★ 이름은 겹치지 않는다. **대소문자를 구분하지 않는다** — 'Chulsoo' 와 'chulsoo' 가
+--   랭킹에 나란히 서면 같은 사람으로 보인다.
+--
+--   지금 당장은 랭킹 표시용이지만, 친구 목록은 **이름으로 사람을 찾는 기능**이라
+--   중복이 있으면 성립하지 않는다. 나중에 붙이면 이미 겹친 이름들을 어떻게 할지
+--   곤란해진다 — 정원(§17.6)과 같은 이유로 처음부터 조인다.
+--
+--   유니크 "제약"이 아니라 표현식 인덱스인 이유: 제약에는 lower() 같은 식을 못 쓴다.
+create unique index if not exists profiles_display_name_key
+  on profiles (lower(display_name));
 
 -- 절대 클라이언트에 노출되지 않는다 (SPEC §7.2 — 정책을 만들지 않는다)
 create table if not exists player_roles (

@@ -15,7 +15,8 @@ import { useQuery, useQueryClient, type UseQueryResult } from '@tanstack/react-q
 import { useCallback } from 'react';
 
 import { getCurrentUser, type AuthUser } from '@/lib/auth';
-import { authUserKey } from './keys';
+import { fetchProfile, type ProfileResponse } from '@/lib/api/profile';
+import { authUserKey, profileKey } from './keys';
 
 /**
  * 지금 계정. 로그인 전이면 null.
@@ -33,10 +34,28 @@ export function useAuthUser(): UseQueryResult<AuthUser | null> {
   });
 }
 
-/** 계정이 바뀐 뒤 다시 읽게 한다 (연결 · 로그아웃 직후). */
+/**
+ * 내가 지은 이름 (SPEC §15-2-결정). 아직 안 지었으면 profile 이 null 이고
+ * suggested 에 구글이 준 제안이 들어 있다.
+ *
+ * ★ 이 값을 **게임 화면에 쓰지 않는다** (I1). 대기방 좌석의 이름은 이 훅이 아니라
+ *   public_players 의 lobby_name 에서 온다 — 그쪽은 게임이 시작되면 뷰가 null 로
+ *   가려주지만, 이 훅은 내 계정을 그대로 돌려주므로 가려지지 않는다.
+ */
+export function useProfile(): UseQueryResult<ProfileResponse> {
+  return useQuery({
+    queryKey: profileKey,
+    queryFn: fetchProfile,
+    staleTime: 60_000,
+    retry: 0,
+  });
+}
+
+/** 계정이 바뀐 뒤 다시 읽게 한다 (연결 · 로그아웃 · 이름 변경 직후). */
 export function useInvalidateAuthUser(): () => void {
   const qc = useQueryClient();
   return useCallback(() => {
     void qc.invalidateQueries({ queryKey: authUserKey });
+    void qc.invalidateQueries({ queryKey: profileKey });
   }, [qc]);
 }
