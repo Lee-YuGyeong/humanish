@@ -70,6 +70,8 @@ function room(patch: Partial<Room> = {}): Room {
   return {
     id: ROOM_ID,
     code: 'UFJR',
+    // 기본은 이름 없는 방이다. 머리말이 코드를 그리는 쪽이라 아래 검사들이 그걸 본다.
+    name: null,
     capacity: 5,
     phase: 'lobby',
     phase_seq: 0,

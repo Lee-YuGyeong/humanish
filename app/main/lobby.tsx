@@ -16,9 +16,9 @@
  * └────────────────────────────────────────────────────────────────────────┘
  *
  * ★ 시안에 있으나 **뒷받침할 데이터가 없는 자리**(레벨 · EXP · 승률 · 접속자 수 ·
- *   방 이름 · 모드 · 라운드 시간 · 비공개 코드 · 검색 필터)는 지우지 않고 남겼다.
- *   레이아웃이 완성됐을 때의 모습을 잃지 않기 위해서다. 대신 전부 MOCK 배지를 달고
- *   disabled 로 뒀다 — 눌러도 아무 일이 없다는 게 화면에서 드러나야 한다.
+ *   모드 · 라운드 시간 · 비공개 코드 · 검색 필터)는 지우지 않고 남겼다.
+ *   레이아웃이 완성됐을 때의 모습을 잃지 않기 위해서다. 눌러도 아무 일이 없는 칸은
+ *   disabled 로 둔다 — 화면에 붙여뒀던 MOCK 배지는 뗐다.
  *   진짜로 동작하는 것은 **방 목록 · 정원 · 방 만들기 · 코드 입장** 넷뿐이다.
  *
  * ★ 시안의 "5명 중 AI 1명" · "AI 2명" 같은 모드 설명은 그대로 옮기지 않았다.
@@ -28,6 +28,7 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
+import type { Phase } from "@/lib/game/types";
 import styles from "./lobby.module.css";
 import { recentGames } from "./mock-lobby";
 
@@ -44,15 +45,151 @@ const MIN_CAPACITY = 2;
 const MAX_CAPACITY = 8;
 const DEFAULT_CAPACITY = 5;
 
+/**
+ * 방 제목 길이 상한. lib/server/room.ts 의 MAX_ROOM_NAME_LEN 과 같아야 한다.
+ * 정원과 같은 이유로 여기 다시 적는다 — 그 모듈은 service role 키를 쥐고 있어
+ * 클라이언트 번들에 넣을 수 없다.
+ *
+ * 어긋나도 서버가 400으로 막는다. 다만 그때는 화면이 다 쳐 놓고 나서야 거절당한다.
+ */
+const MAX_ROOM_NAME_LEN = 20;
+
 /** 목록 폴링 간격. 로비는 Realtime을 붙이지 않았다 — 방 하나가 아니라 방 목록이라 I10의 방 필터를 걸 수 없다. */
 const POLL_MS = 3000;
 
 /** GET /api/room 의 한 줄. room_id는 내려오지 않는다 (lib/server/room.ts의 OpenRoom). */
 interface OpenRoom {
   code: string;
+  /** 방 제목. 없으면 null — 그때는 코드로 대신 부른다 (lib/server/room.ts의 OpenRoom). */
+  name: string | null;
   capacity: number;
   players: number;
   created_at: string;
+  /**
+   * 'lobby'면 대기 중, 그 밖은 전부 게임 중.
+   *
+   * ★ 게임 중인 방의 인원은 **봇까지 포함한 수**라 언제나 정원과 같다. 그래서
+   *   "정원 − 인원"으로 봇 수를 역산할 수 없다 (I1). 서버가 그렇게 세어서 준다 —
+   *   화면에서 이 숫자를 다시 만지지 않는다 (lib/server/room.ts의 listOpenRooms).
+   */
+  phase: Phase;
+}
+
+/** 목록에서 방을 부르는 이름. 제목이 있으면 제목, 없으면 코드다. */
+function roomLabel(room: OpenRoom): string {
+  return room.name ?? room.code;
+}
+
+/**
+ * 방의 모드.
+ *
+ * ★ **서버에 그런 값이 없다** — rooms 에 모드 컬럼이 없어서 지금은 전부 '표준' 하나다.
+ *   그래서 「모드」로 정렬해도 눈에 띄게 달라지지 않는다: 비교값이 전부 같고 Array.sort 가
+ *   안정 정렬이라 들어온 순서가 그대로 남는다. 정렬 자체는 제대로 걸려 있어서,
+ *   컬럼이 생기는 날 **여기 한 줄만** 고치면 목록 표시와 정렬이 같이 살아난다.
+ */
+function modeOf(_room: OpenRoom): string {
+  return "표준";
+}
+
+/**
+ * 정렬 기준. **목록 머리의 열 이름이 곧 버튼이다** — 따로 「정렬」 드롭다운을 두지 않는다.
+ * 고르는 곳과 결과가 보이는 곳이 같은 자리에 있어야 무엇이 걸려 있는지 헷갈리지 않는다.
+ *
+ * ★ 'order'(열린 순서)에는 버튼이 없다. **아무 열도 안 눌렀을 때의 바탕 순서**다 —
+ *   서버가 내려준 그대로이고, 「번호」열은 그 순서를 세어 보여줄 뿐이라 누를 것이 없다.
+ * ★ 「상태」에도 버튼이 없다. 아래 sortRooms 가 **어떤 기준에서도 항상** 적용하므로
+ *   고를 것이 없다.
+ */
+type SortKey = "order" | "title" | "mode" | "players";
+/** 목록 머리에서 실제로 누를 수 있는 열. 'order'는 버튼이 없어 빠진다. */
+type SortableCol = Exclude<SortKey, "order">;
+type SortDir = "asc" | "desc";
+interface Sort {
+  key: SortKey;
+  dir: SortDir;
+}
+
+/**
+ * 그 열을 **처음 눌렀을 때**의 방향. 두 번째부터는 뒤집힌다.
+ * 각 열에서 사람이 먼저 보고 싶어 하는 쪽을 기본으로 둔다 — 가나다순, 사람이 많이 모인 방.
+ */
+const FIRST_DIR: Record<SortableCol, SortDir> = {
+  title: "asc",
+  mode: "asc",
+  players: "desc",
+};
+
+/** 아무 열도 안 눌렀을 때. 서버가 준 순서(대기 방 먼저 · 최근 열린 순)를 그대로 쓴다. */
+const DEFAULT_SORT: Sort = { key: "order", dir: "desc" };
+
+/**
+ * 목록 정렬.
+ *
+ * ★ **어떤 기준을 고르든 게임 중인 방은 항상 뒤로 간다.** 고른 기준은 그 안에서만
+ *   적용된다. 들어갈 수 있는 방이 위에 있어야 목록이 쓸모가 있어서다 — 「인원」을
+ *   내림차순으로 걸면 게임 중인(=언제나 꽉 찬) 방이 전부 맨 위로 올라와 목록이 뒤집힌다.
+ *   이 갈래는 뒤집기(dir)의 대상이 아니다.
+ *
+ * 원본을 제자리에서 뒤집지 않는다. rooms는 폴링이 3초마다 갈아끼우는 상태값이라
+ * 그 배열을 건드리면 정렬을 바꿀 때마다 순서가 누적된다.
+ */
+function sortRooms(rooms: OpenRoom[], { key, dir }: Sort): OpenRoom[] {
+  const waitingFirst = (r: OpenRoom): number => (r.phase === "lobby" ? 0 : 1);
+  const sign = dir === "asc" ? 1 : -1;
+
+  return [...rooms].sort((a, b) => {
+    const byStatus = waitingFirst(a) - waitingFirst(b);
+    if (byStatus !== 0) return byStatus;
+
+    switch (key) {
+      case "title":
+        // 한글·영문·숫자가 섞인다. numeric을 켜야 '방 10'이 '방 9' 뒤에 온다.
+        return sign * roomLabel(a).localeCompare(roomLabel(b), "ko", { numeric: true });
+      case "mode":
+        // 지금은 값이 하나뿐이라 늘 0이다 — 그러면 안정 정렬이 앞의 순서를 지킨다 (modeOf).
+        return sign * modeOf(a).localeCompare(modeOf(b), "ko");
+      case "players":
+        return sign * (a.players - b.players);
+      default:
+        // 바탕 순서 = 열린 순서. created_at은 ISO 문자열이라 사전순 = 시간순이다 (CLAUDE.md).
+        return sign * a.created_at.localeCompare(b.created_at);
+    }
+  });
+}
+
+/** 같은 열을 다시 누르면 방향만 뒤집고, 다른 열이면 그 열의 기본 방향으로 간다. */
+function nextSort(current: Sort, col: SortableCol): Sort {
+  if (current.key !== col) return { key: col, dir: FIRST_DIR[col] };
+  return { key: col, dir: current.dir === "asc" ? "desc" : "asc" };
+}
+
+/**
+ * 검색 비교용으로 문자열을 접는다. 찾는 말과 방 제목에 **똑같이** 걸어야 한다.
+ *
+ * ┌─ 왜 그냥 includes 가 아닌가 ──────────────────────────────────────────────┐
+ * │ 서버가 저장 전에 제목을 다듬는다(lib/server/room.ts 의 normalizeRoomName). │
+ * │ 찾는 말은 그 길을 지나지 않으므로, 여기서 **같은 모양으로 맞춰 준 다음에**  │
+ * │ 견줘야 눈에 같아 보이는 둘이 실제로 같아진다.                              │
+ * │                                                                          │
+ * │  · NFC — 이게 한글에서 제일 자주 터진다. 맥에서 복사해 온 '초보'는 자모가  │
+ * │    풀린 형태(ㅊ+ㅗ+ㅂ+ㅗ)로 들어오고, 키보드로 친 '초보'는 합쳐진 형태다.  │
+ * │    바이트가 달라서 includes 가 조용히 빗나간다 — 실패가 화면에 안 보인다.  │
+ * │  · \p{Cf} — 서식문자. 저장된 제목에서는 서버가 이미 털었으므로, 찾는 말에  │
+ * │    붙어 오면(역시 붙여넣기) 영영 안 맞는다.                                │
+ * │  · 공백 접기 · 소문자 — '초보  방'으로 '초보 방'을, 'ai'로 'AI'를 찾는다.  │
+ * └──────────────────────────────────────────────────────────────────────────┘
+ *
+ * toLocaleLowerCase 가 아니라 toLowerCase 다. 지역 설정에 따라 결과가 달라지면
+ * 같은 방 목록이 사람마다 다르게 걸린다 (터키어의 I → ı).
+ */
+function foldForSearch(text: string): string {
+  return text
+    .normalize("NFC")
+    .replace(/\p{Cf}/gu, "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toLowerCase();
 }
 
 /** 실패 응답은 { error: '...' }다. 본문이 JSON이 아닐 수도 있어 감싼다. */
@@ -63,20 +200,6 @@ async function errorOf(res: Response, fallback: string): Promise<string> {
   } catch {
     return fallback;
   }
-}
-
-/**
- * created_at을 "n분 전"으로. 표시용이라 클라이언트 시계를 써도 된다 —
- * 페이즈 전환 판정이 아니다 (I2).
- */
-function timeAgo(iso: string): string {
-  const sec = Math.max(0, Math.floor((Date.now() - new Date(iso).getTime()) / 1000));
-  if (sec < 60) return "방금";
-  const min = Math.floor(sec / 60);
-  if (min < 60) return `${min}분 전`;
-  const hour = Math.floor(min / 60);
-  if (hour < 24) return `${hour}시간 전`;
-  return `${Math.floor(hour / 24)}일 전`;
 }
 
 export function Lobby() {
@@ -90,6 +213,12 @@ export function Lobby() {
 
   const [tab, setTab] = useState<"list" | "create">("list");
   const [query, setQuery] = useState("");
+  const [sort, setSort] = useState<Sort>(DEFAULT_SORT);
+  /**
+   * 만들기 화면의 제목 칸에 미리 채워 둘 말. 찾다 못 찾고 그대로 만들러 갈 때만 찬다.
+   * CreatePanel 은 목록 화면에서 아예 언마운트되므로 initialName 이 갈 때마다 새로 읽힌다.
+   */
+  const [seedName, setSeedName] = useState("");
   const [capacity, setCapacity] = useState(DEFAULT_CAPACITY);
   const [codeOpen, setCodeOpen] = useState(false);
   const [code, setCode] = useState("");
@@ -119,14 +248,19 @@ export function Lobby() {
     return () => clearInterval(timer);
   }, [loadRooms]);
 
-  const createRoom = useCallback(async (): Promise<void> => {
+  /**
+   * @param name 방 제목. 비어 있으면 아예 안 싣는다 — 서버가 이름 없는 방으로 만든다.
+   *             길이·정화는 서버가 한다 (lib/server/room.ts의 normalizeRoomName, I9).
+   */
+  const createRoom = useCallback(async (name: string): Promise<void> => {
     setBusy(true);
     setCreateError(null);
     try {
+      const trimmed = name.trim();
       const res = await fetch("/api/room", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ capacity }),
+        body: JSON.stringify(trimmed ? { capacity, name: trimmed } : { capacity }),
       });
       if (!res.ok) {
         setCreateError(await errorOf(res, "방을 만들지 못했다"));
@@ -174,10 +308,20 @@ export function Lobby() {
     [router],
   );
 
-  const visible = useMemo(
-    () => (rooms ?? []).filter((room) => room.code.includes(query)),
-    [rooms, query],
-  );
+  /**
+   * 제목으로 좁힌다. 코드로는 찾지 않는다 — 코드를 아는 사람은 목록을 훑을 게 아니라
+   * 「코드로 입장」으로 바로 건너뛴다. 한 칸이 두 가지 일을 하면 어느 쪽으로도 안 읽힌다.
+   *
+   * ★ 이름 없는 방은 찾는 말이 있을 때 빠진다. 견줄 제목이 없어서지 코드가 비슷해서
+   *   남는 게 아니다 — 코드로 걸리기 시작하면 위의 구분이 다시 무너진다.
+   */
+  const visible = useMemo(() => {
+    const needle = foldForSearch(query);
+    const found = !needle
+      ? (rooms ?? [])
+      : (rooms ?? []).filter((room) => room.name != null && foldForSearch(room.name).includes(needle));
+    return sortRooms(found, sort);
+  }, [rooms, query, sort]);
 
   return (
     <div className={`${styles.root} flex h-screen flex-col overflow-hidden`}>
@@ -191,39 +335,27 @@ export function Lobby() {
         <PlayerSidebar />
 
         <main className={`${styles.scroll} flex flex-1 flex-col overflow-y-auto`}>
-          {/* ── 탭 머리 ─────────────────────────────────────────────── */}
-          <div
-            className="shrink-0 border-b px-5 pt-5 sm:px-8"
-            style={{ borderColor: "var(--border)" }}
-          >
-            <div className="flex items-center justify-between pb-1">
-              <div className="flex gap-8">
-                <button
-                  type="button"
-                  className={`${styles.tab} ${tab === "list" ? styles.tabOn : ""}`}
-                  onClick={() => setTab("list")}
-                >
-                  방 목록
+          {/*
+            ── 머리 ────────────────────────────────────────────────────
+            탭은 없다. 목록이 기본 화면이라 이름표를 달아 봐야 건너갈 곳 없는 탭
+            하나만 남는다. **목록 화면에는 이 띠 자체를 두지 않는다** — 버튼 한 개를
+            얹자고 빈 줄을 하나 세우는 꼴이었다. 목록의 도구는 목록이 직접 이고 있다
+            (RoomListPanel 의 도구 띠). 여기 남는 건 만들기 화면의 되돌아가는 길뿐이다.
+          */}
+          {tab === "create" && (
+            <div
+              className="shrink-0 border-b px-5 pt-5 sm:px-8"
+              style={{ borderColor: "var(--border)" }}
+            >
+              <div className="flex items-center justify-between pb-1">
+                {/* 탭이 아니라 되돌아가는 길이다 — 이게 없으면 만들기 화면에 갇힌다 */}
+                <button type="button" className={styles.tab} onClick={() => setTab("list")}>
+                  ← 방 목록
                 </button>
-                <button
-                  type="button"
-                  className={`${styles.tab} ${tab === "create" ? styles.tabOn : ""}`}
-                  onClick={() => setTab("create")}
-                >
-                  방 만들기
-                </button>
+                <span className={`${styles.tab} ${styles.tabOn}`}>방 만들기</span>
               </div>
-              <button
-                type="button"
-                className={styles.btnAccent}
-                style={{ fontSize: "0.68rem", padding: "0.55rem 1.4rem" }}
-                disabled={busy}
-                onClick={() => setTab("create")}
-              >
-                <PlusIcon /> 방 만들기
-              </button>
             </div>
-          </div>
+          )}
 
           {tab === "list" ? (
             <RoomListPanel
@@ -234,9 +366,17 @@ export function Lobby() {
               listError={listError}
               joinError={joinError}
               // 상태에 이미 정규화된 값만 담는다. 화면에 보이는 값과 거르는 값이 같아야 한다.
-              onQueryChange={(value) => setQuery(value.replace(/\s/g, "").toUpperCase())}
+              // 친 그대로 담는다. 제목에는 공백도 대소문자도 있어서 여기서 깎으면
+              // 띄어쓰기가 들어간 제목을 영영 못 찾는다. 맞추는 일은 foldForSearch 가 한다.
+              onQueryChange={setQuery}
+              sort={sort}
+              onSort={(col) => setSort((cur) => nextSort(cur, col))}
               onRetry={() => void loadRooms()}
               onEnter={(c) => void enterRoom(c)}
+              onCreate={(seed) => {
+                setSeedName(seed ?? "");
+                setTab("create");
+              }}
               onOpenCode={() => {
                 setJoinError(null);
                 setCodeOpen(true);
@@ -247,8 +387,9 @@ export function Lobby() {
               capacity={capacity}
               busy={busy}
               error={createError}
+              initialName={seedName}
               onCapacity={setCapacity}
-              onSubmit={() => void createRoom()}
+              onSubmit={(name) => void createRoom(name)}
             />
           )}
         </main>
@@ -291,11 +432,8 @@ function TopBar() {
           >
             게임 로비
           </span>
-          <span className="flex items-center gap-2">
-            <span className="text-[0.66rem] uppercase tracking-[0.18em]" style={{ color: "var(--dim)" }}>
-              기록
-            </span>
-            <span className={styles.mock}>mock</span>
+          <span className="text-[0.66rem] uppercase tracking-[0.18em]" style={{ color: "var(--dim)" }}>
+            기록
           </span>
         </div>
       </div>
@@ -310,13 +448,11 @@ function TopBar() {
           >
             online
           </span>
-          <span className={styles.mock}>mock</span>
         </span>
         <span className="h-4 w-px" style={{ background: "var(--border2)" }} />
         <div className="flex items-center gap-2">
           <Avatar name="Player_K" size={26} />
           <span className="text-[0.79rem] font-semibold uppercase tracking-[0.1em]">Player_K</span>
-          <span className={styles.mock}>mock</span>
         </div>
       </div>
     </header>
@@ -340,7 +476,6 @@ function PlayerSidebar() {
               <span className="text-[0.66rem]" style={{ color: "var(--muted)" }}>
                 LV 24
               </span>
-              <span className={styles.mock}>mock</span>
             </div>
           </div>
         </div>
@@ -367,7 +502,6 @@ function PlayerSidebar() {
       <div className="p-5">
         <div className="mb-3 flex items-center gap-2">
           <span className={styles.label}>최근 게임</span>
-          <span className={styles.mock}>mock</span>
         </div>
         <div className="flex flex-col gap-1.5">
           {recentGames.map((game) => (
@@ -418,9 +552,12 @@ function RoomListPanel({
   busy,
   listError,
   joinError,
+  sort,
   onQueryChange,
+  onSort,
   onRetry,
   onEnter,
+  onCreate,
   onOpenCode,
 }: {
   rooms: OpenRoom[] | null;
@@ -429,187 +566,318 @@ function RoomListPanel({
   busy: boolean;
   listError: string | null;
   joinError: string | null;
+  sort: Sort;
   onQueryChange: (value: string) => void;
+  onSort: (col: SortableCol) => void;
   onRetry: () => void;
   onEnter: (code: string) => void;
+  /** @param seedName 만들기 화면의 제목 칸에 미리 채울 말. 없으면 빈 칸으로 연다. */
+  onCreate: (seedName?: string) => void;
   onOpenCode: () => void;
 }) {
   const loading = rooms === null;
 
   return (
-    <div className="flex-1 px-5 py-6 sm:px-8">
-      {/* ── 거르개 ─────────────────────────────────────────────────── */}
-      <div className="mb-5 flex flex-wrap items-center gap-3">
-        <div className="relative max-w-[260px] flex-1">
-          <span
-            className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2"
-            style={{ color: "var(--muted)" }}
-          >
-            <SearchIcon />
-          </span>
-          <input
-            className={`${styles.field} ${styles.mono}`}
-            type="text"
-            value={query}
-            // 코드는 대문자 4자다. maxLength는 걸지 않는다 — 이 칸은 검색도 겸한다.
-            onChange={(e) => onQueryChange(e.target.value)}
-            placeholder="방 코드"
-            aria-label="방 코드 검색"
-            style={{ paddingLeft: "2.2rem", fontSize: "0.81rem" }}
-          />
-        </div>
+    <div className="flex flex-1 flex-col">
+      {/*
+        ── 도구 띠 ─────────────────────────────────────────────────────
+        찾기(왼쪽) · 지금 상태(가운데) · 할 일(오른쪽) 한 줄이다.
 
-        {/* 모드·정렬은 서버에 그런 값이 없다. 자리만 남긴다 */}
-        <span className="flex items-center gap-2">
-          <select className={styles.select} disabled style={{ width: "auto", fontSize: "0.77rem", padding: "0.5rem 0.8rem" }}>
-            <option>모든 모드</option>
-          </select>
-          <span className={styles.mock}>mock</span>
-        </span>
-
-        <button type="button" className={styles.btnGhost} onClick={onOpenCode} disabled={busy}>
-          <LockIcon /> 코드로 입장
-        </button>
-
-        <div className="ml-auto flex items-center gap-2">
-          <span className={`${styles.dot} ${styles.dotGreen}`} />
-          <span
-            className="text-[0.79rem] uppercase tracking-[0.2em]"
-            style={{ color: "var(--muted)" }}
-          >
-            {loading ? "불러오는 중" : `${visible.length}개 방 열림`}
-          </span>
-        </div>
-      </div>
-
-      {listError && (
-        <div
-          className="mb-4 flex flex-wrap items-center justify-between gap-3 px-4 py-3"
-          style={{ border: "1px solid rgba(255,59,48,0.3)", background: "var(--red-dim)" }}
-        >
-          <p className="text-[0.81rem]" style={{ color: "var(--red)" }}>
-            {listError}
-          </p>
-          <button
-            type="button"
-            onClick={onRetry}
-            className="text-[0.77rem] uppercase tracking-[0.2em] underline-offset-4 hover:underline"
-            style={{ color: "var(--red)" }}
-          >
-            다시 시도
-          </button>
-        </div>
-      )}
-
-      {joinError && (
-        <div
-          role="alert"
-          className="mb-4 px-4 py-3 text-[0.81rem]"
-          style={{ border: "1px solid rgba(255,59,48,0.3)", background: "var(--red-dim)", color: "var(--red)" }}
-        >
-          {joinError}
-        </div>
-      )}
-
-      {/* ── 목록 머리 ──────────────────────────────────────────────── */}
+        ★ 「코드로 입장」을 검색칸 옆이 아니라 「방 만들기」 옆에 둔다. 둘 다 "방 코드"를
+          말하지만 하는 일이 다르다 — 검색칸은 **아래 목록을 좁히고**, 코드로 입장은
+          **목록에 없는 방으로 건너뛴다**. 나란히 두면 같은 기능의 두 입구로 읽힌다.
+          움직이는 것끼리(입장·만들기) 오른쪽에 모으면 그 오해가 사라진다.
+      */}
       <div
-        className={`${styles.roomRow} border-x-0 border-t-0`}
-        style={{ background: "transparent", padding: "0.5rem 1.2rem" }}
+        className="shrink-0 border-b px-5 py-4 sm:px-8"
+        style={{ borderColor: "var(--border)" }}
       >
-        <div className={styles.label}>방 코드</div>
-        <div className={styles.label}>모드</div>
-        <div className={styles.label}>인원</div>
-        <div className={styles.label}>열린 시각</div>
-        <div />
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-3">
+          <div className="relative min-w-[160px] flex-1 sm:max-w-[260px]">
+            <span
+              className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2"
+              style={{ color: "var(--muted)" }}
+            >
+              <SearchIcon />
+            </span>
+            {/*
+              styles.mono 를 뗐다. 그건 코드(대문자 4자)를 가지런히 세우려고 붙였던 것이라
+              제목처럼 사람이 쓴 말에는 자간만 벌어진다.
+            */}
+            <input
+              className={styles.field}
+              type="text"
+              value={query}
+              onChange={(e) => onQueryChange(e.target.value)}
+              // 제목보다 긴 말은 어떤 방에도 안 걸린다. 서버 상한과 같은 자리에서 멈춘다.
+              maxLength={MAX_ROOM_NAME_LEN}
+              placeholder="방 제목으로 찾기"
+              aria-label="방 제목 검색"
+              style={{ paddingLeft: "2.2rem", fontSize: "0.81rem" }}
+            />
+          </div>
+
+          {/*
+            방 개수를 세어 보여주던 상태등은 뺐다. 목록이 바로 아래에 있어서 같은 것을
+            두 번 말하는 자리였다 — 비었으면 빈 화면이, 불러오는 중이면 뼈대 줄이
+            이미 그 말을 한다.
+          */}
+
+          {/* 정렬은 아래 목록 머리의 열 이름을 눌러서 한다 (SortHeader). 여기 따로 두지 않는다 */}
+
+          <div className="ml-auto flex items-center gap-2">
+            <button
+              type="button"
+              className={styles.btnGhost}
+              style={{ padding: "0.6rem 1.2rem" }}
+              onClick={onOpenCode}
+              disabled={busy}
+            >
+              <LockIcon /> 코드로 입장
+            </button>
+            <button
+              type="button"
+              className={styles.btnAccent}
+              style={{ padding: "0.6rem 1.4rem" }}
+              // ★ onClick={onCreate} 로 넘기지 않는다 — 클릭 이벤트가 seedName 자리로 들어간다.
+              //   빈 칸으로 여는 게 맞는 자리다. 찾던 말을 이어받는 건 아래 빈 화면의 버튼뿐이다.
+              onClick={() => onCreate()}
+              disabled={busy}
+            >
+              <PlusIcon /> 방 만들기
+            </button>
+          </div>
+        </div>
       </div>
 
-      <div className="mt-1 flex flex-col gap-1">
-        {loading ? (
-          [0, 1, 2].map((i) => <RoomRowSkeleton key={i} />)
-        ) : visible.length === 0 ? (
+      <div className="flex-1 px-5 py-6 sm:px-8">
+        {listError && (
           <div
-            className="flex flex-col items-center gap-3 border border-dashed px-6 py-14 text-center"
-            style={{ borderColor: "var(--border2)" }}
+            className="mb-4 flex flex-wrap items-center justify-between gap-3 px-4 py-3"
+            style={{ border: "1px solid rgba(255,59,48,0.3)", background: "var(--red-dim)" }}
           >
-            <p className="text-[0.88rem]" style={{ color: "var(--muted)" }}>
-              {query ? "그 코드로 열린 방이 없다" : "지금 열린 방이 없다"}
+            <p className="text-[0.81rem]" style={{ color: "var(--red)" }}>
+              {listError}
             </p>
-            <p className="text-[0.74rem]" style={{ color: "var(--dim)" }}>
-              위의 &lsquo;방 만들기&rsquo;로 첫 방을 열 수 있다
-            </p>
+            <button
+              type="button"
+              onClick={onRetry}
+              className="text-[0.77rem] tracking-[0.02em] underline-offset-4 hover:underline"
+              style={{ color: "var(--red)" }}
+            >
+              다시 시도
+            </button>
           </div>
-        ) : (
-          visible.map((room) => (
-            <RoomRow key={room.code} room={room} busy={busy} onEnter={onEnter} />
-          ))
         )}
+
+        {joinError && (
+          <div
+            role="alert"
+            className="mb-4 px-4 py-3 text-[0.81rem]"
+            style={{ border: "1px solid rgba(255,59,48,0.3)", background: "var(--red-dim)", color: "var(--red)" }}
+          >
+            {joinError}
+          </div>
+        )}
+
+        {/* ── 목록 머리 ──────────────────────────────────────────────── */}
+        <div
+          className={`${styles.roomRow} border-x-0 border-t-0`}
+          style={{ background: "transparent", padding: "0.5rem 1.2rem" }}
+        >
+          {/* 번호·상태는 누를 것이 없다 — 이유는 SortKey 주석에 있다 */}
+          <div className={styles.label}>번호</div>
+          {/* 이름 없는 방만 코드가 이 칸을 물려받는다 (RoomRow) */}
+          <SortHeader label="제목" col="title" sort={sort} onSort={onSort} />
+          <SortHeader label="모드" col="mode" sort={sort} onSort={onSort} />
+          <div className={styles.label}>상태</div>
+          <SortHeader label="인원" col="players" sort={sort} onSort={onSort} />
+        </div>
+
+        <div className="mt-1 flex flex-col gap-1">
+          {loading ? (
+            [0, 1, 2].map((i) => <RoomRowSkeleton key={i} />)
+          ) : visible.length === 0 ? (
+            <div
+              className="flex flex-col items-center gap-4 border border-dashed px-6 py-14 text-center"
+              style={{ borderColor: "var(--border2)" }}
+            >
+              <p className="text-[0.88rem]" style={{ color: "var(--muted)" }}>
+                {query.trim() ? "그 제목으로 열린 방이 없다" : "지금 열린 방이 없다"}
+              </p>
+              {/*
+                "위의 방 만들기로" 라고 손가락질하는 대신 여기서 바로 열게 한다.
+
+                ★ 찾다 못 찾았을 때도 버튼을 낸다. 코드로 찾던 시절에는 없는 코드를 친
+                  사람이 방을 새로 만들 리 없어서 감췄지만, 제목은 다르다 — '초보'를
+                  찾아 아무것도 없으면 그 방을 만들고 싶은 게 자연스러운 다음 수다.
+                  코드를 쥐고 있던 사람을 위한 길은 아래 줄에 따로 남긴다.
+              */}
+              <button
+                type="button"
+                className={styles.btnAccent}
+                style={{ padding: "0.6rem 1.6rem" }}
+                onClick={() => onCreate(query.trim())}
+                disabled={busy}
+              >
+                <PlusIcon /> {query.trim() ? "이 이름으로 방 만들기" : "첫 방 만들기"}
+              </button>
+              {query.trim() && (
+                <p className="text-[0.74rem]" style={{ color: "var(--dim)" }}>
+                  방 코드를 알고 있으면 &lsquo;코드로 입장&rsquo;을 쓴다 — 제목 검색으로는
+                  안 걸린다
+                </p>
+              )}
+            </div>
+          ) : (
+            visible.map((room, i) => (
+              <RoomRow key={room.code} room={room} index={i} busy={busy} onEnter={onEnter} />
+            ))
+          )}
+        </div>
       </div>
     </div>
   );
 }
 
+/**
+ * 목록 머리의 한 칸 — 누르면 그 열로 정렬한다.
+ *
+ * 지금 걸린 열에는 화살표를 띄우고, 나머지는 이름만 둔다. **화살표 자리는 늘 잡아 둔다** —
+ * 걸릴 때만 끼워 넣으면 누를 때마다 열 이름이 옆으로 밀린다.
+ *
+ * ★ 정렬 상태를 aria-sort 로 말하지 않는다. 그건 진짜 표(role="columnheader")의 속성이라
+ *   button 에 붙이면 보조기기가 무시한다. 이 목록은 grid 로 짠 <div>·<button> 더미지
+ *   <table> 이 아니다. 그래서 **읽어 줄 문장을 aria-label 에 직접 적는다** — 지금 어떻게
+ *   정렬돼 있고 누르면 어떻게 되는지까지. 화살표만으로는 눈으로 보는 사람만 안다.
+ */
+function SortHeader({
+  label,
+  col,
+  sort,
+  onSort,
+}: {
+  label: string;
+  col: SortableCol;
+  sort: Sort;
+  onSort: (col: SortableCol) => void;
+}) {
+  const on = sort.key === col;
+  const now = on ? (sort.dir === "asc" ? "오름차순" : "내림차순") : null;
+  const next = on ? (sort.dir === "asc" ? "내림차순" : "오름차순") : "이 기준";
+
+  return (
+    <button
+      type="button"
+      onClick={() => onSort(col)}
+      className={`${styles.sortHead} ${on ? styles.sortHeadOn : ""}`}
+      aria-label={
+        now ? `${label} ${now} 정렬 중. 누르면 ${next}` : `${label} 기준으로 정렬. 누르면 ${next}으로 정렬`
+      }
+    >
+      <span className={styles.label}>{label}</span>
+      <span aria-hidden className={styles.sortMark}>
+        {on ? (sort.dir === "asc" ? "▲" : "▼") : ""}
+      </span>
+    </button>
+  );
+}
+
+/**
+ * 목록의 한 줄.
+ *
+ * ┌─ 줄 전체가 버튼이다 ──────────────────────────────────────────────────────┐
+ * │ 오른쪽 끝의 「입장하기」 버튼은 없앴다. 누를 수 있는 곳이 줄 안의 작은 사각형   │
+ * │ 하나뿐이면, 줄을 눌러 본 사람은 아무 일도 일어나지 않는 걸 겪는다.           │
+ * │                                                                          │
+ * │ ★ div + onClick 이 아니라 **button 이다.** div 는 탭으로 닿지도, 엔터로     │
+ * │   눌리지도 않는다. 안에 다른 누를 것이 없어서(버튼을 없앴으므로) button      │
+ * │   하나로 감쌀 수 있다 — 버튼 안에 버튼을 넣으면 그건 못 쓰는 마크업이다.     │
+ * └──────────────────────────────────────────────────────────────────────────┘
+ *
+ * @param index 목록에서 몇 번째인가. 화면에 그대로 「번호」로 나간다 — 방에 붙은
+ *              고유 번호가 아니라 **지금 정렬에서의 자리**다. 정렬을 바꾸면 바뀐다.
+ */
 function RoomRow({
   room,
+  index,
   busy,
   onEnter,
 }: {
   room: OpenRoom;
+  index: number;
   busy: boolean;
   onEnter: (code: string) => void;
 }) {
+  const playing = room.phase !== "lobby";
   const full = room.players >= room.capacity;
 
   return (
-    <div className={`${styles.roomRow} ${full ? styles.roomFull : ""}`}>
-      <div className="min-w-0">
-        <div className={`${styles.mono} truncate text-[1.07rem] font-bold tracking-[0.22em]`}>
-          {room.code}
-        </div>
-      </div>
+    /*
+      정원이 차도, 게임 중이어도 누르는 걸 막지 않는다. 그 방에 이미 앉아 있던 사람은
+      여기로 다시 들어가야 하고, /api/room/join 이 쿠키를 먼저 보고 원래 자리를
+      돌려준다(rejoined). 새 사람이 누르면 409가 오고 그 문구가 위에 뜬다.
+    */
+    <button
+      type="button"
+      disabled={busy}
+      onClick={() => onEnter(room.code)}
+      className={`${styles.roomRow} ${playing || full ? styles.roomFull : ""}`}
+      aria-label={`${roomLabel(room)} — ${playing ? "게임 중" : "대기 중"}, ${room.players}/${room.capacity}명`}
+    >
+      {/* 번호. 자리를 세는 값이라 폭이 흔들리면 안 된다 — 등폭 글꼴로 둔다 */}
+      <span className={`${styles.mono} text-[0.79rem]`} style={{ color: "var(--dim)" }}>
+        {index + 1}
+      </span>
 
-      {/* 모드는 서버에 없는 값이다. 전부 같은 방식으로 돈다 */}
-      <div>
-        <span className={styles.tag}>표준</span>
-      </div>
+      {/*
+        제목이 주인공이다. 이름이 없는 방만 코드가 그 자리를 물려받는다 — "(제목 없음)"
+        같은 자리표시자는 넣지 않는다. 그건 정보가 아니라 빈칸을 채우는 말이다.
 
-      <div className="flex items-center gap-2">
+        ★ 제목은 남이 지은 문자열이다. 서버가 보이지 않는 글자를 털어서 주지만
+          (normalizeRoomName), 길이는 여기서도 잘라야 한다 — 20자여도 넓은 글자만
+          쓰면 한 줄을 넘긴다. truncate 가 그 일을 한다.
+      */}
+      <span className="min-w-0">
+        <span
+          className={`block truncate text-left ${
+            room.name ? "text-[0.98rem] font-semibold" : `${styles.mono} text-[1.02rem] font-bold tracking-[0.22em]`
+          }`}
+        >
+          {roomLabel(room)}
+        </span>
+      </span>
+
+      {/* 표시와 정렬이 같은 곳을 본다 — modeOf 하나만 고치면 둘 다 따라온다 */}
+      <span>
+        <span className={styles.tag}>{modeOf(room)}</span>
+      </span>
+
+      {/* 상태. 색만으로 말하지 않는다 — 글자를 같이 적어야 색을 못 가리는 사람도 읽는다 */}
+      <span>
+        <span className={`${styles.tag} ${playing ? "" : styles.tagGreen}`}>
+          {playing ? "게임 중" : "대기중"}
+        </span>
+      </span>
+
+      <span className="flex items-center gap-2">
         <span className={`${styles.dot} ${full ? styles.dotRed : styles.dotGreen}`} />
         <span className={`${styles.mono} text-[0.85rem]`}>
           {room.players}/{room.capacity}
         </span>
-      </div>
-
-      <div className={`${styles.mono} text-[0.81rem]`} style={{ color: "var(--muted)" }}>
-        {timeAgo(room.created_at)}
-      </div>
-
-      <div className="flex justify-end">
-        {/*
-          정원이 차도 버튼을 막지 않는다. 그 방에 이미 앉아 있던 사람은 여기로 다시
-          들어가야 하고, 서버가 원래 자리를 돌려준다(rejoined). 새 사람이 누르면
-          409가 오고 그 문구가 위에 뜬다.
-        */}
-        <button
-          type="button"
-          disabled={busy}
-          onClick={() => onEnter(room.code)}
-          className={full ? styles.btnQuiet : styles.btnSm}
-        >
-          {full ? "다시 입장" : "입장하기"}
-        </button>
-      </div>
-    </div>
+      </span>
+    </button>
   );
 }
 
 function RoomRowSkeleton() {
   return (
     <div aria-hidden className={`${styles.roomRow} animate-pulse`}>
-      <div className="h-4 w-24" style={{ background: "var(--surface3)" }} />
-      <div className="h-3 w-12" style={{ background: "var(--surface3)" }} />
+      <div className="h-3 w-4" style={{ background: "var(--surface3)" }} />
+      <div className="h-4 w-32" style={{ background: "var(--surface3)" }} />
       <div className="h-3 w-10" style={{ background: "var(--surface3)" }} />
       <div className="h-3 w-12" style={{ background: "var(--surface3)" }} />
-      <div className="h-6 w-full" style={{ background: "var(--surface3)" }} />
+      <div className="h-3 w-10" style={{ background: "var(--surface3)" }} />
     </div>
   );
 }
@@ -653,17 +921,22 @@ function CreatePanel({
   capacity,
   busy,
   error,
+  initialName,
   onCapacity,
   onSubmit,
 }: {
   capacity: number;
   busy: boolean;
   error: string | null;
+  /** 목록에서 찾다 못 찾고 넘어왔을 때 그 찾던 말. 없으면 빈 칸으로 연다. */
+  initialName: string;
   onCapacity: (n: number) => void;
-  onSubmit: () => void;
+  /** @param name 방 제목. 비었으면 이름 없는 방이 된다 */
+  onSubmit: (name: string) => void;
 }) {
-  // 아래 넷은 전부 화면 안에서만 사는 값이다 (서버로 가지 않는다)
-  const [name, setName] = useState("");
+  // ★ name 만 서버로 간다. 아래 넷(모드 · 공개 설정 · 입장 코드 · 라운드 시간)은
+  //   아직 뒷받침할 데이터가 없어서 화면 안에서만 산다 (파일 머리말의 MOCK 설명).
+  const [name, setName] = useState(initialName);
   const [mode, setMode] = useState<Mode>("std");
   const [isPrivate, setIsPrivate] = useState(false);
   const [entryCode, setEntryCode] = useState("");
@@ -689,12 +962,16 @@ function CreatePanel({
                 className={styles.field}
                 type="text"
                 value={name}
-                maxLength={20}
-                placeholder="방 이름"
+                maxLength={MAX_ROOM_NAME_LEN}
+                // 라벨이 이미 "방 이름"이라, 여기에는 화면으로 알 수 없는 것만 적는다 —
+                // 비워도 되고, 그러면 방이 코드로 불린다는 사실.
+                placeholder="비우면 코드로 부른다"
                 onChange={(e) => setName(e.target.value)}
               />
               <div className="mt-1.5 text-right">
-                <span className={styles.label}>{name.length} / 20</span>
+                <span className={styles.label}>
+                  {name.length} / {MAX_ROOM_NAME_LEN}
+                </span>
               </div>
             </div>
 
@@ -720,7 +997,7 @@ function CreatePanel({
               </div>
             </div>
 
-            {/* 왼쪽 열의 마지막 카드가 남은 높이를 먹는다 — 오른쪽 슬롯 카드와 짝이다 */}
+            {/* 왼쪽 열의 마지막 카드가 남은 높이를 먹는다 — 두 열이 같은 바닥에서 끝난다 */}
             <div className={`${styles.panel} flex flex-1 flex-col p-5`}>
               <div className={`${styles.label} mb-3`}>공개 설정</div>
               <div className="flex gap-2.5">
@@ -805,7 +1082,8 @@ function CreatePanel({
               </div>
             </div>
 
-            <div className={`${styles.panel} p-5`}>
+            {/* 오른쪽 열의 마지막 카드가 남은 높이를 먹는다 — 열이 아래 띠까지 닿는다 */}
+            <div className={`${styles.panel} flex flex-1 flex-col p-5`}>
               <div className={`${styles.label} mb-3`}>라운드 시간</div>
               <div className="flex gap-2.5">
                 {ROUND_TIMES.map((t) => (
@@ -818,31 +1096,6 @@ function CreatePanel({
                   >
                     {t}분
                   </button>
-                ))}
-              </div>
-            </div>
-
-            {/* 슬롯 카드가 남은 높이를 먹는다 — 오른쪽 열이 아래 띠까지 닿는다 */}
-            <div className={`${styles.panel} flex flex-1 flex-col p-5`}>
-              <div className="mb-3 flex items-center justify-between">
-                <span className={styles.label}>참가자 슬롯</span>
-                <span className={`${styles.tag} ${styles.mono}`}>
-                  {capacity}/{MAX_CAPACITY}
-                </span>
-              </div>
-              <div className="flex flex-col gap-1.5">
-                <div className={styles.slotHost}>
-                  <Avatar name="Player_K" size={26} accent />
-                  <span className="flex-1 text-[0.79rem] font-medium">Player_K</span>
-                  <span className={`${styles.tag} ${styles.tagGreen}`}>host</span>
-                </div>
-                {Array.from({ length: capacity - 1 }, (_, i) => (
-                  <div key={i} className={styles.slotEmpty}>
-                    <span className={styles.slotDot}>+</span>
-                    <span className="text-[0.74rem] tracking-[0.08em]" style={{ color: "var(--dim)" }}>
-                      대기 중...
-                    </span>
-                  </div>
                 ))}
               </div>
             </div>
@@ -872,13 +1125,16 @@ function CreatePanel({
           {/*
             자리·정체 이야기는 여기서 길게 하지 않는다. /intro 와 방 안의 「방 규칙」이
             같은 말을 더 정확하게 한다 — 세 군데로 갈리면 문구가 서로 어긋난다.
-            둘째 줄은 정직성 표시다 — 위 콘솔에서 지금 방에 실제로 반영되는 값은 인원뿐이다.
+
+            둘째 줄은 정직성 표시다. **이름이 목록에서 빠졌다** — 이제 진짜로 저장된다.
+            여기 목록과 실제 동작이 어긋나면 이 표시 자체가 거짓말이 되므로,
+            값을 서버에 잇는 순간 같이 고친다.
           */}
           <p className="text-[0.77rem] font-light leading-[1.9]" style={{ color: "var(--muted)" }}>
             역할은 시작할 때 무작위로 배정된다. 누가 AI인지는 아무도 알 수 없다.
             <br />
             <span style={{ color: "var(--dim)" }}>
-              이름·모드·시간·공개 설정은 미리보기다 — 지금 방에 반영되는 값은 인원뿐이다.
+              모드·시간·공개 설정은 미리보기다 — 지금 방에 반영되는 값은 이름과 인원이다.
             </span>
           </p>
           <button
@@ -886,7 +1142,7 @@ function CreatePanel({
             className={styles.btnAccent}
             style={{ padding: "0.9rem 2.8rem", fontSize: "0.79rem" }}
             disabled={busy}
-            onClick={onSubmit}
+            onClick={() => onSubmit(name)}
           >
             {busy ? "여는 중…" : `${capacity}자리로 연다`} <ArrowIcon />
           </button>
@@ -989,18 +1245,9 @@ function CodeDialog({
 /* ─────────────────────────────── 공통 ─────────────────────────────── */
 
 /** 이니셜 아바타. 외부 이미지 호스트에 의존하지 않는다 (시안은 원격 URL을 썼다) */
-function Avatar({ name, size, accent = false }: { name: string; size: number; accent?: boolean }) {
+function Avatar({ name, size }: { name: string; size: number }) {
   return (
-    <span
-      aria-hidden
-      className={styles.avatar}
-      style={{
-        width: size,
-        height: size,
-        borderColor: accent ? "rgba(53,208,127,0.4)" : undefined,
-        color: accent ? "var(--accent)" : undefined,
-      }}
-    >
+    <span aria-hidden className={styles.avatar} style={{ width: size, height: size }}>
       {name.trim().charAt(0).toUpperCase()}
     </span>
   );

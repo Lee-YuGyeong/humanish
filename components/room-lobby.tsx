@@ -98,9 +98,23 @@ export function RoomLobby({
             <span className="text-[0.58rem] uppercase tracking-[0.18em]">로비</span>
           </Link>
           <span className="h-4 w-px shrink-0" style={{ background: "var(--border2)" }} />
+          {/*
+            제목이 있으면 위층이 제목, 아래층이 코드다. 없으면 예전처럼 라벨 + 코드.
+            코드는 어느 쪽이든 남는다 — 들어올 사람에게 불러줘야 하는 값이라
+            제목이 그 자리를 대신할 수 없다.
+          */}
           <div className="min-w-0">
-            <div className={`${styles.label} ${styles.labelStrong}`}>room</div>
-            <div className={`${styles.mono} truncate text-[0.85rem] font-bold tracking-[0.12em]`}>
+            {room.name ? (
+              <div className="truncate text-[0.85rem] font-semibold leading-tight">
+                {room.name}
+              </div>
+            ) : (
+              <div className={`${styles.label} ${styles.labelStrong}`}>room</div>
+            )}
+            <div
+              className={`${styles.mono} truncate text-[0.85rem] font-bold tracking-[0.12em]`}
+              style={room.name ? { fontSize: "0.66rem", color: "var(--muted)" } : undefined}
+            >
               {room.code}
             </div>
           </div>
