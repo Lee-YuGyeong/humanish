@@ -17,8 +17,15 @@ import { FALLBACK_POOL, type AgentContext, type AgentOutput } from '@/lib/agent/
 import { getServiceClient } from '@/lib/server/supabase';
 import type { Phase } from '@/lib/game/types';
 
-/** self-fetch 대상. 로컬 개발 기본값 — 배포에서 쓰게 되면 env로 넘긴다. chat-reply.ts와 공유. */
-export const AGENT_SELF_URL = process.env.AGENT_SELF_URL ?? 'http://127.0.0.1:3000';
+/**
+ * self-fetch 대상. 로컬 개발 기본값 — 배포에서 쓰게 되면 env로 넘긴다. chat-reply.ts와 공유.
+ *
+ * ★ `||`다, `??`가 아니다. `.env.local`에 `AGENT_SELF_URL=`(이름만, 빈 값)로 두면
+ *   process.env 값이 ''인데, ''는 nullish가 아니라 `??`를 통과한다. 그대로 쓰면
+ *   self-fetch가 상대 URL(`/api/agent`)이 되어 서버 fetch가 "Failed to parse URL"로
+ *   즉사하고, 봇 전원이 조용히 풀 문구로 떨어진다 (실측 — 한 판 전체 LLM 0%).
+ */
+export const AGENT_SELF_URL = process.env.AGENT_SELF_URL || 'http://127.0.0.1:3000';
 
 /**
  * self-fetch 헤더. 프로덕션 /api/agent는 내부 Bearer(AGENT_SHARED_SECRET)로만 열린다 —

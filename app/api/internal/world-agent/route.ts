@@ -26,13 +26,14 @@
  */
 
 import { timingSafeEqual } from '@/lib/mp/ticket';
-import { capChatReply } from '@/lib/agent/chat-reply';
+import { fitChatReply } from '@/lib/agent/chat-reply';
 import { observeStyle } from '@/lib/agent/disguise';
 import { FALLBACK_POOL, type AgentContext, type AgentOutput } from '@/lib/agent/generate';
 import { personaForSeat } from '@/lib/agent/persona';
 import { AGENT_SELF_URL, agentHeaders } from '@/lib/agent/prefill';
+import { worldPersonaForSeat } from '@/lib/agent/world-persona';
 import { apiError, readJson } from '@/lib/server/auth';
-import { buildWorldRoster, worldPersonaForSeat } from '@/lib/server/world-ai';
+import { buildWorldRoster } from '@/lib/server/world-ai';
 
 export const dynamic = 'force-dynamic';
 
@@ -138,7 +139,7 @@ export async function POST(req: Request): Promise<Response> {
       .map((h) => ({ speaker: h.nickname, text: h.text }));
 
     /*
-     * ★ 월드 AI 에게는 **월드 인물**을 준다 (lib/server/world-ai.ts).
+     * ★ 월드 AI 에게는 **월드 인물**을 준다 (lib/agent/world-persona.ts).
      *   게임 페르소나는 의심·투표를 전제로 만들어져서, 그냥 노는 공간에서는
      *   동문서답으로 보인다 (실측: "안녕하세요" → "야 근데 야근 너무 힘들어").
      *   게임이 시작된 방의 진짜 봇은 그대로 게임 페르소나를 쓴다.
@@ -147,6 +148,10 @@ export async function POST(req: Request): Promise<Response> {
       player_id: b.id,
       context: {
         persona: b.synthetic ? worldPersonaForSeat(b.seat) : personaForSeat(b.seat),
+        // 월드 AI는 무대도 라운지다 — 시스템 프롬프트에서 게임 문장이 전부 빠진다
+        // (generate.ts WORLD_RULES). 페르소나가 "게임 중이 아니다"로 게임 프레임을
+        // 되받아치던 구조를 대체한다. 게임이 시작된 방의 진짜 봇은 게임 무대 그대로.
+        setting: b.synthetic ? ('world' as const) : ('game' as const),
         phase: 'chat' as const,
         question: trigger ?? undefined,
         visibleHistory,
@@ -181,10 +186,10 @@ export async function POST(req: Request): Promise<Response> {
 
       // **첫 발화만** 쓴다. 2D는 두 줄을 각자의 지연으로 따로 보내지만(§5.4) 월드의
       // 말풍선은 하나다. 이어붙이면 길이만 두 배가 되고 그만큼 잘려 나간다.
-      const text = capChatReply(r.output.messages[0] ?? '', MAX_REPLY_LEN);
+      // 상한을 넘으면 자르지 않고 버린다(fitChatReply → null) — 잘린 말끝은 폴백
+      // 문구보다 봇 티가 난다 (실측).
+      const text = fitChatReply(r.output.messages[0] ?? '', MAX_REPLY_LEN);
       if (!text || FALLBACK_POOL.includes(text)) continue;
-      // capChatReply가 손을 댔다 = 상한을 넘었다 → 잘린 말끝을 내보내느니 버린다.
-      if (text !== (r.output.messages[0] ?? '').trim()) continue;
 
       results.push({ player_id: r.player_id, text });
     }
