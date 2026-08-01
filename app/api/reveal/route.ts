@@ -14,10 +14,15 @@
  *
  * 점수는 여기서 계산한다. calcScores는 lib/game/rules.ts의 순수 함수라
  * DB(plpgsql)가 부를 수 없어서 reveal 훅에서 빼둔 것이다 (SPEC §17.2).
+ *
+ * ★ **전적도 여기서 적힌다** (SPEC §15-2-결정 「아직 안 한 것」). 점수가 나오는
+ *   자리가 여기 하나뿐이라 같은 이유로 여기에 붙었다. lib/server/match.ts 참고 —
+ *   한 판은 한 번만 적히고, 실패해도 결과 화면은 그대로 뜬다.
  */
 
 import { SCORE_RULE, calcScores, humanVotesReceived } from '@/lib/game/rules';
 import type { Role } from '@/lib/game/types';
+import { recordMatch } from '@/lib/server/match';
 import { getServiceClient } from '@/lib/server/supabase';
 import { ApiError, apiError, requirePlayer } from '@/lib/server/auth';
 
@@ -45,7 +50,17 @@ export async function GET(req: Request): Promise<Response> {
     await requirePlayer(roomId);
 
     const [{ data: players }, { data: roleRows }, { data: voteRows }] = await Promise.all([
-      db.from('players').select('id, nickname, seat, is_bot').eq('room_id', roomId).order('seat'),
+      /*
+       * ★ user_id 를 함께 읽지만 **응답에는 넣지 않는다** (I1, §15-2-결정).
+       *   봇에게는 계정이 없어서 user_id 가 null 인 자리가 곧 봇 명단이다.
+       *   아래 map 이 내보낼 필드를 하나씩 적는 이유가 이것이다 — 전개(...p)로
+       *   바꾸는 순간 샌다. 이 값은 전적을 적는 데만 쓰고 함수 안에서 끝난다.
+       */
+      db
+        .from('players')
+        .select('id, nickname, seat, is_bot, user_id')
+        .eq('room_id', roomId)
+        .order('seat'),
       db.from('player_roles').select('player_id, role').eq('room_id', roomId),
       db.from('votes').select('voter_id, target_id, reason').eq('room_id', roomId),
     ]);
@@ -63,6 +78,31 @@ export async function GET(req: Request): Promise<Response> {
     //   전체(votes_received)만 주면 결과 화면이 "3표 받았는데 왜 0점?"이 되고,
     //   사람 표(human_votes_received)만 주면 봇이 몇 표 던졌는지가 안 보인다.
     const humanReceived = humanVotesReceived(votes, roles);
+
+    /*
+     * 전적을 적는다 (SPEC §15-2-결정). 사람이 2명 미만인 방은 recordMatch 가 거른다.
+     * 같은 판을 여러 사람이 열어도 기본키가 두 번째부터 무시한다.
+     *
+     * ★ **응답 뒤로 미루지 않는다.** 배포처는 Cloudflare Workers 인데, 거기서는
+     *   응답을 돌려준 순간 요청 컨텍스트가 끝나고 붙들지 않은 약속은 그냥 죽는다
+     *   (waitUntil 없이). 로컬 Node 에서는 되고 배포본에서만 전적이 안 쌓이는 —
+     *   화면에는 아무 에러도 안 뜨는 종류의 고장이 된다. 자리 8개짜리 upsert 하나라
+     *   기다려도 결과 화면이 늦어지지 않는다.
+     *
+     * ★ 대신 실패를 삼킨다. 전적은 곁다리고 결과 화면은 게임의 마지막 장면이라,
+     *   기록이 안 됐다고 정답 공개가 500이 되면 안 된다.
+     */
+    await recordMatch(
+      roomId,
+      (players ?? []).map((p) => ({
+        userId: p.user_id ?? null,
+        isBot: p.is_bot,
+        role: roles[p.id] ?? null,
+        score: scores[p.id] ?? 0,
+      })),
+    ).catch((e: unknown) => {
+      console.error('[reveal] 전적 기록 실패', e);
+    });
 
     return Response.json({
       players: (players ?? []).map((p) => ({

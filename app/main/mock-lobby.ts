@@ -1,9 +1,10 @@
 /**
  * 로비 화면에만 있는 값. 소유: C (SPEC §2)
  *
- * 여기 남은 것은 아직 뒷받침할 데이터가 없어 화면에만 있는 값이다.
- * 실제 방 목록·방 만들기·입장은 전부 /api를 거친다 (page.tsx, SPEC I9) — 그쪽은
- * 여기를 쓰지 않는다.
+ * 여기 남은 것은 아직 뒷받침할 데이터가 없어 화면에만 있는 값이다 — 친구 목록과
+ * 로비 채팅 둘뿐이다. 실제 방 목록·방 만들기·입장은 전부 /api를 거치고
+ * (page.tsx, SPEC I9), **전적(레벨·승률·판수·최근 게임)도 이제 진짜다** —
+ * GET /api/profile/stats 에서 온다 (SPEC §15-2-결정). 그쪽은 여기를 쓰지 않는다.
  *
  * 플레이어 정체와 관련된 값(is_bot 등)은 여기에 절대 담지 않는다 (SPEC I1).
  */
@@ -40,9 +41,4 @@ export const chat: ChatLine[] = [
   // 되고, 사람이 정원을 거의 채운 방에서는 우연히 맞아떨어지기까지 한다 (I1).
   { user: "Master", message: "이번 판 진짜 못 맞히겠던데요", tone: "text-bounce" },
   { user: "Spy_X", message: "님들 방 드가셈", tone: "text-signal/70" },
-];
-
-export const recentGames = [
-  { result: "인간 승리", time: "15분 전", score: "+25", win: true },
-  { result: "AI 승리 (패배)", time: "1시간 전", score: "-10", win: false },
 ];

@@ -32,6 +32,7 @@
 alter table rooms         enable row level security;
 alter table players       enable row level security;
 alter table profiles      enable row level security;
+alter table match_results enable row level security;
 alter table player_roles  enable row level security;
 alter table questions     enable row level security;
 alter table answers       enable row level security;
@@ -229,6 +230,26 @@ create policy profiles_select_own on profiles
   using (auth.uid() = user_id);
 
 ------------------------------------------------------------------------------
+-- match_results — 본인 것만. profiles와 같은 모양이다 (SPEC §15-2-결정)
+------------------------------------------------------------------------------
+-- ★ **여기서 방 세계가 새면 I1이 깨진다.** 한 행에 room_id 와 role 이 같이 있어서,
+--   남의 행을 읽을 수 있으면 "그 방에서 누가 스파이였나"가 나온다. 게다가 한 방의
+--   행 수를 세면 **사람이 몇이었는지**가 나오고, 정원에서 빼면 봇 수가 나온다.
+--   그래서 anon 에게는 권한 자체를 주지 않고, authenticated 에게는 자기 행만 연다.
+--
+-- ★ 쓰기는 아무에게도 열지 않는다 (I9). 적는 곳은 /api/reveal 하나뿐이고
+--   service role 로 쓴다. 열어두면 자기 전적을 직접 적어 랭킹을 만들 수 있다.
+--
+-- ★ Realtime publication 에 넣지 않는다. profiles 와 같은 이유다 (§7.3).
+revoke all on match_results from anon, authenticated;
+grant select on match_results to authenticated;
+
+drop policy if exists match_results_select_own on match_results;
+create policy match_results_select_own on match_results
+  for select to authenticated
+  using (auth.uid() = user_id);
+
+------------------------------------------------------------------------------
 -- 검증 (SPEC §14.2) — anon 키로 직접 뚫어본다. 이 기록이 기술 문서 근거가 된다.
 ------------------------------------------------------------------------------
 -- 아래는 전부 0행 또는 에러여야 한다.
@@ -245,3 +266,5 @@ create policy profiles_select_own on profiles
 --   select user_id from public_players;        -- 컬럼이 없어야 한다 (I1, §15-2-결정)
 --   select * from profiles;                    -- anon은 권한 자체가 없다
 --   select * from profiles;                    -- 남으로 로그인한 상태에서 0행
+--   select * from match_results;               -- anon은 권한 자체가 없다 (I1)
+--   select * from match_results;               -- 남으로 로그인한 상태에서 0행

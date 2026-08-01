@@ -4,7 +4,7 @@
  * 라우트는 app/api/profile 하나다. 쓰기는 전부 거기를 지난다 (I9).
  */
 
-import type { Profile } from '@/lib/game/types';
+import type { Profile, ProfileStats } from '@/lib/game/types';
 
 export interface ProfileResponse {
   profile: Profile | null;
@@ -25,6 +25,32 @@ export async function fetchProfile(): Promise<ProfileResponse> {
   // 익명으로 노는 사람에게 프로필이 없는 것은 정상이다.
   if (res.status === 401) return { profile: null, suggested: null };
   return unwrap<ProfileResponse>(res);
+}
+
+/** 한 판도 없는 계정(그리고 로그인 전)의 전적. 화면이 null 검사를 안 하게 모양을 맞춰준다. */
+const EMPTY_STATS: ProfileStats = {
+  games: 0,
+  wins: 0,
+  win_rate: null,
+  exp: 0,
+  level: 1,
+  level_into: 0,
+  level_need: 10,
+  level_ratio: 0,
+  recent: [],
+};
+
+/**
+ * 내 전적 — 레벨 · EXP · 승률 · 판수 · 최근 게임 (SPEC §15-2-결정).
+ *
+ * ★ 남의 전적을 받는 방법은 없다. 라우트가 쿠키 세션의 계정 하나만 본다 (I1, I9).
+ */
+export async function fetchProfileStats(): Promise<ProfileStats> {
+  const res = await fetch('/api/profile/stats', { cache: 'no-store' });
+  // 로그인 전이면 401 이다. fetchProfile 과 같이 "아직 없음" 으로 접는다 —
+  // 전적이 없다는 이유로 로비가 에러 화면이 되면 안 된다.
+  if (res.status === 401) return EMPTY_STATS;
+  return unwrap<ProfileStats>(res);
 }
 
 /**

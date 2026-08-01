@@ -86,6 +86,47 @@ export interface Profile {
 }
 
 /**
+ * 끝난 한 판, 내 것 (SPEC §15-2-결정 「아직 안 한 것」). `match_results` 한 행이다.
+ *
+ * ★ **내 행만 다룬다.** 남의 행이 한 화면에 오면 "그 방에서 누가 스파이였나"가
+ *   나오고, 한 방의 행을 세면 사람 수가 나와 정원에서 빼면 봇 수가 나온다 (I1).
+ *   RLS 가 auth.uid() = user_id 로 막고 있고(supabase/policies.sql),
+ *   읽는 라우트도 쿠키 세션의 계정 하나로만 조회한다.
+ *
+ * ★ 방 안 화면에 쓰지 않는다. Profile 과 같은 이유다 — 로비·전적 화면의 것이다.
+ */
+export interface RecentMatch {
+  /** 목록의 key 로만 쓴다. 방은 24시간 뒤 지워지지만(§16.4) 이 값은 남는다 */
+  room_id: string;
+  /** 봇의 'ai' 는 오지 않는다. 봇에게는 계정이 없어서 행 자체가 없다 */
+  role: 'citizen' | 'spy';
+  /** 자기 목표를 이뤘나. 기록할 때 정해서 저장한 값이다 (lib/server/match.ts) */
+  won: boolean;
+  score: number;
+  created_at: string;
+}
+
+/** 로비 왼쪽 기둥이 그리는 내 전적 전체. GET /api/profile/stats 의 응답이다. */
+export interface ProfileStats {
+  games: number;
+  wins: number;
+  /**
+   * 0~1. **한 판도 없으면 null 이다.**
+   * 0 으로 접으면 아직 안 해 본 사람과 다 진 사람이 화면에서 같아 보인다.
+   */
+  win_rate: number | null;
+  /** 누적 점수 = 누적 경험치 */
+  exp: number;
+  level: number;
+  level_into: number;
+  level_need: number;
+  /** level_into / level_need. EXP 막대가 이 값을 쓴다 */
+  level_ratio: number;
+  /** 최신순. 로비는 앞의 몇 개만 그린다 */
+  recent: RecentMatch[];
+}
+
+/**
  * 클라이언트가 실제로 받는 플레이어 모양. `public_players` 뷰와 1:1이다.
  * SPEC §7.2: is_bot이 새어나가면 게임이 즉시 끝난다.
  *

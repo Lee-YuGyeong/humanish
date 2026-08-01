@@ -490,6 +490,60 @@ check "사진은 바꿀 수 있다"             "https://example.test/a.png" \
   "$(q "select coalesce(avatar_url,'') from profiles where user_id='$UA';")"
 
 echo ""
+echo "── 전적: 내 것만, 한 판은 한 번 (SPEC §15-2-결정) ──"
+# ★ checks.sh 는 제약이 **있는지**를 정의로 확인한다(배포 DB에도 도는 파일이라
+#   행을 넣어볼 수 없다). 여기서는 실제로 무는지 본다.
+MR_A=11111111-0000-0000-0000-000000000001
+MR_B=11111111-0000-0000-0000-000000000002
+
+check "혼자 한 판은 못 적는다 (부정 유인 차단)" "denied" \
+  "$(denied_if "insert into match_results (room_id,user_id,role,score,won,humans)
+                values ('$MR_A','$UA','citizen',2,true,1);" 'humans')"
+
+# ★ 봇에게는 계정이 없어서 'ai' 행은 애초에 올 수 없다. 온다면 계정과 봇 자리가
+#   이어졌다는 뜻이라 I1 이 이미 깨진 것이다.
+check "role='ai' 는 못 적는다 (I1)"        "denied" \
+  "$(denied_if "insert into match_results (room_id,user_id,role,score,won,humans)
+                values ('$MR_A','$UA','ai',3,true,3);" 'role')"
+
+psql -q -c "insert into match_results (room_id,user_id,role,score,won,humans) values
+              ('$MR_A','$UA','citizen',2,true,3),
+              ('$MR_A','$UB','spy',0,false,3),
+              ('$MR_B','$UA','spy',4,true,2);"
+
+# ★ 같은 판을 두 번 적으면 판수가 사람 수만큼 뻥튀기된다. 방의 사람 전원이 결과
+#   화면을 열면 /api/reveal 이 그만큼 불리므로 이건 예외가 아니라 평상시다.
+check "같은 판은 두 번 못 적는다"          "denied" \
+  "$(denied_if "insert into match_results (room_id,user_id,role,score,won,humans)
+                values ('$MR_A','$UA','citizen',2,true,3);" 'match_results_pkey')"
+
+check "집계가 판수·승·누적점수를 센다"      "2|2|6" \
+  "$(q "select games || '|' || wins || '|' || exp from match_stats('$UA');")"
+check "한 판도 없으면 0을 준다 (null 이 아니다)" "0|0|0" \
+  "$(q "select games || '|' || wins || '|' || exp from match_stats('$UC');")"
+
+# ★ 여기가 이 표에서 제일 미끄러운 자리다. 남의 행이 보이면 "그 방에서 누가
+#   스파이였나"가 나오고, **한 방의 행 수를 세면 사람이 몇이었는지**가 나와
+#   정원에서 빼면 봇 수가 나온다 (I1).
+mine() { psql -tAq -c "set role authenticated; set request.jwt.claim.sub = '$1';
+                       select coalesce(count(*)::text,'0') from match_results;"; }
+check "가가로 로그인하면 자기 두 판만 보인다" "2" "$(mine "$UA")"
+check "나나로 로그인하면 자기 한 판만 보인다" "1" "$(mine "$UB")"
+check "로그인 안 하면 아무것도 안 보인다"     "0" \
+  "$(psql -tAq -c "set role authenticated; select count(*) from match_results;")"
+blocked "anon은 match_results를 못 읽는다 (I1)" "select count(*) from match_results;"
+
+# ★ 방은 24시간 뒤 지워지지만(§16.4) 전적은 남아야 한다. room_id 에 외래키가
+#   달려 있으면 cascade 로 같이 사라진다 — 화면은 그날 하루 멀쩡하게 돈다.
+#   진짜 방 하나로 확인한다. 위의 MR_A·MR_B 는 방이 없는 uuid 라 이걸 못 잡는다.
+MR_ROOM="$(q "select room_id from create_room('MRDL', 3, null, '$UC');")"
+psql -q -c "insert into match_results (room_id,user_id,role,score,won,humans)
+            values ('$MR_ROOM','$UC','citizen',2,true,2);"
+psql -q -c "delete from rooms where id='$MR_ROOM';"
+check "방이 지워져도 전적은 남는다 (§16.4)" "1" \
+  "$(q "select count(*) from match_results where room_id='$MR_ROOM';")"
+
+echo ""
 echo "── 대기방 이름: 대기방까지만 (SPEC §15-2-결정) ──"
 # ★ 이 블록이 이 기능의 핵심이다. 이름이 게임까지 따라가면 대기방의 '가가'가
 #   게임의 그 자리로 확정되고, 사람만 이름이 있으므로 봇 명단이 통째로 드러난다 (I1).

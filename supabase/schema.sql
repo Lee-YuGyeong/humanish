@@ -237,6 +237,71 @@ create trigger profiles_name_frozen
   before update on profiles
   for each row execute function freeze_display_name();
 
+-- ── 전적 (SPEC §15-2-결정 「아직 안 한 것」) ─────────────────────────────────
+--
+-- 한 판이 끝날 때(reveal) **사람 한 명당 한 행**. 봇은 계정이 없으므로 행이 없다.
+-- 로비 왼쪽 기둥의 판수 · 승률 · 최근 게임이 전부 이 표에서 나온다.
+--
+-- ★ room_id 에 **외래키를 걸지 않는다.** §16.4가 "24시간 지난 방을 지운다"고
+--   정해 뒀다. cascade 를 달면 전적이 하루 만에 같이 사라진다 — 이 표는 방보다
+--   오래 살아야 하는 유일한 방 관련 기록이다. 그래서 room_id 는 그냥 uuid 이고,
+--   역할은 **같은 판을 두 번 안 적는 것**(기본키) 하나다. uuid 라 지워진 방의
+--   코드가 재사용돼도(§16.4) 값이 겹치지 않는다.
+--
+-- ★ 사람이 2명 이상인 방만 적는다 — 부정 유인을 막는 조건이다 (§15-2-결정).
+--   정원 5인 방을 혼자 만들면 봇이 4명이고 스파이도 안 뽑혀서(§8), 아무나 찍어도
+--   맞는다. 그 판을 세면 전적이 혼자 만든 방으로 채워진다. 조건은 기록하는 쪽
+--   (lib/server/match.ts)과 여기 check 두 겹이다.
+--
+-- ★ role 에 'ai' 가 없다. 봇에게는 user_id 가 없어서 여기 올 수 없고, 만약 온다면
+--   그건 계정과 봇 자리가 이어졌다는 뜻이라 I1 이 이미 깨진 것이다. check 로 막는다.
+create table if not exists match_results (
+  room_id    uuid not null,
+  user_id    uuid not null references auth.users(id) on delete cascade,
+  role       text not null check (role in ('citizen','spy')),
+  -- 그 판에서 얻은 점수. calcScores(lib/game/rules.ts)가 준 값 그대로다.
+  score      int  not null default 0 check (score >= 0),
+  -- 자기 목표를 이뤘나. 시민은 진짜 AI를 맞혔고, 스파이는 사람 표를 받았다.
+  -- 지금 채점에서는 score > 0 과 같은 말이지만, 점수 규칙이 바뀌어도 옛 판의
+  -- 승패가 소급되지 않게 **판정 결과를 그대로 저장한다.**
+  won        boolean not null,
+  -- 그 판의 사람 수. 2 미만은 애초에 안 적는다(위 주석).
+  humans     int  not null check (humans >= 2),
+  created_at timestamptz not null default now(),
+  primary key (room_id, user_id)
+);
+
+-- 로비는 "내 최근 판"만 읽는다. 계정별 최신순 인덱스 하나면 충분하다.
+create index if not exists match_results_user_idx
+  on match_results (user_id, created_at desc);
+
+-- 판수 · 승 · 누적 점수를 한 번에 센다.
+--
+-- ★ 왜 함수인가: PostgREST 로는 sum() 을 못 부른다. 클라이언트 라이브러리에서
+--   합계를 내려면 **행을 전부 받아서 더해야** 하는데, 그러면 판수가 늘수록
+--   로비를 열 때마다 전적 전체가 왕복한다. 세는 일은 DB에서 끝낸다.
+--
+-- ★ security invoker(기본값)다. service role 이 부르면 RLS 를 지나가고,
+--   그 밖에는 아래 revoke 로 애초에 못 부른다. definer 로 만들면 언젠가
+--   anon 에게 실행 권한이 붙는 순간 **남의 전적을 세는 창구**가 된다.
+create or replace function match_stats(p_user uuid)
+returns table (games int, wins int, exp int)
+language sql stable as $$
+  select count(*)::int,
+         count(*) filter (where won)::int,
+         coalesce(sum(score), 0)::int
+    from match_results
+   where user_id = p_user;
+$$;
+
+-- Supabase 는 새 함수에 anon·authenticated 실행 권한을 자동으로 깔아준다.
+-- 걷어내지 않으면 아무나 남의 user_id 를 넣어 전적을 셀 수 있다.
+--
+-- ★ **public 을 빼먹으면 안 된다.** Postgres 는 새 함수의 EXECUTE 를 PUBLIC 에게
+--   기본으로 준다. anon·authenticated 에서만 걷으면 그 둘은 PUBLIC 을 통해 여전히
+--   부를 수 있고, 검사만 초록으로 보인다. 실제로 여기서 한 번 걸렸다.
+revoke all on function match_stats(uuid) from public, anon, authenticated;
+
 -- 절대 클라이언트에 노출되지 않는다 (SPEC §7.2 — 정책을 만들지 않는다)
 create table if not exists player_roles (
   player_id uuid primary key references players(id) on delete cascade,

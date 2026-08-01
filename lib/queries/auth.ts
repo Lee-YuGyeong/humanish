@@ -15,8 +15,9 @@ import { useQuery, useQueryClient, type UseQueryResult } from '@tanstack/react-q
 import { useCallback } from 'react';
 
 import { getCurrentUser, type AuthUser } from '@/lib/auth';
-import { fetchProfile, type ProfileResponse } from '@/lib/api/profile';
-import { authUserKey, profileKey } from './keys';
+import { fetchProfile, fetchProfileStats, type ProfileResponse } from '@/lib/api/profile';
+import type { ProfileStats } from '@/lib/game/types';
+import { authUserKey, profileKey, profileStatsKey } from './keys';
 
 /**
  * 지금 계정. 로그인 전이면 null.
@@ -51,11 +52,32 @@ export function useProfile(): UseQueryResult<ProfileResponse> {
   });
 }
 
+/**
+ * 내 전적 (SPEC §15-2-결정). 레벨 · EXP · 승률 · 판수 · 최근 게임.
+ *
+ * ★ 폴링하지 않는다. 전적은 **한 판이 끝날 때만** 바뀌는데, 그건 게임 화면에서
+ *   일어나고 그 뒤 로비로 돌아올 때 화면이 새로 뜬다. 로비에 앉아 있는 동안
+ *   내 전적이 바뀔 일은 없다.
+ *
+ * ★ 로그인 전에도 부른다 — 401 을 "아직 없음(0판)" 으로 접는다 (lib/api/profile.ts).
+ *   그래야 훅을 조건부로 부르지 않아도 된다.
+ */
+export function useProfileStats(): UseQueryResult<ProfileStats> {
+  return useQuery({
+    queryKey: profileStatsKey,
+    queryFn: fetchProfileStats,
+    staleTime: 60_000,
+    retry: 0,
+  });
+}
+
 /** 계정이 바뀐 뒤 다시 읽게 한다 (연결 · 로그아웃 · 이름 변경 직후). */
 export function useInvalidateAuthUser(): () => void {
   const qc = useQueryClient();
   return useCallback(() => {
     void qc.invalidateQueries({ queryKey: authUserKey });
     void qc.invalidateQueries({ queryKey: profileKey });
+    // 로그아웃하면 남의 전적이 남아 있으면 안 된다. 계정이 바뀌는 자리에 같이 건다.
+    void qc.invalidateQueries({ queryKey: profileStatsKey });
   }, [qc]);
 }

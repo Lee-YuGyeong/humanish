@@ -67,3 +67,12 @@ export const authUserKey = ['auth-user'] as const;
 
 /** 내 프로필. 익명 계정에는 없다(null). 계정과 같은 이유로 스코프 밖이다. */
 export const profileKey = ['profile'] as const;
+
+/**
+ * 내 전적 — 레벨 · 승률 · 판수 · 최근 게임 (SPEC §15-2-결정).
+ *
+ * ★ profileKey 의 하위가 아니라 **형제**다. 하위로 두면 이름을 짓는 순간
+ *   invalidate(profileKey) 가 전적까지 같이 지운다 — 이름과 전적은 같이 바뀌지 않는다.
+ * ★ 계정과 같은 이유로 방 스코프 밖이다. 전적은 방보다 오래 산다.
+ */
+export const profileStatsKey = ['profile-stats'] as const;

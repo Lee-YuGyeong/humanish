@@ -102,6 +102,49 @@ schema_checks() {
     "$(q "select count(*) from pg_trigger t join pg_class c on c.oid = t.tgrelid
            where c.relname = 'profiles' and t.tgname = 'profiles_name_frozen';")"
 
+  # ── 전적 (§15-2-결정 「아직 안 한 것」) ─────────────────────────────────────
+  check "match_results 테이블이 있다" "1" \
+    "$(q "select count(*) from information_schema.tables where table_name='match_results';")"
+
+  # ★ 같은 판을 두 번 적지 않는 유일한 장치다. 방의 사람 전원이 결과 화면을 열면
+  #   /api/reveal 이 그만큼 불리는데, 기본키가 없으면 판수가 사람 수만큼 뻥튀기된다.
+  check "match_results 기본키가 (room_id, user_id) 다" "room_id,user_id" \
+    "$(q "select string_agg(a.attname, ',' order by k.ord)
+            from pg_constraint c
+            join lateral unnest(c.conkey) with ordinality k(att, ord) on true
+            join pg_attribute a on a.attrelid = c.conrelid and a.attnum = k.att
+           where c.conrelid = to_regclass('match_results') and c.contype = 'p';")"
+
+  # ★ room_id 에 외래키가 있으면 안 된다. cleanup_stale_rooms 가 24시간 지난 방을
+  #   지우는데(§16.4), cascade 가 달려 있으면 **전적이 하루 만에 같이 사라진다.**
+  #   이건 스키마를 봐야만 잡히는 종류다 — 화면은 그날 하루 멀쩡하게 돈다.
+  check "match_results.room_id 에 외래키가 없다 (§16.4)" "0" \
+    "$(q "select count(*) from pg_constraint c
+            join pg_attribute a on a.attrelid = c.conrelid and a.attnum = any(c.conkey)
+           where c.conrelid = to_regclass('match_results')
+             and c.contype = 'f' and a.attname = 'room_id';")"
+
+  # ★ 제약은 **정의를 읽어서** 확인한다. 넣어 보지 않는다 — 이 파일은 apply.sh 가
+  #   배포 DB에도 그대로 돌린다. 제약이 빠져 있으면 그 insert 가 성공해서 진짜
+  #   전적에 가짜 한 줄이 남는다. 넣어 보는 쪽은 test.sh(일회용 로컬 PG)가 한다.
+  #
+  #   사람 2명 미만인 방은 애초에 못 들어온다 (§15-2-결정 부정 유인). 기록하는 쪽
+  #   (lib/server/match.ts)과 두 겹이고, 한 겹만 남으면 조용히 뚫린다.
+  check "match_results 가 혼자 판을 막는다 (humans >= 2)" "t" \
+    "$(q "select coalesce(bool_or(pg_get_constraintdef(oid) like '%humans%>=%2%'), false)
+            from pg_constraint
+           where conrelid = to_regclass('match_results') and contype = 'c';")"
+
+  # ★ role 에 'ai' 가 오면 계정과 봇 자리가 이어졌다는 뜻이다 (I1). 봇에게는 계정이
+  #   없으므로 애초에 여기 올 수 없고, 온다면 그건 이미 무언가 깨진 것이다.
+  check "match_results 가 role='ai' 를 막는다 (I1)" "t" \
+    "$(q "select coalesce(bool_or(
+                    pg_get_constraintdef(oid) like '%role%'
+                and pg_get_constraintdef(oid) like '%citizen%'
+                and pg_get_constraintdef(oid) not like '%ai%'), false)
+            from pg_constraint
+           where conrelid = to_regclass('match_results') and contype = 'c';")"
+
   # ★ 한 방에 같은 이름이 둘이면 대기방에서 누가 누구인지 못 가린다.
   #   **부분 인덱스**여야 한다 — 이름 없는 사람은 여럿이어도 되고, shuffle_seats 가
   #   전원을 null 로 만들 때 서로 부딪히면 게임 시작이 통째로 죽는다.
@@ -177,6 +220,43 @@ schema_checks() {
   #   시작하고, §7.3의 함정(이벤트가 조용히 안 배달됨)이 여기까지 따라온다.
   check "profiles는 Realtime publication에 없다 (§7.3)" "0" \
     "$(q "select count(*) from pg_publication_tables where pubname='supabase_realtime' and tablename='profiles';")"
+
+  # ── 전적 권한 (§15-2-결정, I1·I9) ──────────────────────────────────────────
+  #
+  # ★ 여기가 새면 I1 이 깨진다. 한 행에 room_id 와 role 이 같이 있어서, 남의 행을
+  #   읽을 수 있으면 "그 방에서 누가 스파이였나"가 나온다. 게다가 **한 방의 행 수를
+  #   세면 사람이 몇이었는지**가 나오고, 정원에서 빼면 봇 수가 나온다.
+  check "match_results에 RLS가 켜져 있다" "t" \
+    "$(q "select relrowsecurity from pg_class where oid='match_results'::regclass;")"
+
+  check "match_results 정책이 auth.uid()로 본인을 가른다" "t" \
+    "$(q "select coalesce(bool_or(qual like '%uid()%'), false) from pg_policies where tablename='match_results';")"
+
+  check "anon은 match_results를 못 읽는다 (I1)" "f" \
+    "$(q "select has_table_privilege('anon','match_results','select');")"
+  check "authenticated는 match_results를 읽는다 (행은 정책이 가른다)" "t" \
+    "$(q "select has_table_privilege('authenticated','match_results','select');")"
+
+  # 적는 곳은 /api/reveal 하나뿐이고 service role 로 쓴다 (I9).
+  # 열어두면 자기 전적을 직접 적어 랭킹을 만들 수 있다.
+  for r in anon authenticated; do
+    check "$r 는 match_results에 쓰기 권한이 없다 (I9)" "f" \
+      "$(q "select has_table_privilege('$r','match_results','insert') or has_table_privilege('$r','match_results','update') or has_table_privilege('$r','match_results','delete');")"
+  done
+
+  # ★ 집계 함수도 막는다. security invoker 라 RLS 를 타긴 하지만, 실행 권한이 열려
+  #   있으면 남의 user_id 를 넣어 "그 사람이 몇 판 했나"를 물을 창구가 하나 생긴다.
+  check "anon은 match_stats 를 못 부른다" "f" "$(anon_can "match_stats(uuid)")"
+  check "authenticated도 match_stats 를 못 부른다" "f" \
+    "$(q "select has_function_privilege('authenticated', oid, 'execute') from pg_proc where oid = to_regprocedure('match_stats(uuid)');")"
+
+  # ★ 거꾸로도 본다. revoke 를 public 까지 넓히다가 service_role 것까지 걷으면
+  #   /api/profile/stats 가 통째로 500이 된다 — **로비를 열어봐야 알게 된다.**
+  check "service_role은 match_stats 를 부른다" "t" \
+    "$(q "select has_function_privilege('service_role', oid, 'execute') from pg_proc where oid = to_regprocedure('match_stats(uuid)');")"
+
+  check "match_results는 Realtime publication에 없다 (§7.3)" "0" \
+    "$(q "select count(*) from pg_publication_tables where pubname='supabase_realtime' and tablename='match_results';")"
 
   echo ""
   echo "── 문구 풀 (seed.sql) ──"

@@ -15,11 +15,16 @@
  * │ 형태로도 화면에 올리지 않는다 (I1).                                     │
  * └────────────────────────────────────────────────────────────────────────┘
  *
- * ★ 시안에 있으나 **뒷받침할 데이터가 없는 자리**(레벨 · EXP · 승률 · 접속자 수 ·
- *   모드 · 라운드 시간 · 비공개 코드 · 검색 필터)는 지우지 않고 남겼다.
+ * ★ 시안에 있으나 **뒷받침할 데이터가 없는 자리**(접속자 수 · 모드 · 라운드 시간 ·
+ *   비공개 코드 · 검색 필터)는 지우지 않고 남겼다.
  *   레이아웃이 완성됐을 때의 모습을 잃지 않기 위해서다. 눌러도 아무 일이 없는 칸은
  *   disabled 로 둔다 — 화면에 붙여뒀던 MOCK 배지는 뗐다.
- *   진짜로 동작하는 것은 **방 목록 · 정원 · 방 만들기 · 코드 입장** 넷뿐이다.
+ *
+ *   **왼쪽 기둥(이름 · 레벨 · EXP · 승률 · 판수 · 최근 게임)은 이제 진짜다.**
+ *   GET /api/profile/stats 하나에서 온다 (SPEC §15-2-결정 「아직 안 한 것」).
+ *   한 판이 끝날 때 /api/reveal 이 match_results 에 적고, 그걸 다시 읽는 것이다.
+ *   **사람이 2명 이상인 방만 적힌다** — 혼자 만든 방은 봇만 있어서 아무나 찍어도
+ *   맞기 때문이다. 그래서 판수가 실제로 논 횟수보다 적을 수 있다.
  *
  * ★ 시안의 "5명 중 AI 1명" · "AI 2명" 같은 모드 설명은 그대로 옮기지 않았다.
  *   정원은 방마다 2~8이고(UI 표기) 서버가 받는 값은 capacity 하나뿐이다.
@@ -30,9 +35,8 @@ import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { signOut } from "@/lib/auth";
 import type { Phase } from "@/lib/game/types";
-import { useInvalidateAuthUser, useProfile } from "@/lib/queries/auth";
+import { useInvalidateAuthUser, useProfile, useProfileStats } from "@/lib/queries/auth";
 import styles from "./lobby.module.css";
-import { recentGames } from "./mock-lobby";
 
 /**
  * 정원 범위. lib/server/room.ts 의 MIN/MAX/DEFAULT_ROOM_CAPACITY 와 같은 값이어야 한다.
@@ -579,7 +583,52 @@ function AccountChip() {
 
 /* ───────────────────────────── 왼쪽 기둥 ───────────────────────────── */
 
+/**
+ * 한 판을 뭐라고 부를지 (SPEC §8, §15-2-결정).
+ *
+ * ★ 시안에는 "인간 승리 / AI 승리(패배)" 라고 적혀 있었지만 **그대로 쓰지 않는다.**
+ *   이 게임에는 아직 팀 승패 판정이 없다 (SPEC 「게임 룰 점검 추가분」— /api/reveal 은
+ *   점수만 준다). 없는 판정을 화면에서 지어내면 결과 화면과 전적이 서로 다른 말을 한다.
+ *
+ *   대신 채점 규칙이 이미 말하고 있는 것을 그대로 적는다 (lib/game/rules.ts):
+ *     시민은 진짜 AI를 맞히면 +2, 스파이는 사람 표를 한 장이라도 받으면 +4.
+ *   즉 **점수가 붙은 판 = 자기 목표를 이룬 판**이고, 그게 won 이다.
+ */
+const MATCH_LABEL: Record<"citizen" | "spy", { won: string; lost: string }> = {
+  citizen: { won: "AI 적중", lost: "AI 놓침" },
+  spy: { won: "연기 성공", lost: "연기 실패" },
+};
+
+/**
+ * 얼마 전인지. 서버가 준 ISO 문자열을 그대로 받는다.
+ *
+ * ★ 표시용이라 클라이언트 시계를 써도 된다 (I2 는 **페이즈 전환 판정**의 규칙이다).
+ *   시계가 어긋나 미래로 나오면 '방금' 으로 접는다 — '-3분 전' 은 고장으로 보인다.
+ */
+function timeAgo(iso: string, now: number): string {
+  const min = Math.floor((now - new Date(iso).getTime()) / 60_000);
+  if (!Number.isFinite(min) || min < 1) return "방금";
+  if (min < 60) return `${min}분 전`;
+  const hour = Math.floor(min / 60);
+  if (hour < 24) return `${hour}시간 전`;
+  return `${Math.floor(hour / 24)}일 전`;
+}
+
 function PlayerSidebar() {
+  const { data: profileData } = useProfile();
+  const { data: stats } = useProfileStats();
+
+  const profile = profileData?.profile ?? null;
+  const name = profile?.display_name ?? "이름 없음";
+
+  /*
+   * 마운트할 때 한 번만 읽는다. 렌더마다 Date.now() 를 부르면 같은 목록이
+   * 리렌더될 때마다 조금씩 다른 문구가 되어 화면이 흔들린다. 로비에 앉아 있는
+   * 동안 '15분 전' 이 '16분 전' 으로 바뀌지 않는 것은 문제가 아니다 —
+   * 전적은 게임이 끝날 때만 바뀌고, 그때는 화면이 새로 뜬다.
+   */
+  const [now] = useState(() => Date.now());
+
   return (
     <aside
       className={`${styles.scroll} hidden w-[220px] shrink-0 flex-col overflow-y-auto border-r lg:flex`}
@@ -587,12 +636,12 @@ function PlayerSidebar() {
     >
       <div className="border-b p-5" style={{ borderColor: "var(--border)" }}>
         <div className="mb-4 flex items-center gap-3">
-          <Avatar name="Player_K" size={34} />
+          <Avatar name={name} size={34} />
           <div>
-            <div className="text-[0.81rem] font-semibold uppercase tracking-[0.08em]">Player_K</div>
+            <div className="text-[0.81rem] font-semibold uppercase tracking-[0.08em]">{name}</div>
             <div className="mt-0.5 flex items-center gap-1.5">
               <span className="text-[0.66rem]" style={{ color: "var(--muted)" }}>
-                LV 24
+                LV {stats?.level ?? 1}
               </span>
             </div>
           </div>
@@ -601,19 +650,34 @@ function PlayerSidebar() {
         <div className="mb-1 flex justify-between">
           <span className={styles.label}>exp</span>
           <span className={`${styles.mono} text-[0.77rem]`} style={{ color: "var(--muted)" }}>
-            75%
+            {/* 퍼센트가 아니라 '이번 레벨에서 몇/몇' 이다. 다음 레벨까지 얼마나
+                남았는지를 퍼센트로만 보여주면 4점짜리 한 판이 몇 칸인지 안 보인다 */}
+            {stats ? `${stats.level_into}/${stats.level_need}` : "–"}
           </span>
         </div>
         <div className="mb-4 h-0.5" style={{ background: "var(--border2)" }}>
           <div
             className="h-full"
-            style={{ width: "75%", background: "var(--accent)", boxShadow: "0 0 6px var(--accent-glow)" }}
+            style={{
+              width: `${Math.round((stats?.level_ratio ?? 0) * 100)}%`,
+              background: "var(--accent)",
+              boxShadow: "0 0 6px var(--accent-glow)",
+            }}
           />
         </div>
 
         <div className="grid grid-cols-2 gap-2">
-          <Stat label="승률" value="64%" />
-          <Stat label="판수" value="128" />
+          {/* 한 판도 없으면 win_rate 가 null 이다. 0% 로 접으면 아직 안 해 본
+              사람과 다 진 사람이 같아 보인다 (lib/game/types.ts) */}
+          <Stat
+            label="승률"
+            value={
+              stats?.win_rate === null || stats === undefined
+                ? "–"
+                : `${Math.round(stats.win_rate * 100)}%`
+            }
+          />
+          <Stat label="판수" value={stats ? String(stats.games) : "–"} />
         </div>
       </div>
 
@@ -621,32 +685,43 @@ function PlayerSidebar() {
         <div className="mb-3 flex items-center gap-2">
           <span className={styles.label}>최근 게임</span>
         </div>
-        <div className="flex flex-col gap-1.5">
-          {recentGames.map((game) => (
-            <div
-              key={game.result}
-              className={`${styles.inset} flex items-center justify-between px-3 py-2.5`}
-            >
-              <div className="flex items-center gap-2.5">
-                <span
-                  className={`${styles.dot} ${game.win ? styles.dotGreen : styles.dotRed}`}
-                />
-                <div>
-                  <div className="text-[0.77rem]">{game.result}</div>
-                  <div className="mt-0.5 text-[0.59rem]" style={{ color: "var(--muted)" }}>
-                    {game.time}
+
+        {stats && stats.recent.length === 0 ? (
+          <p className="text-[0.7rem] leading-relaxed" style={{ color: "var(--muted)" }}>
+            아직 끝낸 판이 없다.
+            <br />
+            {/* 왜 비어 있는지를 같이 적는다. 혼자 만든 방은 세지 않기 때문에
+                "분명히 한 판 했는데 비어 있다" 가 나올 수 있다 (SPEC §15-2-결정) */}
+            사람이 둘 이상인 방부터 기록에 남는다.
+          </p>
+        ) : (
+          <div className="flex flex-col gap-1.5">
+            {(stats?.recent ?? []).map((game) => (
+              <div
+                key={game.room_id}
+                className={`${styles.inset} flex items-center justify-between px-3 py-2.5`}
+              >
+                <div className="flex items-center gap-2.5">
+                  <span className={`${styles.dot} ${game.won ? styles.dotGreen : styles.dotRed}`} />
+                  <div>
+                    <div className="text-[0.77rem]">
+                      {MATCH_LABEL[game.role][game.won ? "won" : "lost"]}
+                    </div>
+                    <div className="mt-0.5 text-[0.59rem]" style={{ color: "var(--muted)" }}>
+                      {timeAgo(game.created_at, now)}
+                    </div>
                   </div>
                 </div>
+                <span
+                  className={`${styles.mono} text-[0.79rem] font-bold`}
+                  style={{ color: game.won ? "var(--accent)" : "var(--red)" }}
+                >
+                  {game.score > 0 ? `+${game.score}` : "0"}
+                </span>
               </div>
-              <span
-                className={`${styles.mono} text-[0.79rem] font-bold`}
-                style={{ color: game.win ? "var(--accent)" : "var(--red)" }}
-              >
-                {game.score}
-              </span>
-            </div>
-          ))}
-        </div>
+            ))}
+          </div>
+        )}
       </div>
     </aside>
   );

@@ -8,7 +8,14 @@
 
 import { describe, expect, it } from 'vitest';
 
-import { openRoomsKey, roomKeys, serverTimeKey } from '@/lib/queries/keys';
+import {
+  authUserKey,
+  openRoomsKey,
+  profileKey,
+  profileStatsKey,
+  roomKeys,
+  serverTimeKey,
+} from '@/lib/queries/keys';
 
 const ROOM_A = '11111111-1111-4111-8111-111111111111';
 const ROOM_B = '22222222-2222-4222-8222-222222222222';
@@ -62,5 +69,20 @@ describe('방 밖의 키', () => {
     const scope = roomKeys.scope(ROOM_A);
     expect(serverTimeKey.slice(0, scope.length)).not.toEqual([...scope]);
     expect(openRoomsKey.slice(0, scope.length)).not.toEqual([...scope]);
+  });
+
+  it('★ 계정과 전적도 방 밖이다 (SPEC §15-2-결정)', () => {
+    // 계정 세계와 방 세계는 분리한다. 방 스코프 안에 두면 "이 방의 그 계정" 같은
+    // 조회가 자연스러워 보이기 시작하고, 그게 I1 이 무너지는 첫걸음이다.
+    const scope = roomKeys.scope(ROOM_A);
+    expect(authUserKey.slice(0, scope.length)).not.toEqual([...scope]);
+    expect(profileKey.slice(0, scope.length)).not.toEqual([...scope]);
+    expect(profileStatsKey.slice(0, scope.length)).not.toEqual([...scope]);
+  });
+
+  it('★ 전적은 프로필의 하위가 아니다', () => {
+    // 하위로 두면 이름을 짓는 순간 invalidate(profileKey) 가 전적까지 지운다.
+    // 둘은 같이 바뀌지 않는다 — 이름은 한 번뿐이고 전적은 판마다 늘어난다.
+    expect(profileStatsKey.slice(0, profileKey.length)).not.toEqual([...profileKey]);
   });
 });
