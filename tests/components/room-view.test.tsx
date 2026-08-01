@@ -159,6 +159,9 @@ beforeEach(() => {
   vi.clearAllMocks();
   // 스토어는 모듈 전역이다. 테스트 사이에 초안·잠금이 넘어가지 않게 되돌린다.
   roomUiStore.setState({ state: initialRoomUiState });
+  // 주소도 전역이다. 앞 테스트가 /main 으로 옮겨두면 다음 테스트는 처음부터
+  // "이미 떠난" 상태로 시작한다 (useLeaveRoomOnExit 이 주소 변화를 본다).
+  window.history.replaceState({}, '', '/room/UFJR');
 
   db.fetchRoomByCode.mockResolvedValue(room());
   db.fetchRoster.mockResolvedValue(PLAYERS);
@@ -236,6 +239,79 @@ describe('대기실에서 나가기', () => {
     fireEvent.click(button);
 
     await waitFor(() => expect(api.leaveRoom).toHaveBeenCalledTimes(1));
+  });
+
+  it('★ 브라우저 뒤로가기도 같은 동작이다', async () => {
+    // 떠나는 길 셋(← 로비 · 방 나가기 · 뒤로가기) 중 뒤로가기만 자리를 안 빼면
+    // 사람들은 대개 뒤로가기로 나가므로 빈 방이 목록에 계속 쌓인다.
+    renderRoom();
+    await screen.findByRole('button', { name: /방 나가기/ });
+
+    fireEvent.popState(window);
+    await waitFor(() => expect(api.leaveRoom).toHaveBeenCalledWith(ROOM_ID));
+  });
+
+  it('★ popstate 가 안 와도 화면이 걷히면 나간다', async () => {
+    // 신호를 둘 듣는 이유가 이것이다. Next 가 뒤 화면을 어떻게 되살리든
+    // **주소가 바뀐 채로 이 화면이 걷혔다**면 그건 떠난 것이다.
+    const { unmount } = renderRoom();
+    await screen.findByRole('button', { name: /방 나가기/ });
+
+    window.history.pushState({}, '', '/main');
+    unmount();
+
+    await waitFor(() => expect(api.leaveRoom).toHaveBeenCalledWith(ROOM_ID));
+  });
+
+  it('★ 주소가 그대로면 화면이 걷혀도 나가지 않는다', async () => {
+    // 게임 시작·StrictMode·HMR 이 전부 여기로 온다. 여기서 자리를 빼면
+    // **시작하자마자 스스로 쫓겨난다.**
+    const { unmount } = renderRoom();
+    await screen.findByRole('button', { name: /방 나가기/ });
+
+    unmount();
+
+    await waitFor(() => expect(api.fetchMe).toHaveBeenCalled());
+    expect(api.leaveRoom).not.toHaveBeenCalled();
+  });
+
+  it('★ 뒤로가기 뒤에 화면이 걷혀도 요청은 한 번이다', async () => {
+    const { unmount } = renderRoom();
+    await screen.findByRole('button', { name: /방 나가기/ });
+
+    fireEvent.popState(window);
+    window.history.pushState({}, '', '/main');
+    unmount();
+
+    await waitFor(() => expect(api.leaveRoom).toHaveBeenCalledTimes(1));
+  });
+
+  it('★ 나가기 버튼으로 나간 뒤 화면이 걷혀도 요청은 한 번이다', async () => {
+    // 버튼은 성공한 **뒤에** /main 으로 넘어간다. 그 이동이 곧 언마운트라,
+    // markLeft 를 빼먹으면 같은 나가기가 두 번 나간다.
+    const { unmount } = renderRoom();
+    fireEvent.click(await screen.findByRole('button', { name: /방 나가기/ }));
+    await waitFor(() => expect(api.leaveRoom).toHaveBeenCalledTimes(1));
+
+    window.history.pushState({}, '', '/main');
+    unmount();
+
+    await waitFor(() => expect(api.leaveRoom).toHaveBeenCalledTimes(1));
+  });
+
+  it('★ 시작한 방에서는 뒤로가기가 자리를 빼지 않는다', async () => {
+    // leave_room 이 lobby 밖에서는 409 다 (SPEC §15-4 미결정). 여기서 요청을 보내면
+    // 나가지도 못하면서 실패만 쌓인다 — 대기실을 떠날 때만 듣는다.
+    db.fetchRoomByCode.mockResolvedValue(room({ phase: 'question', round: 1 }));
+    const { unmount } = renderRoom();
+    await screen.findByRole('button', { name: '제출' });
+
+    fireEvent.popState(window);
+    window.history.pushState({}, '', '/main');
+    unmount();
+
+    await waitFor(() => expect(api.fetchMe).toHaveBeenCalled());
+    expect(api.leaveRoom).not.toHaveBeenCalled();
   });
 });
 

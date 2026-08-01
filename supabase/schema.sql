@@ -213,6 +213,30 @@ create table if not exists profiles (
 create unique index if not exists profiles_display_name_key
   on profiles (lower(display_name));
 
+-- ★ 이름은 **한 번 짓고 끝이다** (SPEC §15-2-결정 「이름은 한 번만 짓는다」).
+--
+--   왜 정책이 아니라 트리거인가: 쓰기는 전부 service role 서버를 지나는데(I9),
+--   service role 은 RLS 를 **통과한다.** 정책을 아무리 걸어도 서버가 부르면 그냥 된다.
+--   트리거는 service role 도 못 비껴간다. 이 규칙을 아는 자리가 라우트 하나뿐이면
+--   나중에 프로필을 건드리는 경로가 하나 더 생기는 순간 조용히 뚫린다.
+--
+--   ★ avatar_url 은 계속 갱신된다. 그건 사용자가 고른 값이 아니라 구글이 준 것이라
+--     로그인할 때마다 최신으로 덮어도 된다. 얼리는 것은 display_name 하나다.
+create or replace function freeze_display_name() returns trigger
+language plpgsql as $$
+begin
+  if new.display_name is distinct from old.display_name then
+    raise exception '이름은 한 번 지으면 바꿀 수 없다' using errcode = 'P0001';
+  end if;
+  return new;
+end;
+$$;
+
+drop trigger if exists profiles_name_frozen on profiles;
+create trigger profiles_name_frozen
+  before update on profiles
+  for each row execute function freeze_display_name();
+
 -- 절대 클라이언트에 노출되지 않는다 (SPEC §7.2 — 정책을 만들지 않는다)
 create table if not exists player_roles (
   player_id uuid primary key references players(id) on delete cascade,

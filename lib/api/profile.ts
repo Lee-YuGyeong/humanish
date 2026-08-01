@@ -27,7 +27,10 @@ export async function fetchProfile(): Promise<ProfileResponse> {
   return unwrap<ProfileResponse>(res);
 }
 
-/** 이름을 짓거나 바꾼다. 겹치면 409 와 함께 사용자에게 보여줄 문장이 온다. */
+/**
+ * 이름을 짓는다. **계정당 한 번뿐이다** — 이미 지었으면 409 다 (SPEC §15-2-결정).
+ * 이름이 겹쳐도 409 다. 둘 다 사용자에게 그대로 보여줄 문장이 함께 온다.
+ */
 export async function saveDisplayName(displayName: string): Promise<Profile> {
   const res = await fetch('/api/profile', {
     method: 'POST',

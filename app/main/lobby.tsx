@@ -27,9 +27,10 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { signOut } from "@/lib/auth";
 import type { Phase } from "@/lib/game/types";
-import { useProfile } from "@/lib/queries/auth";
+import { useInvalidateAuthUser, useProfile } from "@/lib/queries/auth";
 import styles from "./lobby.module.css";
 import { recentGames } from "./mock-lobby";
 
@@ -466,15 +467,73 @@ function TopBar() {
  *
  * ★ 여기 뜨는 이름은 계정 이름이다. **게임 화면에는 절대 나오지 않는다** (I1) —
  *   방 안에서는 대기방까지만 쓰이고 시작하면 '익명N' 이 된다.
+ *
+ * ┌─ 왜 이름이 링크가 아니라 메뉴인가 ─────────────────────────────────────┐
+ * │ 전에는 이름을 누르면 /account/nickname 으로 갔다("이름 바꾸기").        │
+ * │ **이름은 한 번 짓고 못 바꾸게 됐다** (SPEC §15-2-결정 「이름은 한 번만  │
+ * │ 짓는다」). 그 링크는 갈 곳이 없어졌고, 눌러도 그 화면이 바로 되돌려     │
+ * │ 보낸다 — 아무 일도 안 일어나는 링크만 남는 셈이었다.                    │
+ * │ 그 자리에 로그아웃을 둔다. 앱을 통틀어 나가는 문이 여기 하나뿐이다.     │
+ * └────────────────────────────────────────────────────────────────────────┘
  */
 function AccountChip() {
+  const router = useRouter();
   const { data: profileData } = useProfile();
+  const invalidate = useInvalidateAuthUser();
   const mine = profileData?.profile;
+
+  const [open, setOpen] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const boxRef = useRef<HTMLDivElement>(null);
+
+  /*
+   * 바깥을 누르거나 Esc 로 닫는다.
+   *
+   * ★ 나가는 중(busy)에는 닫지 않는다. 닫히면 다시 누를 수 있게 되고, signOut 이
+   *   두 번 나간다.
+   * ★ mousedown 으로 듣는다. click 이면 메뉴가 사라진 자리에 있던 것이 같이 눌린다.
+   */
+  useEffect(() => {
+    if (!open || busy) return;
+    const onDown = (e: MouseEvent) => {
+      if (!boxRef.current?.contains(e.target as Node)) setOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setOpen(false);
+    };
+    window.addEventListener("mousedown", onDown);
+    window.addEventListener("keydown", onKey);
+    return () => {
+      window.removeEventListener("mousedown", onDown);
+      window.removeEventListener("keydown", onKey);
+    };
+  }, [open, busy]);
+
+  const logout = async () => {
+    setBusy(true);
+    try {
+      await signOut();
+    } catch {
+      /*
+       * 실패해도 화면은 내보낸다. 여기서 멈추면 로그아웃을 눌렀는데 아무 일도
+       * 안 일어난 화면이 되고, 그게 더 나쁘다. 세션이 살아 있으면 /intro 의
+       * 「게임 접속하기」가 다시 통과시킬 뿐이라 잃는 것도 없다.
+       */
+    }
+    invalidate();
+    // 로그인 화면(/login)이 아니라 입구(/intro)로 보낸다. 나가자마자 다시
+    // 로그인 벽을 보여주면 나간 것 같지가 않다.
+    router.replace("/intro");
+  };
 
   // 아직 안 왔다. 자리만 잡아둔다 — 글자가 나중에 튀어나오면 머리말이 흔들린다.
   if (!profileData) return <span className="h-[26px]" />;
 
-  // 연결은 했는데 이름을 안 지었다 (이름 화면에서 나가버린 경우).
+  /*
+   * 연결은 했는데 이름을 안 지었다 (이름 화면에서 나가버린 경우).
+   * 여기는 메뉴로 바꾸지 않는다 — 이름을 짓는 것이 급한 일이고, 그걸 메뉴 안으로
+   * 한 번 더 숨기면 안 된다. **대신 이 상태에서는 로그아웃할 방법이 없다.**
+   */
   if (!mine) {
     return (
       <Link
@@ -488,15 +547,33 @@ function AccountChip() {
   }
 
   return (
-    <Link
-      href="/account/nickname?next=/main"
-      className="flex items-center gap-2 no-underline"
-      style={{ color: "var(--text)" }}
-      title="이름 바꾸기"
-    >
-      <Avatar name={mine.display_name} size={26} />
-      <span className="text-[0.79rem] font-semibold tracking-[0.1em]">{mine.display_name}</span>
-    </Link>
+    <div ref={boxRef} className="relative">
+      <button
+        type="button"
+        className={styles.chip}
+        aria-haspopup="menu"
+        aria-expanded={open}
+        onClick={() => setOpen((v) => !v)}
+      >
+        <Avatar name={mine.display_name} size={26} />
+        <span className="text-[0.79rem] font-semibold tracking-[0.1em]">{mine.display_name}</span>
+        <CaretIcon />
+      </button>
+
+      {open && (
+        <div className={styles.menu} role="menu">
+          <button
+            type="button"
+            role="menuitem"
+            className={styles.menuItem}
+            disabled={busy}
+            onClick={() => void logout()}
+          >
+            {busy ? "나가는 중…" : "로그아웃"}
+          </button>
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -1344,6 +1421,15 @@ function CloseIcon() {
   return (
     <svg width="12" height="12" viewBox="0 0 12 12" aria-hidden>
       <path d="M1 1l10 10M11 1L1 11" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+/** 계정 메뉴가 열린다는 표시. 이게 없으면 이름이 눌리는 것인 줄 모른다 */
+function CaretIcon() {
+  return (
+    <svg width="8" height="5" viewBox="0 0 8 5" fill="none" aria-hidden>
+      <path d="M1 1l3 3 3-3" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" />
     </svg>
   );
 }

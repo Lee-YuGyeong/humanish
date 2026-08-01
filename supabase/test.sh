@@ -475,6 +475,20 @@ psql -q -c "insert into profiles (user_id, display_name) values ('$UC','Chulsoo'
 check "대소문자만 달라도 같은 이름이다"  "denied" \
   "$(denied_if "insert into profiles (user_id, display_name) values ('$UD','CHULSOO');" 'profiles_display_name_key')"
 
+# ★ 이름은 한 번 짓고 끝이다 (§15-2-결정). 트리거가 **있는지**는 checks.sh 가 보고,
+#   여기서는 실제로 무는지 본다. 이 검사가 allowed 로 바뀌면 라우트의 확인 하나에만
+#   기대는 상태다 — service role 은 RLS 를 통과하므로 정책은 여기서 아무 일도 안 한다.
+check "지은 이름은 못 바꾼다"           "denied" \
+  "$(denied_if "update profiles set display_name='다다' where user_id='$UA';" '한 번 지으면')"
+check "막힌 뒤에도 원래 이름 그대로"     "가가" \
+  "$(q "select display_name from profiles where user_id='$UA';")"
+
+# 사진은 계속 갱신된다. 사용자가 고른 값이 아니라 구글이 준 것이라 로그인할 때마다
+# 최신으로 덮어도 된다. 트리거가 행 전체를 얼려버리면 여기가 먼저 걸린다.
+psql -q -c "update profiles set avatar_url='https://example.test/a.png' where user_id='$UA';"
+check "사진은 바꿀 수 있다"             "https://example.test/a.png" \
+  "$(q "select coalesce(avatar_url,'') from profiles where user_id='$UA';")"
+
 echo ""
 echo "── 대기방 이름: 대기방까지만 (SPEC §15-2-결정) ──"
 # ★ 이 블록이 이 기능의 핵심이다. 이름이 게임까지 따라가면 대기방의 '가가'가

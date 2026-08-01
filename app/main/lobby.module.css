@@ -456,6 +456,83 @@
   flex-shrink: 0;
 }
 
+/* ── 계정 메뉴 ────────────────────────────────────────────────────────── */
+/*
+  머리말의 이름을 누르면 아래로 열린다 (lobby.tsx 의 AccountChip).
+  전에는 이름이 /account/nickname 으로 가는 링크였다 — 이름을 못 바꾸게 되면서
+  갈 곳이 없어졌고, 그 자리에 로그아웃이 들어왔다 (SPEC §15-2-결정).
+*/
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.2rem 0.35rem;
+  border: none;
+  border-radius: 0.5rem;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  cursor: pointer;
+  transition: background-color 0.15s;
+}
+.chip:hover {
+  background: var(--surface2);
+}
+.chip:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/*
+  ★ z-index 는 noise(90) · scanlines(89) 보다 커야 한다. 셋 다 .root 안에 있어서
+    같은 쌓임 맥락에 놓인다 — 작게 두면 메뉴가 주사선 밑으로 들어가 흐려진다.
+    코드 입장 모달(500)보다는 낮다. 그건 화면 전체를 덮는 것이라 늘 위여야 한다.
+*/
+.menu {
+  position: absolute;
+  top: calc(100% + 0.5rem);
+  right: 0;
+  z-index: 400;
+  min-width: 9rem;
+  padding: 0.3rem;
+  background: rgba(18, 18, 18, 0.95);
+  border: 1px solid var(--border2);
+  border-radius: 0.6rem;
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  box-shadow: 0 20px 50px -25px rgba(0, 0, 0, 0.9);
+}
+
+.menuItem {
+  display: block;
+  width: 100%;
+  padding: 0.55rem 0.7rem;
+  border: none;
+  border-radius: 0.4rem;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: 0.76rem;
+  text-align: left;
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    background-color 0.15s,
+    color 0.15s;
+}
+.menuItem:hover:not(:disabled) {
+  background: var(--surface3);
+  color: var(--text);
+}
+.menuItem:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+.menuItem:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
 /* ── 코드 입장 모달 ───────────────────────────────────────────────────── */
 .overlay {
   position: fixed;

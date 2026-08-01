@@ -26,6 +26,7 @@ import type { PublicPlayer, Room } from "@/lib/game/types";
 import {
   REQUEST,
   useLeaveRoom,
+  useLeaveRoomOnExit,
   useSayLobbyLine,
   useSetLobbyReady,
   useSetLobbyName,
@@ -84,16 +85,26 @@ export function RoomLobby({
    * 예전에는 /main 으로 가는 <Link> 라서 화면만 떠나고 자리는 그대로 남았다.
    * 아무도 안 남은 방이 목록에 계속 뜨고, 방 코드도 24시간 동안 묶여 있었다.
    *
-   * ★ 대기실을 떠나는 길(머리말의 ← 로비, 오른쪽 아래 방 나가기)이 **전부 이걸 지난다.**
-   *   하나만 자리를 빼면 어느 쪽을 눌렀느냐로 빈 방이 남는지가 갈리는데,
-   *   화면에는 그 차이가 보이지 않는다.
+   * ★ 대기실을 떠나는 길(머리말의 ← 로비, 오른쪽 아래 방 나가기, **브라우저 뒤로가기**)이
+   *   **전부 자리를 뺀다.** 하나만 자리를 빼면 어느 쪽으로 나갔느냐로 빈 방이 남는지가
+   *   갈리는데, 화면에는 그 차이가 보이지 않는다.
    *
    * 화면 이동은 서버가 답한 **뒤에** 한다. 먼저 넘어가면 요청이 언마운트와 함께
    * 끊길 수 있고, 그러면 자리가 남는다 — 지금 고치려던 그 상태로 돌아간다.
    * 마지막 한 명이었으면 그 방은 이 요청에서 사라진다 (lib/queries/mutations).
+   *
+   * 뒤로가기만 순서가 반대다 — 브라우저가 이미 넘겨버린 뒤라 되돌릴 수 없고,
+   * 요청이 뒤따라간다. 그쪽 사정은 useLeaveRoomOnExit 주석에 있다.
+   *
+   * ★ markLeft 를 빼먹으면 나가기가 두 번 나간다 — 버튼이 성공한 뒤 /main 으로
+   *   넘어가는 그 이동이 곧 이 화면의 언마운트라, 떠남 감지가 한 번 더 걸린다.
    */
   const router = useRouter();
-  const leave = useLeaveRoom(room.id, () => router.push("/main"));
+  const { markLeft } = useLeaveRoomOnExit(room.id);
+  const leave = useLeaveRoom(room.id, () => {
+    markLeft();
+    router.push("/main");
+  });
   const leaving = useRoomUi(selectIsPending(REQUEST.leave));
 
   return (
