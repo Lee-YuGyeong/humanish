@@ -1144,7 +1144,12 @@ function CreatePanel({
             disabled={busy}
             onClick={() => onSubmit(name)}
           >
-            {busy ? "여는 중…" : `${capacity}자리로 연다`} <ArrowIcon />
+            {/*
+              ★ 버튼에 정원을 적지 않는다. 바로 위 눈금이 이미 그 숫자를 크게 들고
+                있어서 같은 값이 두 번 나오고, 무엇보다 여기서 알려줄 것은 **무엇이
+                일어나는가**(방이 만들어진다)이지 몇 자리인가가 아니다.
+            */}
+            {busy ? "만드는 중…" : "방 만들기"} <ArrowIcon />
           </button>
         </div>
       </div>

@@ -178,8 +178,12 @@ export function RoomLobby({
               **아무것도 조작하지 않는 덩어리**를 먼저 보게 된다 — 여기서
               첫 화면은 좌석이어야 한다.
           */}
-          <section>
-            <div className={`${styles.label} mb-3`}>참가자 현황</div>
+          {/*
+            ★ 좌석 위에 라벨을 붙이지 않는다. 좌석 칸 자체가 이미 "누가 앉아 있나"를
+              말하고, 인원 수는 머리말과 오른쪽 눈금이 들고 있다. 설명하는 글자를
+              얹으면 첫 화면에서 조작할 수 없는 줄이 하나 더 늘어난다.
+          */}
+          <section aria-label="참가자 현황">
             <SeatGrid
               players={players}
               capacity={room.capacity}
