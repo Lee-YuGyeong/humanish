@@ -341,8 +341,7 @@ function LobbyHero({
         }}
       />
       <div className="relative">
-        <p className="stencil text-[9px] text-ash">이 코드로 들어온다</p>
-        <p className="readout mt-3 text-[clamp(2.75rem,13vw,4.5rem)] leading-none tracking-[0.22em] text-linen drop-shadow-[0_0_30px_rgba(0,255,102,0.35)]">
+        <p className="readout text-[clamp(2.75rem,13vw,4.5rem)] leading-none tracking-[0.22em] text-linen drop-shadow-[0_0_30px_rgba(0,255,102,0.35)]">
           {code}
         </p>
 
@@ -465,7 +464,7 @@ function LobbySay({
         ].join(' ')}
       >
         {mine?.is_ready && <CheckIcon className="h-3.5 w-3.5" />}
-        {mine?.is_ready ? '준비 완료' : '준비되면 누른다'}
+        {mine?.is_ready ? '준비 완료' : '준비'}
       </button>
     </Box>
   );
@@ -648,7 +647,7 @@ function Panel({
               value={text}
               onChange={(e) => dispatch(roomActions.answerChanged(e.target.value))}
               maxLength={300}
-              placeholder="답을 쓴다"
+              placeholder="답"
               className={INPUT}
             />
             <button type="submit" disabled={!canAnswerNow} className={PRIMARY_BUTTON}>
@@ -657,7 +656,7 @@ function Panel({
           </form>
         ) : (
           <p className="cut px-5 py-3.5 text-[12px] text-grime">
-            {me.answered ? '제출했다.' : '지목받은 사람이 답하는 중…'}
+            {me.answered ? '제출됨' : '지목받은 사람이 답하는 중…'}
           </p>
         )}
 
@@ -723,7 +722,7 @@ function Panel({
           />
         </div>
         {me.voted ? (
-          <p className="cut px-5 py-3.5 text-[12px] text-grime">투표했다.</p>
+          <p className="cut px-5 py-3.5 text-[12px] text-grime">투표함</p>
         ) : (
           <form
             className="flex gap-1.5"
@@ -853,7 +852,7 @@ function ChatPanel({
               if (!text.trim()) setActive(false);
             }}
             maxLength={200}
-            placeholder="말한다…"
+            placeholder="메시지"
             className={CHAT_INPUT}
           />
           <button type="submit" disabled={!canSend} aria-label="보내기" className={CHAT_SEND}>

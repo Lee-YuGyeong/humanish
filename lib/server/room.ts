@@ -8,7 +8,7 @@
 
 import { getServiceClient } from '@/lib/server/supabase';
 import { ApiError } from '@/lib/server/auth';
-import type { PublicPlayer, Room } from '@/lib/game/types';
+import type { Phase, PublicPlayer, Room } from '@/lib/game/types';
 
 /**
  * 방 정원의 범위. supabase/functions/room.sql의 default_room_capacity()·room_capacity(),
