@@ -56,11 +56,17 @@ $$;
 -- 코드 충돌은 unique 제약(23505)으로 튄다. 재시도는 호출자(lib/server/room.ts)가
 -- 다른 코드로 최대 5회 한다 (SPEC §16.4).
 --
--- ★ 인자가 하나 늘었다. create or replace로는 인자 목록을 바꿀 수 없으므로 먼저 지운다.
---   안 지우면 옛 create_room(text)가 남아 새 호출과 이름이 겹친다.
+-- ★ 인자가 늘 때마다 옛 시그니처를 지운다. create or replace로는 인자 목록을 바꿀 수
+--   없고, 안 지우면 옛 것이 남아 새 호출과 이름이 겹친다(오버로드 모호성).
+--   지운 목록은 supabase/checks.sh가 "옛 create_room이 남아 있지 않다"로 다시 확인한다.
 drop function if exists create_room(text);
+drop function if exists create_room(text, int);
 
-create or replace function create_room(p_code text, p_capacity int default null)
+create or replace function create_room(
+  p_code text,
+  p_capacity int default null,
+  p_name text default null
+)
 returns table (room_id uuid, player_id uuid, player_token text, seat int, nickname text)
 language plpgsql
 security definer
@@ -73,6 +79,7 @@ declare
   v_token  text;
   v_nick   text;
   v_cap    int;
+  v_name   text;
 begin
   v_cap := coalesce(p_capacity, default_room_capacity());
 
@@ -82,7 +89,21 @@ begin
     raise exception '정원은 3~8명이다' using errcode = 'P0001';
   end if;
 
-  insert into rooms (code, capacity) values (upper(p_code), v_cap) returning id into v_room;
+  /*
+   * 방 제목. 다듬는 일은 lib/server/room.ts 의 normalizeRoomName 이 이미 했다 —
+   * 여기 있는 건 그 경로를 타지 않은 호출(psql·다른 서비스)을 위한 두 번째 겹이다.
+   *
+   * ★ 공백만 들어오면 null 로 접는다. '' 를 넣으면 체크 제약(1자 이상)에 걸려
+   *   23514로 죽는데, 그건 사용자에게 보여줄 문장이 아니다.
+   */
+  v_name := nullif(btrim(coalesce(p_name, '')), '');
+  if v_name is not null and char_length(v_name) > 20 then
+    raise exception '방 제목은 20자까지다' using errcode = 'P0001';
+  end if;
+
+  insert into rooms (code, capacity, name)
+  values (upper(p_code), v_cap, v_name)
+  returning id into v_room;
 
   v_seat := pick_free_seat(v_room);
   v_nick := '익명' || v_seat;
@@ -252,18 +273,25 @@ $$;
 -- Supabase는 새 함수에 anon execute를 자동으로 깔아준다. security definer라
 -- 그대로 두면 anon이 남의 방에 마음대로 사람을 앉힐 수 있다. anon·authenticated를
 -- 명시해서 회수한다 (PUBLIC만 회수하면 안 없어진다).
--- 시그니처가 바뀐 함수는 여기도 같이 고친다. 빠뜨리면 새 함수에 Supabase가 자동으로
--- 깔아준 anon execute가 그대로 남는다. 옛 room_capacity() · create_room(text)는
--- 위에서 drop 했으므로 줄 자체를 지운다 — 없는 함수에 revoke를 걸면 에러다.
+--
+-- ★ 위에서 인자를 늘렸으면 **여기 이름도 같이 늘린다.** 이 블록은 create_room 의
+--   인자가 늘 때마다 두 번 다 빠뜨린 자리다. 증상이 조용하지 않다:
+--     · 없는 시그니처에 revoke 를 걸면 그냥 에러가 아니라 **파일이 거기서 멈춘다.**
+--       (`ERROR: function create_room(text, integer) does not exist`) 그 아래 grant 는
+--       한 줄도 돌지 않아 새 함수가 service_role 권한을 못 받는다.
+--     · 그래서 새 함수에는 Supabase 가 자동으로 깔아준 anon execute 가 남는다 — I9 구멍.
+--   default 가 붙은 인자도 **선언된 대로 전부** 적어야 한다. create_room(text,int) 로는
+--   create_room(text,int,text) 를 가리키지 못한다.
+-- 옛 room_capacity() 처럼 아예 사라진 함수는 줄 자체를 지운다 (같은 이유로 에러다).
 revoke all on function default_room_capacity()    from public, anon, authenticated;
 revoke all on function room_capacity(uuid)        from public, anon, authenticated;
 revoke all on function pick_free_seat(uuid)       from public, anon, authenticated;
-revoke all on function create_room(text, int)     from public, anon, authenticated;
+revoke all on function create_room(text,int,text)  from public, anon, authenticated;
 revoke all on function join_room(text)            from public, anon, authenticated;
 revoke all on function fill_with_bots(uuid)       from public, anon, authenticated;
 revoke all on function shuffle_seats(uuid)        from public, anon, authenticated;
 
-grant execute on function create_room(text, int)  to service_role;
+grant execute on function create_room(text,int,text) to service_role;
 grant execute on function join_room(text)         to service_role;
 grant execute on function fill_with_bots(uuid)    to service_role;
 grant execute on function shuffle_seats(uuid)     to service_role;

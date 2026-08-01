@@ -24,6 +24,14 @@ create table if not exists rooms (
   -- 상한 8: 좌석 그리드가 8칸 기준이다. 기술적 한계가 아니다.
   -- 만든 뒤에는 바뀌지 않는다. 좌석·역할이 이미 이 수를 전제로 배정돼 있다.
   capacity      int  not null default 5 check (capacity between 3 and 8),
+  -- 방 제목. 만들 때만 정하고 이후 바뀌지 않는다 (정원과 같은 취급).
+  --
+  -- ★ null 과 '' 을 구분하지 않는다 — 제약이 빈 문자열을 아예 막는다. "이름 없음"은
+  --   null 하나뿐이고, 화면은 그때 방 코드로 대신 부른다. 두 가지 빈 값이 있으면
+  --   "이름이 있는데 안 보이는" 상태가 생긴다.
+  -- ★ 20자는 lib/server/room.ts 의 MAX_ROOM_NAME_LEN 과 같은 값이어야 한다.
+  --   서버가 먼저 400으로 막으므로 이 제약은 우회 경로를 위한 두 번째 겹이다.
+  name          text check (name is null or char_length(name) between 1 and 20),
   phase         text not null default 'lobby'
                 check (phase in ('lobby','question','target','chat','vote','reveal','replay')),
   -- 전환마다 +1. 중복 전환을 막는 낙관적 잠금 키다 (I6). 라운드 번호가 아니다.
@@ -48,6 +56,13 @@ alter table rooms add column if not exists roster_seq int not null default 0;
 alter table rooms add column if not exists capacity int not null default 5;
 alter table rooms drop constraint if exists rooms_capacity_check;
 alter table rooms add constraint rooms_capacity_check check (capacity between 3 and 8);
+
+-- 방 제목도 나중에 들어왔다. 정원과 같은 이유로 컬럼과 제약을 따로 붙인다.
+-- 이미 있던 방은 null(이름 없음)이 되고, 화면이 코드로 대신 부른다.
+alter table rooms add column if not exists name text;
+alter table rooms drop constraint if exists rooms_name_check;
+alter table rooms add constraint rooms_name_check
+  check (name is null or char_length(name) between 1 and 20);
 
 ------------------------------------------------------------------------------
 -- players

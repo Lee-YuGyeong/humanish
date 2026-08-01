@@ -55,6 +55,21 @@ schema_checks() {
   check "rooms에 capacity 컬럼이 있다 (§17.6)" "1" \
     "$(q "select count(*) from information_schema.columns where table_name='rooms' and column_name='capacity';")"
 
+  # 방 제목. 없으면 방 만들기가 42703(그런 컬럼 없음)으로 죽는다.
+  check "rooms에 name 컬럼이 있다" "1" \
+    "$(q "select count(*) from information_schema.columns where table_name='rooms' and column_name='name';")"
+
+  # ★ 컬럼만 보면 부족하다. 제약이 빠지거나 하한이 빠지면 ''(빈 문자열)이 들어가고,
+  #   화면은 "이름이 있는데 안 보이는" 방을 그린다 — null 로 접혀야 코드로 대신 부른다.
+  #
+  # ★ 여기서 시험 삼아 insert 하지 않는다. 이 파일은 apply.sh 를 통해 **배포 DB에서도**
+  #   돈다. 대신 제약의 정의를 읽는다 — Postgres 가 between 을 >= / <= 로 펼쳐 두므로
+  #   양쪽 경계가 살아 있는지까지 확인된다. 이름만 세는 검사로는 못 잡는 자리다.
+  check "rooms.name 에 1~20자 제약이 걸려 있다" "t" \
+    "$(q "select (d like '%char_length%' and d like '%>= 1%' and d like '%<= 20%')
+            from (select pg_get_constraintdef(oid) d from pg_constraint
+                   where conname = 'rooms_name_check') t;")"
+
   # 대기방 프리셋 발화 (§15-3-결정). 넷이 다 있어야 쿨다운·총량이 성립한다.
   check "players에 대기방 컬럼 4개가 있다" "4" \
     "$(q "select count(*) from information_schema.columns where table_name='players'
@@ -137,7 +152,7 @@ schema_checks() {
   for sig in \
     "advance_phase(uuid,int,uuid)" \
     "advance_expired_rooms(int)" \
-    "create_room(text,int)" \
+    "create_room(text,int,text)" \
     "join_room(text)" \
     "fill_with_bots(uuid)" \
     "shuffle_seats(uuid)" \
@@ -149,8 +164,13 @@ schema_checks() {
     "server_now()"; do
     check "${sig} 가 있다" "t" "$(q "select (to_regprocedure('$sig') is not null);")"
   done
-  check "옛 create_room(text)이 남아 있지 않다" "f" \
-    "$(q "select (to_regprocedure('create_room(text)') is not null);")"
+  # ★ 시그니처가 바뀔 때마다 **옛 것이 지워졌는지**를 같이 본다. 남아 있으면 인자
+  #   개수가 다른 오버로드가 공존하고, PostgREST가 어느 쪽을 부를지 정하지 못해
+  #   PGRST203으로 죽는다. 화면에는 "방 생성 실패"만 뜬다.
+  for old in "create_room(text)" "create_room(text,int)"; do
+    check "옛 ${old} 이 남아 있지 않다" "f" \
+      "$(q "select (to_regprocedure('$old') is not null);")"
+  done
 
   echo ""
   echo "── anon 권한 (I1, I9) ──"
@@ -176,7 +196,7 @@ schema_checks() {
     "cleanup_stale_rooms(interval)" \
     "bot_reply(uuid,int)" \
     "send_message(uuid,uuid,text,int)" \
-    "create_room(text,int)" \
+    "create_room(text,int,text)" \
     "join_room(text)" \
     "fill_with_bots(uuid)" \
     "shuffle_seats(uuid)" \

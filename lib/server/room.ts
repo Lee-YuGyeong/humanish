@@ -24,6 +24,72 @@ export const MAX_ROOM_CAPACITY = 8;
 export const DEFAULT_ROOM_CAPACITY = 5;
 
 /**
+ * 방 제목 길이 상한. rooms.name 체크 제약(1~20)과 같아야 한다.
+ *
+ * ★ 여기서 세는 것은 JS 문자열 길이(UTF-16 단위)이고 Postgres는 코드포인트를 센다.
+ *   이모지처럼 서로게이트 쌍인 글자는 JS에서 2, PG에서 1이라 **여기가 항상 더 엄격하다.**
+ *   즉 여기를 통과하면 제약에는 절대 안 걸린다. 반대였다면 23514가 500으로 튀었을 것이다.
+ */
+export const MAX_ROOM_NAME_LEN = 20;
+
+/**
+ * 방 제목을 다듬는다. 순수 함수다 (tests/lib/server/room-name.test.ts).
+ *
+ * ┌─ 왜 그냥 trim 이 아닌가 ───────────────────────────────────────────────────┐
+ * │ 방 제목은 **남이 만든 문자열이 내 화면의 목록에 섞여 들어오는 유일한 통로**  │
+ * │ 다. 그래서 보이지 않는 글자를 턴다.                                        │
+ * │                                                                           │
+ * │  · \p{Cc} 제어문자 — 줄바꿈·탭. 한 줄짜리 자리에 두 줄이 들어오면 목록의    │
+ * │    줄 높이가 방마다 달라진다. **지우지 않고 공백으로 바꾼다** — 아래 참고.   │
+ * │  · \p{Cf} 서식문자 — 이쪽이 진짜 이유다. U+202E(RLO) 하나면 제목이 거꾸로   │
+ * │    렌더되고, U+200B(ZWSP)를 끼우면 눈으로 똑같은 제목을 얼마든지 만들 수    │
+ * │    있다. 남을 사칭하는 방을 만드는 가장 싼 방법이다. 이건 **지운다** —      │
+ * │    글자 사이에 끼우라고 있는 것이라 공백으로 바꾸면 없던 띄어쓰기가 생긴다. │
+ * │                                                                           │
+ * │ 대가: 이모지 결합(👨‍👩‍👦)이 낱개로 흩어진다. 20자짜리 방 제목에서 치를 만한  │
+ * │ 값이라고 봤다.                                                            │
+ * └───────────────────────────────────────────────────────────────────────────┘
+ *
+ * @returns 이름이 없으면 null. **빈 문자열은 절대 돌려주지 않는다** — 그 두 가지가
+ *          다 존재하면 "이름이 있는데 안 보이는" 방이 생긴다 (lib/game/types.ts).
+ * @throws  ApiError(400) 길이가 넘칠 때. 화면은 maxLength로 이미 막지만 그건 브라우저뿐이다.
+ */
+export function normalizeRoomName(raw: unknown): string | null {
+  if (typeof raw !== 'string') return null;
+
+  const cleaned = raw
+    /*
+     * ★ 제일 먼저 NFC 로 합친다. 길이를 **재기 전에** 해야 한다.
+     *
+     * 한글은 같은 글자를 두 가지로 적을 수 있다. 키보드로 친 '한'은 합쳐진 한 글자
+     * (U+D55C)지만, 맥에서 복사해 온 '한'은 자모가 풀린 세 글자(ㅎ+ㅏ+ㄴ)다. 눈에는
+     * 똑같고 length 만 3배다 — '초보 환영합니다'가 8자가 아니라 18자로 세어진다.
+     * 합치지 않으면 **열 글자짜리 제목을 붙여넣었을 뿐인데 "20자까지다"로 거절당한다.**
+     *
+     * 저장 모양이 하나로 정해지는 것도 여기서 같이 얻는다. 목록의 제목 검색이
+     * 눈에 같아 보이는 둘을 실제로 같게 견줄 수 있는 근거다 (app/main/lobby.tsx의
+     * foldForSearch — 찾는 말에도 똑같이 NFC 를 건다).
+     */
+    .normalize('NFC')
+    // ★ 두 부류를 **같이 지우면 안 된다.** 서식문자는 지우는 게 맞지만(글자 사이를
+    //   메우라고 있는 것이라), 제어문자까지 지우면 '초보\n방' 이 '초보방' 이 되어
+    //   원래 없던 단어가 만들어진다. 제어문자는 자리를 차지하던 글자이므로 공백을
+    //   남긴다 — 그 뒤 아래 줄이 어차피 한 칸으로 접는다.
+    .replace(/\p{Cf}/gu, '')
+    .replace(/\p{Cc}/gu, ' ')
+    // 남은 공백은 한 칸으로 접는다. \s 는 U+3000(전각 공백)도 잡는다 —
+    // 그게 없으면 전각 공백만으로 "빈 것처럼 보이는 제목"을 만들 수 있다.
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  if (!cleaned) return null;
+  if (cleaned.length > MAX_ROOM_NAME_LEN) {
+    throw new ApiError(400, `방 제목은 ${MAX_ROOM_NAME_LEN}자까지다`);
+  }
+  return cleaned;
+}
+
+/**
  * 시작에 필요한 최소 인원(사람만). 정원 하한 3의 근거를 **실제로 강제하는** 값이다.
  *
  * ★ 이게 없으면 방장 혼자서도 시작 버튼이 눌린다. 그 판은 게임이 아니다 —
@@ -72,7 +138,8 @@ const UNIQUE_VIOLATION = '23505';
  * Room 하나를 통째로 읽는 컬럼 목록. 화면이 Room 타입으로 받는 곳은 전부 이걸 쓴다.
  * 여기서 capacity를 빠뜨리면 room.capacity가 undefined가 되어 좌석 그리드가 0칸이 된다.
  */
-const ROOM_COLUMNS = 'id, code, capacity, phase, phase_seq, phase_ends_at, round, host_id, roster_seq';
+const ROOM_COLUMNS =
+  'id, code, name, capacity, phase, phase_seq, phase_ends_at, round, host_id, roster_seq';
 
 async function fetchRoom(roomId: string): Promise<Room> {
   const { data, error } = await getServiceClient()
@@ -109,8 +176,9 @@ function toResult(row: SeatRow, room: Room): JoinResult {
  * 코드가 겹치면 다른 코드로 CODE_RETRY_LIMIT회까지 다시 시도한다 (SPEC §16.4, §14.4).
  *
  * @param capacity 3~8. 생략하면 SQL 쪽 기본값(DEFAULT_ROOM_CAPACITY)이 들어간다.
+ * @param name     방 제목. 생략하거나 공백뿐이면 이름 없는 방이 된다(null).
  */
-export async function createRoom(capacity?: number): Promise<JoinResult> {
+export async function createRoom(capacity?: number, name?: unknown): Promise<JoinResult> {
   const db = getServiceClient();
 
   // 범위는 rooms.capacity check로도 막히지만 그건 23514라 500으로 보인다.
@@ -121,10 +189,17 @@ export async function createRoom(capacity?: number): Promise<JoinResult> {
     }
   }
 
+  // 코드 재시도 루프 **밖에서** 한 번만 다듬는다. 안에서 하면 같은 400을 5번 던진다.
+  const roomName = normalizeRoomName(name);
+
   for (let attempt = 1; attempt <= CODE_RETRY_LIMIT; attempt += 1) {
     const code = generateRoomCode();
     // p_capacity가 null이면 SQL이 default_room_capacity()를 쓴다.
-    const { data, error } = await db.rpc('create_room', { p_code: code, p_capacity: capacity ?? null });
+    const { data, error } = await db.rpc('create_room', {
+      p_code: code,
+      p_capacity: capacity ?? null,
+      p_name: roomName,
+    });
 
     if (!error) {
       const row = (data as SeatRow[])[0];

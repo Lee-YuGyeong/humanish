@@ -144,8 +144,20 @@ export function advancePhase(roomId: string, expectedSeq: number): Promise<Advan
   });
 }
 
-export function createRoom(capacity?: number): Promise<RoomAndPlayer> {
-  return postJson<RoomAndPlayer>('/api/room', capacity == null ? {} : { capacity });
+/**
+ * 방을 만든다.
+ *
+ * ★ 값이 없는 키는 아예 싣지 않는다. `{ name: undefined }` 는 JSON.stringify 에서
+ *   조용히 사라지지만 `{ name: '' }` 는 그대로 나가고, 서버는 그걸 다듬어 null 로
+ *   접는다 — 결과는 같지만 요청만 봐서는 "이름을 비웠다"와 "안 보냈다"가 구분되지
+ *   않는다. 보내는 쪽에서 정리해 둔다.
+ */
+export function createRoom(capacity?: number, name?: string): Promise<RoomAndPlayer> {
+  const body: { capacity?: number; name?: string } = {};
+  if (capacity != null) body.capacity = capacity;
+  const trimmed = name?.trim();
+  if (trimmed) body.name = trimmed;
+  return postJson<RoomAndPlayer>('/api/room', body);
 }
 
 export function joinRoom(code: string): Promise<RoomAndPlayer> {

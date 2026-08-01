@@ -215,8 +215,16 @@ export function RoomView({ code }: { code: string }) {
             >
               <ArrowLeftIcon className="h-4 w-4" />
             </Link>
+            {/*
+              제목이 있으면 라벨 자리를 제목이 차지한다. 없으면 예전 그대로 'room'.
+              코드는 어느 쪽이든 남는다 — 방을 가리키는 이름은 결국 코드다.
+            */}
             <div className="min-w-0">
-              <p className="stencil text-[8px] text-ash">room</p>
+              {room.name ? (
+                <p className="truncate text-[11px] leading-tight text-dust">{room.name}</p>
+              ) : (
+                <p className="stencil text-[8px] text-ash">room</p>
+              )}
               <h1 className="readout truncate text-xl tracking-[0.3em] text-linen">{room.code}</h1>
             </div>
           </div>
