@@ -1,8 +1,17 @@
 /**
- * 내 프로필 — 이름 짓기 · 바꾸기. 소유: A (SPEC §15-2-결정)
+ * 내 프로필 — 이름 짓기. 소유: A (SPEC §15-2-결정)
  *
  * GET  /api/profile  →  { profile, suggested }
- * POST /api/profile  { display_name }  →  { profile }
+ * POST /api/profile  { display_name }  →  { profile }   ← **계정당 한 번뿐이다**
+ *
+ * ┌─ 이름은 한 번 짓고 끝이다 ─────────────────────────────────────────────────┐
+ * │ 두 번째 POST 는 409 다. 자물쇠는 두 겹이고 **둘 다 있어야 한다**:          │
+ * │   1. 여기 — 이미 있으면 쓰기 전에 끊는다. 사용자에게 문장을 돌려줄 수      │
+ * │      있는 자리가 여기뿐이다.                                               │
+ * │   2. profiles_name_frozen 트리거 (supabase/schema.sql) — service role 은   │
+ * │      RLS 를 통과하므로 정책으로는 못 막는다. 프로필을 건드리는 경로가      │
+ * │      나중에 하나 더 생겨도 트리거는 거기에도 걸린다.                       │
+ * └────────────────────────────────────────────────────────────────────────────┘
  *
  * ┌─ 이 이름이 어디에 나오는가 ────────────────────────────────────────────────┐
  * │ 대기방 · (나중에) 랭킹 · 친구. **게임 화면에는 안 나온다.**                 │
@@ -27,6 +36,8 @@ export const MAX_NAME_LEN = 20;
 
 /** lower(display_name) 유니크 인덱스 이름 (supabase/schema.sql). */
 const NAME_TAKEN = 'profiles_display_name_key';
+/** 기본키(user_id) 충돌 = 이미 이름을 지은 계정이다. 아래 ALREADY_NAMED 주석 참고. */
+const ALREADY_NAMED = 'profiles_pkey';
 const UNIQUE_VIOLATION = '23505';
 
 const PROFILE_COLUMNS = 'user_id, display_name, avatar_url, created_at';
@@ -133,21 +144,48 @@ export async function POST(req: Request): Promise<Response> {
       throw new ApiError(409, '먼저 구글을 연결해야 이름을 지을 수 있다');
     }
 
+    const db = getServiceClient();
+
+    /*
+     * 이미 지었으면 여기서 끝난다.
+     *
+     * ★ 이 조회가 자물쇠는 아니다. 두 요청이 동시에 오면 둘 다 "없다"를 보고 지나간다 —
+     *   그 경우는 아래 insert 의 기본키 충돌이 잡는다. 여기서 먼저 보는 이유는
+     *   **사용자에게 돌려줄 문장이 다르기 때문**이다. "이미 쓰는 이름"과
+     *   "이미 이름이 있다"는 화면에서 할 일이 정반대다(다른 이름을 고르기 / 그냥 나가기).
+     */
+    const { data: existing, error: lookupError } = await db
+      .from('profiles')
+      .select('user_id')
+      .eq('user_id', user.id)
+      .maybeSingle();
+
+    if (lookupError) throw new ApiError(500, `프로필 조회 실패: ${lookupError.message}`);
+    if (existing) throw new ApiError(409, '이름은 한 번만 지을 수 있다');
+
     const { display_name } = await readJson<Body>(req);
     const name = normalizeDisplayName(display_name);
 
-    const { data, error } = await getServiceClient()
+    const { data, error } = await db
       .from('profiles')
-      // ★ user_id 는 세션에서 되찾은 값이다. 본문에서 오지 않는다 (I9).
-      //   사진은 사용자가 고르는 값이 아니라 구글이 준 것이라 매번 최신으로 덮는다.
-      .upsert(
-        { user_id: user.id, display_name: name, avatar_url: avatarFrom(await googleMeta()) },
-        { onConflict: 'user_id' },
-      )
+      /*
+       * ★ upsert 가 아니라 insert 다. upsert 면 두 번째 요청이 **이름을 덮어쓴다** —
+       *   트리거가 그걸 막아주긴 하지만, 라우트가 하려던 일과 DB 가 허락하는 일이
+       *   어긋난 채로 남는다. 여기서도 "만들기"만 한다.
+       *
+       * ★ user_id 는 세션에서 되찾은 값이다. 본문에서 오지 않는다 (I9).
+       * ★ 사진은 사용자가 고르는 값이 아니라 구글이 준 것이다. 이름과 함께 한 번
+       *   박히고, 이후 갱신은 이 라우트가 하지 않는다 (트리거는 avatar_url 을 안 막는다).
+       */
+      .insert({ user_id: user.id, display_name: name, avatar_url: avatarFrom(await googleMeta()) })
       .select(PROFILE_COLUMNS)
       .single();
 
     if (error) {
+      // 위 조회를 지나온 동시 요청. 둘 중 하나만 이름을 갖는다.
+      if (error.message.includes(ALREADY_NAMED)) {
+        throw new ApiError(409, '이름은 한 번만 지을 수 있다');
+      }
       // lower(display_name) 유니크에 걸렸다. 사용자에게 보여줄 문장으로 바꾼다.
       if (error.code === UNIQUE_VIOLATION || error.message.includes(NAME_TAKEN)) {
         throw new ApiError(409, '이미 쓰는 이름이다. 다른 이름을 골라야 한다');

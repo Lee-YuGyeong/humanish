@@ -11,14 +11,20 @@
  * │   2. public_players 뷰가 phase='lobby' 일 때만 내려준다                     │
  * └────────────────────────────────────────────────────────────────────────────┘
  *
+ * ★ **한 번 짓고 끝이다** (SPEC §15-2-결정). 이미 이름이 있으면 이 화면은 아예
+ *   그리지 않고 돌려보낸다 — 익명 계정을 돌려보내는 것과 같은 자리다. 못 바꾸는데
+ *   입력칸을 보여주면, 고쳐 놓고 눌렀을 때 409 를 보게 된다.
+ *   진짜 자물쇠는 여기가 아니라 서버와 트리거다 (app/api/profile, schema.sql).
+ *
  * ★ 화면은 로그인(components/login-screen.tsx)과 같은 뼈대다 — 같은 머리말 높이,
  *   같은 판, 같은 초록. 로그인 → 이름 → 로비가 한 흐름이라 중간에서 화면 언어가
  *   바뀌면 안 된다. 설명은 최소로 둔다: 여기서 물어보는 건 이름 하나뿐이다.
+ *   **다만 "못 바꾼다"는 뺄 수 없다** — 되돌릴 수 없는 문 앞에서는 그게 필요한 말이다.
  */
 'use client';
 
 import { useRouter, useSearchParams } from 'next/navigation';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 import { saveDisplayName } from '@/lib/api/profile';
 import { useInvalidateAuthUser, useAuthUser, useProfile } from '@/lib/queries/auth';
@@ -47,27 +53,48 @@ export function NicknameForm() {
   const [busy, setBusy] = useState(false);
   const [failed, setFailed] = useState<string | null>(null);
 
+  /*
+   * 방금 저장했다. 아래 「이미 이름이 있다」 효과가 이걸 보고 비켜선다.
+   *
+   * ★ 없으면 이렇게 된다: 저장 → invalidate → 프로필이 생긴 걸 보고 그 효과가
+   *   먼저 replace(next) 를 부른다 → ?auth=linked 가 사라진다. 도착 화면이
+   *   "이었다"는 표시를 못 받는다. state 가 아니라 ref 인 이유는 이 값이 화면을
+   *   다시 그릴 이유가 없어서다.
+   */
+  const saved = useRef(false);
+
   // 구글이 준 이름을 미리 채운다. **제안일 뿐이라 지우고 새로 쓸 수 있다.**
   // 사용자가 한 글자라도 건드린 뒤에는 덮어쓰지 않는다.
+  // 이미 이름이 있는 경우는 여기 없다 — 아래에서 화면째 돌려보낸다.
   useEffect(() => {
     if (touched || !profileData) return;
-    setName(profileData.profile?.display_name ?? profileData.suggested ?? '');
+    setName(profileData.suggested ?? '');
   }, [profileData, touched]);
 
   const loading = userLoading || profileLoading;
   const trimmed = name.trim();
 
-  // 익명 계정에는 이름을 달지 않는다 (라우트가 409로 막는다). 여기까지 왔다는 것은
-  // 대개 주소를 직접 친 경우다 — 조용히 돌려보낸다.
+  /*
+   * 돌려보내는 자리 둘. 어느 쪽이든 이 화면에 볼일이 없는 사람이다.
+   *
+   *   · 익명 계정 — 이름을 달지 않는다 (라우트가 409로 막는다).
+   *   · 이미 이름이 있다 — **한 번 짓고 끝이다** (SPEC §15-2-결정).
+   *     로비에서 이름을 눌러 들어오는 옛 링크가 여기로 온다.
+   *
+   * 둘 다 대개 주소를 직접 쳤거나 오래된 링크를 밟은 경우다. 설명하지 않고 조용히
+   * 돌려보낸다 — 여기서 할 수 있는 일이 없는 화면을 보여줄 이유가 없다.
+   */
   useEffect(() => {
-    if (!loading && user && user.isAnonymous) router.replace(next);
-  }, [loading, user, router, next]);
+    if (loading || saved.current) return;
+    if (user?.isAnonymous || profileData?.profile) router.replace(next);
+  }, [loading, user, profileData, router, next]);
 
   const submit = async () => {
     setBusy(true);
     setFailed(null);
     try {
       await saveDisplayName(trimmed);
+      saved.current = true;
       invalidate();
       router.replace(`${next}${next.includes('?') ? '&' : '?'}auth=linked`);
     } catch (e) {
@@ -138,16 +165,19 @@ export function NicknameForm() {
               disabled={!trimmed || busy || loading}
               onClick={() => void submit()}
             >
-              {busy ? '저장 중…' : '계속하기'} <ArrowIcon />
+              {busy ? '저장 중…' : '이 이름으로 정하기'} <ArrowIcon />
             </button>
           </div>
 
           {/*
-            남긴 한 줄. 본명을 적어도 게임 중에는 안 뜬다는 사실은 여기서만 말할 수 있다 —
-            나머지 설명(나중에 바꿀 수 있다 · 중복 불가)은 뺐다. 중복은 눌렀을 때
-            .alert 로 말한다.
+            남긴 두 문장. 둘 다 **되돌릴 수 없는 사실**이라 누르기 전에 말해야 한다.
+            나머지 설명(중복 불가 등)은 뺐다 — 중복은 눌렀을 때 .alert 로 말한다.
+            앞 문장만 밝게 둔다. 뒤 문장은 안심시키는 말이라 같은 무게로 읽히면 안 된다.
           */}
-          <p className="mt-4 text-[0.72rem]" style={{ color: 'var(--dim)' }}>
+          <p className="mt-4 text-[0.72rem] leading-relaxed" style={{ color: 'var(--dim)' }}>
+            <span className="font-semibold" style={{ color: 'var(--text)' }}>
+              한 번 정하면 바꿀 수 없다.
+            </span>{' '}
             게임이 시작되면 익명으로 바뀐다.
           </p>
         </div>

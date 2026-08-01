@@ -92,6 +92,16 @@ schema_checks() {
   check "profiles.display_name 이 대소문자 무시 유니크다" "1" \
     "$(q "select count(*) from pg_indexes where tablename='profiles' and indexname='profiles_display_name_key';")"
 
+  # ★ 이름은 한 번 짓고 끝이다 (§15-2-결정). **정책으로는 못 막는다** — 쓰기는 전부
+  #   service role 서버를 지나고(I9), service role 은 RLS 를 통과한다. 트리거만이
+  #   모든 쓰기 경로에 걸린다. 여기가 0이면 라우트의 검사 하나에만 기대는 상태다.
+  #
+  #   ★ 'profiles'::regclass 로 묻지 않는다. 테이블이 없으면 캐스팅이 **에러**라
+  #     pipefail 아래서 스크립트가 그 자리에서 죽는다 (anon_can 과 같은 이유).
+  check "이름을 바꾸지 못하게 막는 트리거가 있다" "1" \
+    "$(q "select count(*) from pg_trigger t join pg_class c on c.oid = t.tgrelid
+           where c.relname = 'profiles' and t.tgname = 'profiles_name_frozen';")"
+
   # ★ 한 방에 같은 이름이 둘이면 대기방에서 누가 누구인지 못 가린다.
   #   **부분 인덱스**여야 한다 — 이름 없는 사람은 여럿이어도 되고, shuffle_seats 가
   #   전원을 null 로 만들 때 서로 부딪히면 게임 시작이 통째로 죽는다.
