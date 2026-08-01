@@ -24,7 +24,7 @@ import type { PublicPlayer, Question, Room } from '@/lib/game/types';
  * ★ capacity 를 빠뜨리면 room.capacity 가 undefined 가 되어 좌석 그리드가 0칸이 된다
  *   (SPEC §17.6). select('*') 로 바꾸지 않는다 — 컬럼이 늘 때 뭐가 딸려오는지 모른다.
  */
-const ROOM_COLUMNS = 'id, code, capacity, phase, phase_seq, phase_ends_at, round, host_id, roster_seq';
+const ROOM_COLUMNS = 'id, code, name, capacity, phase, phase_seq, phase_ends_at, round, host_id, roster_seq';
 
 export interface AnswerRow {
   id: string;

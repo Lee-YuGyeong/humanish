@@ -28,6 +28,15 @@ export interface Room {
    * 상한이 8인 이유는 좌석 화면이 8칸 기준으로 그려져 있어서다.
    */
   capacity: number;
+  /**
+   * 방 제목. 방을 만들 때 정하고 이후 바뀌지 않는다 (정원과 같은 취급).
+   *
+   * ★ 이름이 없으면 **null 하나뿐이다.** 빈 문자열은 오지 않는다 — 서버가
+   *   normalizeRoomName 에서 접고 DB 제약이 한 번 더 막는다. 두 가지 빈 값이
+   *   있으면 "이름이 있는데 안 보이는" 방이 생긴다.
+   * ★ 화면은 이름이 없을 때 방 코드로 대신 부른다.
+   */
+  name: string | null;
   phase: Phase;
   phase_seq: number; // 전환마다 +1. 중복 전환 방지 키
   phase_ends_at: string | null; // ISO. null이면 무기한(lobby)
