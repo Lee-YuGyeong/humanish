@@ -1,0 +1,139 @@
+/*
+ * 로그인 화면 표면 — /main 로비와 같은 green 글래스다.
+ *
+ * ┌─ 왜 lobby.module.css 를 import 하지 않는가 ────────────────────────────┐
+ * │ 그 파일은 app/main/ 안에 있고 그 폴더는 C 소유다 (CLAUDE.md).           │
+ * │ 남의 폴더에서 끌어다 쓰면 그쪽이 고칠 때마다 이 화면이 같이 흔들리고,   │
+ * │ 그 사실이 어느 파일에도 안 적힌다.                                      │
+ * │                                                                        │
+ * │ 그래서 **토큰을 옮겨 적는다.** 값이 어긋나면 두 화면의 초록이 달라져서   │
+ * │ 눈에 바로 보인다 — 조용히 깨지지 않는다. 로비 팔레트를 바꾸면 여기도    │
+ * │ 같이 고친다 (app/main/lobby.module.css 의 .root).                       │
+ * └────────────────────────────────────────────────────────────────────────┘
+ *
+ * 창고 시네마(globals.css 의 .case · .stencil)를 쓰지 않는다. 그건 방 화면의
+ * 언어이고, 로그인은 로비로 이어지는 문이라 로비 쪽에 붙는다.
+ */
+
+.root {
+  --bg2: #08080a;
+  --surface: #121212;
+  --border: rgba(42, 42, 42, 0.7);
+  --border2: rgba(60, 60, 60, 0.9);
+  --text: #e5e5e5;
+  --muted: #d8d8d8;
+  --dim: #a3a3a3;
+  --accent: #35d07f;
+  --accent-dim: rgba(53, 208, 127, 0.12);
+  --btn: #1f9d5b;
+  --btn-hover: #27b869;
+  --btn-text: #f2fff7;
+  --btn-glow: rgba(31, 157, 91, 0.35);
+  --red: #ef4444;
+
+  font-family: var(--font-space), var(--font-plex-sans), system-ui, sans-serif;
+  /* 로비와 같은 결의 초록 웅덩이 두 개 — 우상단(밝게) · 좌하단(깊게) */
+  background:
+    radial-gradient(42% 42% at 100% 0%, rgba(53, 208, 127, 0.07), transparent 70%),
+    radial-gradient(36% 36% at 0% 100%, rgba(31, 157, 91, 0.06), transparent 70%),
+    var(--bg2);
+  color: var(--text);
+  position: relative;
+  z-index: 1;
+}
+
+/* layout.tsx 의 창고 배경(.room, z-index:-1)을 덮는다. 반드시 음수 z-index. */
+.backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  background: var(--bg2);
+  pointer-events: none;
+}
+
+.noise {
+  position: fixed;
+  inset: 0;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 512 512' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.75' numOctaves='4' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  opacity: 0.03;
+  pointer-events: none;
+  z-index: 90;
+}
+
+/* CRT 주사선. 로비·인트로와 같은 3px 간격 */
+.scanlines {
+  position: fixed;
+  inset: 0;
+  background: repeating-linear-gradient(
+    to bottom,
+    transparent,
+    transparent 3px,
+    rgba(0, 0, 0, 0.03) 3px,
+    rgba(0, 0, 0, 0.03) 4px
+  );
+  pointer-events: none;
+  z-index: 89;
+}
+
+.label {
+  font-size: 0.6rem;
+  letter-spacing: 0.3em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 8px var(--accent);
+  display: inline-block;
+  flex-shrink: 0;
+}
+
+/* 콘솔 판 — 로비의 목록·만들기 판과 같은 표면 */
+.panel {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 0.9rem;
+  box-shadow: 0 20px 60px -30px rgba(0, 0, 0, 0.9);
+}
+
+/* 큰 CTA. 로비의 .btnAccent 와 같은 값이다 */
+.btn {
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.7rem;
+  border-radius: 0.75rem;
+  padding: 0.95rem 2rem;
+  width: 100%;
+  border: 1px solid var(--btn);
+  background: var(--btn);
+  color: var(--btn-text);
+  transition:
+    background-color 0.2s,
+    border-color 0.2s,
+    box-shadow 0.2s;
+}
+.btn:hover:not(:disabled) {
+  background: var(--btn-hover);
+  border-color: var(--btn-hover);
+  box-shadow: 0 0 16px var(--btn-glow);
+}
+.btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+.alert {
+  font-size: 0.72rem;
+  line-height: 1.6;
+  color: var(--red);
+}

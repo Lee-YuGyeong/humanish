@@ -1,7 +1,9 @@
 /**
  * 구글에서 돌아오는 자리. 소유: A (SPEC §15-2-결정)
  *
- * GET /api/auth/callback?code=...&next=/room/ABCD
+ * GET /api/auth/callback?code=...
+ *
+ * 돌아갈 곳(next)은 쿼리가 아니라 쿠키로 온다 — 아래 readNext 주석에 이유가 있다.
  *
  * ┌─ 왜 app/auth/ 가 아니라 app/api/auth/ 인가 ────────────────────────────────┐
  * │ 폴더 소유권이다. app/(api 제외)는 C 소유고 여기는 A 소유다 (CLAUDE.md).    │
@@ -14,10 +16,15 @@
  *   3. 이름을 실제로 만드는 것은 여기가 아니라 app/api/profile 이다
  */
 
+import { cookies } from 'next/headers';
+
 import { apiError } from '@/lib/server/auth';
 import { getServerAuthClient, getServiceClient } from '@/lib/server/supabase';
 
 export const dynamic = 'force-dynamic';
+
+/** lib/auth/session.ts 의 NEXT_COOKIE 와 같은 이름이어야 한다. */
+const NEXT_COOKIE = 'hp_next';
 
 /**
  * 돌아갈 경로를 고른다.
@@ -27,15 +34,36 @@ export const dynamic = 'force-dynamic';
  *   남의 사이트로 가고, 주소창에는 그럴듯한 로그인 화면이 뜬다.
  *   '/'로 시작하고 '//'로 시작하지 않는 것만 통과시킨다.
  */
-function safeNext(raw: string | null): string {
-  if (!raw || !raw.startsWith('/') || raw.startsWith('//')) return '/';
+function safeNext(raw: string | null | undefined): string {
+  if (!raw || !raw.startsWith('/') || raw.startsWith('//')) return '/main';
   return raw;
+}
+
+/**
+ * 돌아갈 곳. **쿼리가 아니라 쿠키에서 읽는다** (lib/auth/session.ts 의 rememberNext).
+ *
+ * redirect_to 에 쿼리를 붙이면 Supabase 의 허용 목록과 글자가 달라지고, 안 맞으면
+ * 에러 없이 Site URL(배포 주소)로 떨어진다 — 로컬에서 로그인했는데 배포 사이트로
+ * 튕기는 증상이 그것이었다.
+ *
+ * ?next= 도 아직 읽는다. 옛 링크가 남아 있을 수 있고, 읽어서 손해 볼 것이 없다.
+ */
+async function readNext(url: URL): Promise<string> {
+  const jar = await cookies();
+  const fromCookie = jar.get(NEXT_COOKIE)?.value;
+  return safeNext(fromCookie ? decodeURIComponent(fromCookie) : url.searchParams.get('next'));
+}
+
+/** 한 번 쓰고 지운다. 남겨두면 다음 로그인이 엉뚱한 곳으로 간다. */
+async function clearNext(): Promise<void> {
+  (await cookies()).delete(NEXT_COOKIE);
 }
 
 export async function GET(req: Request): Promise<Response> {
   const url = new URL(req.url);
-  const next = safeNext(url.searchParams.get('next'));
   const origin = url.origin;
+  const next = await readNext(url);
+  await clearNext();
 
   try {
     // 사용자가 구글 화면에서 취소하면 code 없이 error 만 붙어 돌아온다.

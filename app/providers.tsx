@@ -10,9 +10,7 @@
  */
 
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { useEffect, useState } from 'react';
-
-import { ensureSession } from '@/lib/auth';
+import { useState } from 'react';
 
 function createQueryClient(): QueryClient {
   return new QueryClient({
@@ -43,32 +41,18 @@ function createQueryClient(): QueryClient {
   });
 }
 
-/**
- * 익명 계정을 깐다 (SPEC §15-2-결정).
+/*
+ * ★ 익명 계정을 자동으로 만들지 않는다 (SPEC §15-2-결정).
  *
- * ┌─ 왜 여기인가 ──────────────────────────────────────────────────────────────┐
- * │ 앱의 모든 화면이 이 프로바이더를 지난다. 방에 들어가기 **전에** 세션이     │
- * │ 있어야 /api/room/join 이 players.user_id 를 찍을 수 있다 — 방 화면에서     │
- * │ 부르면 이미 늦다.                                                          │
- * └────────────────────────────────────────────────────────────────────────────┘
+ *   한때 여기서 signInAnonymously() 를 걸었다. 로그인 화면 없이 놀게 하려던
+ *   설계였고, 그 결정이 뒤집혔다 — 이제 게임에 들어가려면 /login 을 지난다
+ *   (components/require-login.tsx).
  *
- * ★ 사용자는 아무것도 누르지 않는다. 로그인 화면이 없다는 것이 이 설계의 핵심이다.
- *
- * ★ 실패해도 아무 일도 하지 않는다 (ensureSession 이 던지지 않는다).
- *   계정을 못 만들어도 게임은 그대로 돌아가고 players.user_id 가 null 이 될 뿐이다.
- *   여기서 막으면 대시보드 설정 하나 때문에 게임 전체가 멈춘다.
- *
- * ★ 렌더를 막지 않는다. await 하지 않고 띄워만 둔다 — 계정을 기다리느라
- *   첫 화면이 늦어질 이유가 없다.
+ *   자동 익명 로그인을 남겨두면 **누가 방문할 때마다 아무도 안 쓰는 계정이
+ *   하나씩 쌓인다.** Supabase 는 그걸 자동으로 지우지 않는다.
  */
-function useAnonymousSession(): void {
-  useEffect(() => {
-    void ensureSession();
-  }, []);
-}
 
 export function Providers({ children }: { children: React.ReactNode }) {
   const [client] = useState(createQueryClient);
-  useAnonymousSession();
   return <QueryClientProvider client={client}>{children}</QueryClientProvider>;
 }

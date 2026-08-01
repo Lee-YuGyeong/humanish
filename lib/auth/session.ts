@@ -1,12 +1,11 @@
 /**
  * 브라우저 쪽 계정 처리. 소유: A (SPEC §15-2-결정)
  *
- * ┌─ 두 단계다. 순서가 뒤집히면 되돌릴 수 없다 ────────────────────────────────┐
- * │ 1. 익명 인증  — 로그인 화면이 없다. 들어오면 조용히 계정이 하나 생긴다.    │
- * │ 2. 구글 연결  — 그 익명 계정에 구글을 **잇는다**(link). 새로 만들지 않는다.│
- * │                                                                            │
- * │ 이어붙이므로 user_id 가 안 바뀌고, 그때까지 쌓인 것이 그대로 따라온다.     │
- * │ 구글부터 시키면 첫 화면에 로그인 벽이 서고, 그건 되돌리기 어렵다.          │
+ * ┌─ 게임에 들어가려면 로그인부터 한다 ────────────────────────────────────────┐
+ * │ 한때는 익명 인증을 자동으로 걸어두고 게임이 끝난 뒤에 구글을 **잇는**      │
+ * │ (linkIdentity) 흐름이었다. 그 결정이 뒤집혀서 지금은 /login 이 입구다.     │
+ * │ 그래서 여기 남은 것은 signInWithGoogle 하나다 — 익명 계정도, 잇는 일도     │
+ * │ 없다. 근거는 SPEC §15-2-결정에 적어 두었다.                                │
  * └────────────────────────────────────────────────────────────────────────────┘
  *
  * ★ 이 파일은 브라우저에서만 돈다. 서버에서 요청자를 알아내는 것은
@@ -43,32 +42,6 @@ function toAuthUser(user: {
   };
 }
 
-/**
- * 세션이 없으면 익명으로 하나 만든다. 있으면 그대로 쓴다.
- *
- * 앱이 뜰 때 한 번 부른다. **사용자는 아무것도 누르지 않는다.**
- *
- * ★ 실패해도 던지지 않는다. 계정을 못 만들어도 게임은 돌아가야 한다 —
- *   players.user_id 가 null 이 될 뿐이고, 전적이 안 쌓이는 것으로 끝난다.
- *   여기서 던지면 익명 로그인 설정 하나 때문에 게임 전체가 멈춘다.
- *
- * ★ Supabase 대시보드에서 **익명 로그인(Anonymous sign-ins)** 을 켜야 동작한다.
- *   꺼져 있으면 422가 오고, 이 함수는 조용히 null 을 돌려준다.
- */
-export async function ensureSession(): Promise<AuthUser | null> {
-  const db = await getBrowserClient();
-
-  const { data: existing } = await db.auth.getUser();
-  if (existing.user) return toAuthUser(existing.user);
-
-  const { data, error } = await db.auth.signInAnonymously();
-  if (error || !data.user) {
-    console.warn('[auth] 익명 로그인 실패 — 계정 없이 진행한다:', error?.message);
-    return null;
-  }
-  return toAuthUser(data.user);
-}
-
 /** 지금 계정. 없으면 null. */
 export async function getCurrentUser(): Promise<AuthUser | null> {
   const db = await getBrowserClient();
@@ -76,72 +49,60 @@ export async function getCurrentUser(): Promise<AuthUser | null> {
   return data.user ? toAuthUser(data.user) : null;
 }
 
-/** 구글 연결 결과. 화면이 이걸 보고 문구를 고른다. */
-export type LinkResult =
-  | { ok: true }
-  /**
-   * 그 구글 계정이 **이미 다른 계정에 연결돼 있다.**
-   * 화면은 여기서 "그 계정으로 들어가시겠습니까? 지금 판의 기록은 저장되지 않습니다"를
-   * 묻고, 예를 고르면 signInWithGoogle()을 부른다. 조용히 넘어가면 사용자는
-   * 전적이 사라졌다고 느낀다.
-   */
-  | { ok: false; reason: 'already-linked' }
-  | { ok: false; reason: 'failed'; message: string };
-
 /**
- * 지금 익명 계정에 구글을 **잇는다**. 게임이 끝난 화면의 "기록 저장하기"가 부른다.
+ * 구글로 로그인한다. /login 의 버튼이 부르는 유일한 함수다.
  *
- * ★ signInWithOAuth 가 아니다. 그건 **새 세션으로 갈아타서** 익명 계정에 쌓인 것이
- *   끊긴다. linkIdentity 는 같은 user_id 에 구글을 덧붙인다.
- *
- * ★ Supabase 대시보드에서 **수동 연결(Manual linking)** 을 켜야 동작한다.
- *   꺼져 있으면 여기서 실패한다.
- *
- * @param next 연결이 끝난 뒤 돌아갈 앱 안의 경로. 반드시 '/'로 시작해야 한다.
- */
-export async function linkGoogle(next: string = '/'): Promise<LinkResult> {
-  const db = await getBrowserClient();
-  const { error } = await db.auth.linkIdentity({
-    provider: 'google',
-    options: { redirectTo: callbackUrl(next) },
-  });
-
-  if (!error) return { ok: true };
-  // 이미 쓰인 구글 계정이면 422다. 문구로 판정하지 않는다 — 문구는 바뀐다.
-  if (error.status === 422) return { ok: false, reason: 'already-linked' };
-  return { ok: false, reason: 'failed', message: error.message };
-}
-
-/**
- * 구글 계정으로 **갈아탄다**. linkGoogle 이 already-linked 를 돌려줬을 때만 쓴다.
- *
- * ★ 지금 익명 계정에 쌓인 것은 따라오지 않는다. 부르기 전에 반드시 사용자에게
- *   물을 것 — 이 함수는 확인 없이 실행한다.
+ * ★ 처음 오는 사람은 콜백이 /account/nickname 으로 보낸다 — 이름은 거기서 짓는다
+ *   (app/api/auth/callback).
  */
 export async function signInWithGoogle(next: string = '/'): Promise<void> {
   const db = await getBrowserClient();
+
+  // 돌아갈 곳은 쿠키에 맡긴다 (아래 rememberNext 주석). redirectTo 에는 쿼리를 안 붙인다.
+  rememberNext(next);
+
   const { error } = await db.auth.signInWithOAuth({
     provider: 'google',
-    options: { redirectTo: callbackUrl(next) },
+    options: { redirectTo: `${window.location.origin}${CALLBACK_PATH}` },
   });
   if (error) throw new Error(`구글 로그인 실패: ${error.message}`);
 }
 
-/** 로그아웃. 다음 ensureSession()이 **새 익명 계정**을 만든다 — 옛 전적과는 끊긴다. */
+/** 로그아웃. RequireLogin 이 다음 화면에서 /login 으로 돌려보낸다. */
 export async function signOut(): Promise<void> {
   const db = await getBrowserClient();
   await db.auth.signOut();
 }
 
 /**
- * 돌아올 주소를 만든다.
+ * 돌아갈 곳을 쿠키에 적어 둔다.
  *
- * ★ next 를 그대로 붙이지 않는다. '//evil.com' 같은 값이 오면 그게 열린 리다이렉트가
- *   된다 — 우리 도메인 링크를 눌렀는데 남의 사이트로 간다. 콜백 라우트에도 같은
- *   검사가 있다(두 겹). 여기서 막는 게 아니라 **거기서** 막는 게 본체다 —
- *   이 값은 브라우저에서 오므로 언제든 고쳐질 수 있다.
+ * ┌─ 왜 ?next= 로 안 넘기는가 ─────────────────────────────────────────────────┐
+ * │ Supabase 는 구글에서 돌아온 뒤 redirect_to 가 **허용 목록과 맞는지** 본다.  │
+ * │ 안 맞으면 에러 없이 **Site URL 로 떨어뜨린다.** Site URL 은 배포 주소라,    │
+ * │ 로컬에서 로그인했는데 배포 사이트로 튕기는 증상이 된다. 실제로 그랬다.      │
+ * │                                                                            │
+ * │ 쿼리가 붙으면 목록에 적은 경로와 글자가 달라진다. 그래서 redirect_to 는     │
+ * │ **경로만** 보내고(대시보드에 적은 그 문자열 그대로), 돌아갈 곳은 여기 둔다. │
+ * │                                                                            │
+ * │ 로컬은 로컬로, 배포는 배포로 가는 것도 이걸로 지켜진다 — 쿠키는 오리진마다  │
+ * │ 따로이고 redirect_to 는 window.location.origin 에서 만든다.                 │
+ * └────────────────────────────────────────────────────────────────────────────┘
+ *
+ * ★ httpOnly 가 아니다. 브라우저가 써야 하는 값이라 그럴 수 없다. 비밀이 아니고,
+ *   서버가 읽을 때 다시 검사한다 (app/api/auth/callback 의 safeNext).
+ *
+ * ★ 10분이면 충분하다. 구글 화면에서 그보다 오래 머물면 그냥 기본값으로 간다 —
+ *   남은 쿠키가 다음 로그인의 목적지를 엉뚱하게 바꾸는 것보다 낫다.
  */
-function callbackUrl(next: string): string {
+const NEXT_COOKIE = 'hp_next';
+const NEXT_MAX_AGE_SEC = 600;
+
+function rememberNext(next: string): void {
+  // '//evil.com' 은 브라우저가 다른 호스트로 읽는다. 서버에서 한 번 더 막지만(두 겹)
+  // 애초에 심지 않는다.
   const safe = next.startsWith('/') && !next.startsWith('//') ? next : '/';
-  return `${window.location.origin}${CALLBACK_PATH}?next=${encodeURIComponent(safe)}`;
+  const secure = window.location.protocol === 'https:' ? '; Secure' : '';
+  document.cookie =
+    `${NEXT_COOKIE}=${encodeURIComponent(safe)}; path=/; max-age=${NEXT_MAX_AGE_SEC}; SameSite=Lax${secure}`;
 }

@@ -11,6 +11,8 @@
  */
 
 import { Space_Grotesk } from "next/font/google";
+
+import { RequireLogin } from "@/components/require-login";
 import { Lobby } from "./lobby";
 
 /**
@@ -28,7 +30,10 @@ const space = Space_Grotesk({
 export default function MainPage() {
   return (
     <div className={space.variable}>
-      <Lobby />
+      {/* 로그인해야 들어온다 (SPEC §15-2-결정) */}
+      <RequireLogin>
+        <Lobby />
+      </RequireLogin>
     </div>
   );
 }

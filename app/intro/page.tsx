@@ -25,6 +25,7 @@
 import Image from "next/image";
 import Link from "next/link";
 import { Space_Grotesk } from "next/font/google";
+import { PlayButton } from "@/components/play-button";
 import styles from "./intro.module.css";
 import { RulesProvider, RulesTrigger } from "./rules";
 
@@ -158,10 +159,13 @@ export default function IntroPage() {
             </p>
 
             <div className={`${styles.fadeUp} ${styles.d3} flex flex-wrap justify-center gap-4`}>
-              <Link href="/main" className={styles.btnPrimary}>
-                게임 접속하기
-                <span aria-hidden className="h-1.5 w-1.5 rounded-full bg-[#080808]" />
-              </Link>
+              {/*
+                ★ 여기가 게임의 문이다. 누르면 로그인부터 한다 (SPEC §15-2-결정).
+                  이미 로그인해 있으면 곧장 /main 으로 넘어간다.
+                  <Link href="/main"> 로 되돌리지 않는다 — 그러면 로그인하지 않은
+                  사람이 로비에 닿았다가 RequireLogin 에 걸려 튕긴다.
+              */}
+              <PlayButton className={styles.btnPrimary}>게임 접속하기</PlayButton>
               <RulesTrigger className={styles.btnGhost}>게임 규칙 보기</RulesTrigger>
             </div>
           </div>
@@ -412,9 +416,14 @@ export default function IntroPage() {
               <br />
               찾을 수 있습니까?
             </h2>
-            <Link href="/main" className={styles.btnPrimary} style={{ padding: "1.3rem 3.4rem" }}>
+            {/* 위 히어로의 「게임 접속하기」와 같은 문이다. 누르면 로그인부터 한다 */}
+            <PlayButton
+              className={styles.btnPrimary}
+              style={{ padding: "1.3rem 3.4rem" }}
+              dot={false}
+            >
               지금 게임 시작하기
-            </Link>
+            </PlayButton>
           </div>
         </section>
 

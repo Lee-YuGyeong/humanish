@@ -10,6 +10,7 @@
  */
 import { Space_Grotesk } from 'next/font/google';
 
+import { RequireLogin } from '@/components/require-login';
 import { RoomView } from '@/components/room-view';
 
 const space = Space_Grotesk({
@@ -27,7 +28,13 @@ export default async function RoomPage({
   const { code } = await params;
   return (
     <div className={space.variable}>
-      <RoomView code={code} />
+      {/*
+        방 링크로 바로 들어와도 로그인부터다 (SPEC §15-2-결정).
+        RequireLogin 이 next 에 이 주소를 담아 가므로, 로그인하면 이 방으로 돌아온다.
+      */}
+      <RequireLogin>
+        <RoomView code={code} />
+      </RequireLogin>
     </div>
   );
 }

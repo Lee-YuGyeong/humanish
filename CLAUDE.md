@@ -84,9 +84,13 @@ npm test               # 순수 함수 · 화면 조각 (vitest, tests/ 아래)
 | `/lab` | `app/lab/` | B — 규칙 · 봇 응답 확인 |
 | `/world` | `app/world/` | 원상 — 3D 멀티플레이 (`docs/MULTIPLAYER.md`) |
 | `/admin` | `app/admin/` | A — 방 · 페이즈 점검 |
+| `/login` | `app/login/` | A — 구글 로그인 (SPEC §15-2-결정) |
+| `/account` | `app/account/` | A — 이름 짓기 · 바꾸기 |
 | 목록 자체 | `app/workspaces.ts` | 공동. **한 줄씩만** 고친다 |
 
 새 작업 공간은 `app/workspaces.ts`에 한 줄 추가 + `app/<경로>/page.tsx` 생성. 남의 폴더는 열지 않는다.
+
+**게임 화면(`/main` · `/room`)은 로그인해야 열린다** (`components/require-login.tsx`). 실제 진입은 `/intro` 의 「게임 접속하기」이고 그 버튼이 로그인을 건다. `/` · `/intro` · `/lab` · `/world` · `/admin` 은 감싸지 않는다 — 게임 계정과 무관하게 돌아야 한다.
 
 ## 비밀 파일
 

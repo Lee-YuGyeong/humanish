@@ -29,6 +29,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { Phase } from "@/lib/game/types";
+import { useProfile } from "@/lib/queries/auth";
 import styles from "./lobby.module.css";
 import { recentGames } from "./mock-lobby";
 
@@ -450,12 +451,52 @@ function TopBar() {
           </span>
         </span>
         <span className="h-4 w-px" style={{ background: "var(--border2)" }} />
-        <div className="flex items-center gap-2">
-          <Avatar name="Player_K" size={26} />
-          <span className="text-[0.79rem] font-semibold uppercase tracking-[0.1em]">Player_K</span>
-        </div>
+        <AccountChip />
       </div>
     </header>
+  );
+}
+
+/**
+ * 머리말의 계정 자리 (SPEC §15-2-결정).
+ *
+ * ★ 여기에 "로그인" 버튼이 없는 이유: 이 화면은 RequireLogin 안에 있어서
+ *   로그인하지 않은 사람은 애초에 도달하지 못한다 (app/main/page.tsx).
+ *   그래서 상태는 둘뿐이다 — 이름이 있거나, 아직 안 지었거나.
+ *
+ * ★ 여기 뜨는 이름은 계정 이름이다. **게임 화면에는 절대 나오지 않는다** (I1) —
+ *   방 안에서는 대기방까지만 쓰이고 시작하면 '익명N' 이 된다.
+ */
+function AccountChip() {
+  const { data: profileData } = useProfile();
+  const mine = profileData?.profile;
+
+  // 아직 안 왔다. 자리만 잡아둔다 — 글자가 나중에 튀어나오면 머리말이 흔들린다.
+  if (!profileData) return <span className="h-[26px]" />;
+
+  // 연결은 했는데 이름을 안 지었다 (이름 화면에서 나가버린 경우).
+  if (!mine) {
+    return (
+      <Link
+        href="/account/nickname?next=/main"
+        className="text-[0.7rem] uppercase tracking-[0.14em] no-underline"
+        style={{ color: "var(--accent)" }}
+      >
+        이름 정하기
+      </Link>
+    );
+  }
+
+  return (
+    <Link
+      href="/account/nickname?next=/main"
+      className="flex items-center gap-2 no-underline"
+      style={{ color: "var(--text)" }}
+      title="이름 바꾸기"
+    >
+      <Avatar name={mine.display_name} size={26} />
+      <span className="text-[0.79rem] font-semibold tracking-[0.1em]">{mine.display_name}</span>
+    </Link>
   );
 }
 

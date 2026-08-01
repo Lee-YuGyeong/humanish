@@ -9,11 +9,8 @@
  */
 
 export {
-  ensureSession,
   getCurrentUser,
-  linkGoogle,
   signInWithGoogle,
   signOut,
   type AuthUser,
-  type LinkResult,
 } from './session';
