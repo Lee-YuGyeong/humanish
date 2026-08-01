@@ -453,7 +453,7 @@ function RoomListPanel({
             value={query}
             // 코드는 대문자 4자다. maxLength는 걸지 않는다 — 이 칸은 검색도 겸한다.
             onChange={(e) => onQueryChange(e.target.value)}
-            placeholder="방 코드 검색..."
+            placeholder="방 코드"
             aria-label="방 코드 검색"
             style={{ paddingLeft: "2.2rem", fontSize: "0.81rem" }}
           />
@@ -564,9 +564,6 @@ function RoomRow({
       <div className="min-w-0">
         <div className={`${styles.mono} truncate text-[1.07rem] font-bold tracking-[0.22em]`}>
           {room.code}
-        </div>
-        <div className="mt-0.5 text-[0.66rem]" style={{ color: "var(--muted)" }}>
-          코드로 들어간다
         </div>
       </div>
 
@@ -693,7 +690,7 @@ function CreatePanel({
                 type="text"
                 value={name}
                 maxLength={20}
-                placeholder="방 이름을 입력하세요..."
+                placeholder="방 이름"
                 onChange={(e) => setName(e.target.value)}
               />
               <div className="mt-1.5 text-right">
@@ -754,7 +751,7 @@ function CreatePanel({
                       type="text"
                       value={entryCode}
                       maxLength={8}
-                      placeholder="코드 입력..."
+                      placeholder="코드"
                       onChange={(e) =>
                         setEntryCode(e.target.value.replace(/\s/g, "").toUpperCase().slice(0, 8))
                       }
@@ -775,11 +772,7 @@ function CreatePanel({
                     </button>
                   </div>
                 </div>
-              ) : (
-                <p className="mt-3 text-[0.74rem] leading-[1.7]" style={{ color: "var(--dim)" }}>
-                  만들면 4자 코드가 나온다. 그 코드를 아는 사람만 바로 들어올 수 있다.
-                </p>
-              )}
+              ) : null}
             </div>
           </div>
 

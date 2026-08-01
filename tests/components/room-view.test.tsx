@@ -226,7 +226,8 @@ describe('대기실에서 말하기 (SPEC §15-3-결정)', () => {
 
   it('준비 완료를 누르면 서버로 간다', async () => {
     renderRoom();
-    fireEvent.click(await screen.findByRole('button', { name: /준비되면 누른다/ }));
+    // 정규식으로 두면 켜진 뒤의 '준비 완료'까지 걸린다. 이름 그대로 찾는다.
+    fireEvent.click(await screen.findByRole('button', { name: '준비' }));
     await waitFor(() => expect(api.setLobbyReady).toHaveBeenCalledWith(ROOM_ID, true));
   });
 
@@ -236,7 +237,7 @@ describe('대기실에서 말하기 (SPEC §15-3-결정)', () => {
     db.fetchQuestions.mockResolvedValue([question('c1', 'common', 1)]);
 
     renderRoom();
-    await screen.findByPlaceholderText('답을 쓴다');
+    await screen.findByPlaceholderText('답');
     expect(screen.queryByRole('button', { name: '안녕' })).not.toBeInTheDocument();
   });
 });
@@ -269,7 +270,7 @@ describe('답변 제출', () => {
     inQuestion();
     renderRoom();
 
-    const input = await screen.findByPlaceholderText('답을 쓴다');
+    const input = await screen.findByPlaceholderText('답');
     fireEvent.change(input, { target: { value: '나는 사람이다' } });
     fireEvent.click(screen.getByRole('button', { name: '제출' }));
 
@@ -282,7 +283,7 @@ describe('답변 제출', () => {
     api.submitAnswer.mockRejectedValue(new Error('이미 답했다'));
     renderRoom();
 
-    const input = await screen.findByPlaceholderText('답을 쓴다');
+    const input = await screen.findByPlaceholderText('답');
     fireEvent.change(input, { target: { value: '아까운 답' } });
     fireEvent.click(screen.getByRole('button', { name: '제출' }));
 

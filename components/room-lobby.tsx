@@ -245,9 +245,6 @@ function CodeBanner({
         >
           {code}
         </div>
-        <div className="mt-3 text-[0.7rem] font-light" style={{ color: "var(--muted)" }}>
-          이 코드를 알려주면 바로 들어올 수 있다
-        </div>
       </div>
 
       <div className="flex flex-col items-end gap-3">
@@ -525,10 +522,13 @@ function SayPanel({
       </div>
 
       <div className={`${styles.scroll} flex flex-1 flex-col gap-3 overflow-y-auto p-4`}>
+        {/*
+          남긴 건 **이유 한 줄뿐이다.** "정해진 말만 할 수 있다"는 버튼 목록이 이미
+          말하고 있고, "고른 말은 내 자리 위에 뜬다"는 한 번 누르면 바로 보인다.
+          화면이 보여주는 걸 글로 또 적으면 읽을 것만 늘어난다.
+        */}
         <p className="text-[0.65rem] leading-[1.8]" style={{ color: "var(--muted)" }}>
-          여기서는 정해진 말만 할 수 있다. 미리 짜는 걸 막기 위해서다.
-          <br />
-          <span style={{ color: "var(--dim)" }}>고른 말은 내 자리 위에 뜬다.</span>
+          미리 짜는 걸 막으려고 정해진 말만 둔다.
         </p>
 
         {/* 리스트 태그를 쓰지 않는다 — 좌석 수를 세는 검사가 이것까지 센다 */}
@@ -568,7 +568,7 @@ function SayPanel({
           className={`${styles.ready} ${mine?.is_ready ? styles.readyOn : ""}`}
         >
           {mine?.is_ready && <CheckIcon />}
-          {mine?.is_ready ? "준비 완료" : "준비되면 누른다"}
+          {mine?.is_ready ? "준비 완료" : "준비"}
         </button>
       </div>
     </>
