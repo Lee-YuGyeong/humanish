@@ -23,6 +23,8 @@
   --accent: #00ff66;
   --accent-dim: rgba(0, 255, 102, 0.1);
   --accent-glow: rgba(0, 255, 102, 0.3);
+  /* 초록 테두리(.tagGreen). 머리말 안에서는 띠가 로비 값으로 덮어쓴다 */
+  --accent-line: rgba(0, 255, 102, 0.3);
   --red: #ff3b30;
   --red-dim: rgba(255, 59, 48, 0.1);
 
@@ -117,9 +119,14 @@
   display: inline-block;
   white-space: nowrap;
 }
+/*
+ * ★ 테두리 색을 여기 박아두지 않는다. 이 태그는 머리말 안에도 서는데(「나」),
+ *   그 띠는 로비 팔레트로 갈아입는다 (components/top-bar.module.css).
+ *   초록만 그쪽 값이고 테두리만 형광이면 그 자리에서 어긋난다.
+ */
 .tagGreen {
   color: var(--accent);
-  border-color: rgba(0, 255, 102, 0.3);
+  border-color: var(--accent-line);
   background: var(--accent-dim);
 }
 

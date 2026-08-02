@@ -28,7 +28,7 @@ export default function Home() {
       <div className="mx-auto max-w-3xl px-6 py-20">
         <header>
           <p className="stencil text-[10px] text-signal/70">crate manifest</p>
-          <h1 className="engraved mt-3 text-4xl font-black">기계인 척</h1>
+          <h1 className="engraved mt-3 text-4xl font-black">AI인 척</h1>
           <p className="mt-3 max-w-md text-sm leading-relaxed text-dust">
             작업 보드다. 자기 상자만 연다 —{" "}
             <span className="text-bone">남의 경로를 고치면 머지 충돌이 난다.</span>

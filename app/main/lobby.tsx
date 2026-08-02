@@ -33,6 +33,7 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { AccountName, Avatar, TopBar } from "@/components/top-bar";
 import { signOut } from "@/lib/auth";
 import type { Phase } from "@/lib/game/types";
 import { useInvalidateAuthUser, useProfile, useProfileStats } from "@/lib/queries/auth";
@@ -335,7 +336,7 @@ export function Lobby() {
       <div aria-hidden className={styles.noise} />
       <div aria-hidden className={styles.scanlines} />
 
-      <TopBar />
+      <LobbyHeader />
 
       <div className="flex flex-1 overflow-hidden">
         <PlayerSidebar />
@@ -417,12 +418,13 @@ export function Lobby() {
 
 /* ─────────────────────────────── 머리말 ─────────────────────────────── */
 
-function TopBar() {
+/**
+ * 로비의 머리말. **띠 자체는 방 화면과 공용이다** (components/top-bar.tsx) —
+ * 여기서 정하는 건 그 안에 무엇이 드는가뿐이다.
+ */
+function LobbyHeader() {
   return (
-    <header
-      className="flex h-12 shrink-0 items-center justify-between border-b px-4 sm:px-8"
-      style={{ background: "var(--bg)", borderColor: "var(--border)" }}
-    >
+    <TopBar>
       <div className="flex items-center gap-6 sm:gap-10">
         <Link
           href="/intro"
@@ -458,7 +460,7 @@ function TopBar() {
         <span className="h-4 w-px" style={{ background: "var(--border2)" }} />
         <AccountChip />
       </div>
-    </header>
+    </TopBar>
   );
 }
 
@@ -559,8 +561,8 @@ function AccountChip() {
         aria-expanded={open}
         onClick={() => setOpen((v) => !v)}
       >
-        <Avatar name={mine.display_name} size={26} />
-        <span className="text-[0.79rem] font-semibold tracking-[0.1em]">{mine.display_name}</span>
+        {/* 이름 자리는 대기실 머리말과 **같은 부품이다** (components/top-bar.tsx) */}
+        <AccountName name={mine.display_name} />
         <CaretIcon />
       </button>
 
@@ -1441,15 +1443,6 @@ function CodeDialog({
 }
 
 /* ─────────────────────────────── 공통 ─────────────────────────────── */
-
-/** 이니셜 아바타. 외부 이미지 호스트에 의존하지 않는다 (시안은 원격 URL을 썼다) */
-function Avatar({ name, size }: { name: string; size: number }) {
-  return (
-    <span aria-hidden className={styles.avatar} style={{ width: size, height: size }}>
-      {name.trim().charAt(0).toUpperCase()}
-    </span>
-  );
-}
 
 /* 아이콘 — font-awesome CDN 대신 인라인 SVG */
 function SearchIcon() {

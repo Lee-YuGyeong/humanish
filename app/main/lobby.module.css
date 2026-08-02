@@ -443,18 +443,10 @@
   border-bottom-color: var(--accent);
 }
 
-/* 이니셜 아바타. 외부 이미지 호스트에 기대지 않는다 */
-.avatar {
-  display: grid;
-  place-items: center;
-  border-radius: 50%;
-  border: 1px solid var(--border2);
-  background: var(--surface3);
-  color: var(--muted);
-  font-size: 0.66rem;
-  font-weight: 700;
-  flex-shrink: 0;
-}
+/*
+ * 아바타(.avatar)는 여기 없다. 머리말과 왼쪽 기둥이 같은 것을 쓰고, 그 머리말은
+ * 대기실과도 공용이라 components/top-bar.module.css 로 옮겼다.
+ */
 
 /* ── 계정 메뉴 ────────────────────────────────────────────────────────── */
 /*

@@ -21,7 +21,9 @@
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 
+import { AccountName, TopBar } from "@/components/top-bar";
 import type { MeResponse } from "@/lib/api/room";
+import { useProfile } from "@/lib/queries/auth";
 import type { PublicPlayer, Room } from "@/lib/game/types";
 import {
   REQUEST,
@@ -75,6 +77,14 @@ export function RoomLobby({
   const seated = players.length;
   const mine = players.find((p) => p.id === me.player.id) ?? null;
 
+  /*
+   * 머리말에 뜨는 내 이름. 계정 이름이 먼저다 — 좌석 명단(mine)보다 빨리 오고,
+   * 둘은 같은 값이다(앉을 때 profiles 에서 lobby_name 으로 베껴 온다).
+   * 아래 머리말 주석에 왜 이렇게 됐는지 적어 두었다.
+   */
+  const { data: profileData } = useProfile();
+  const myName = profileData?.profile?.display_name ?? mine?.lobby_name ?? null;
+
   const start = useStartRoom(code, room.id);
   const busy = useRoomUi(selectIsBusy);
   const starting = useRoomUi(selectIsPending(REQUEST.start));
@@ -112,11 +122,15 @@ export function RoomLobby({
       <div aria-hidden className={styles.noise} />
       <div aria-hidden className={styles.scanlines} />
 
-      {/* ── 머리말 ─────────────────────────────────────────────────── */}
-      <header
-        className="flex h-12 shrink-0 items-center justify-between gap-4 border-b px-4 sm:px-8"
-        style={{ background: "var(--bg)", borderColor: "var(--border)" }}
-      >
+      {/*
+        ── 머리말 ───────────────────────────────────────────────────
+        띠 자체는 로비(/main)와 **같은 것**이다 (components/top-bar.tsx) — 높이도
+        색도 거기서 온다. 예전에는 여기서 따로 그렸고 대기실 팔레트(형광 초록 ·
+        어두운 보조 글자)를 물려받아서, 방에 들어가는 순간 같은 자리의 띠가
+        다른 색으로 바뀌었다.
+        **안에 드는 것은 방의 것이다** — 나가기 · 방 이름 · 코드 · 인원 · 나.
+      */}
+      <TopBar>
         <div className="flex min-w-0 items-center gap-4">
           {/*
             ★ 이 화살표도 **나가기와 같은 동작이다.** 링크로 두면 "로비로 돌아간다"는
@@ -166,19 +180,24 @@ export function RoomLobby({
             </span>
           </span>
           <span className="h-4 w-px" style={{ background: "var(--border2)" }} />
-          <span className="flex items-center gap-2">
-            <span
-              className="text-[0.62rem] font-semibold uppercase tracking-[0.1em]"
-              style={{ color: "var(--accent)" }}
-            >
-              {/* 지은 이름이 있으면 그걸로 (§15-2-결정). mine 은 public_players 행이라
-                  게임이 시작되면 lobby_name 이 null 이 되어 자동으로 '익명N' 으로 돌아온다 */}
-              {mine?.lobby_name ?? me.player.nickname}
-            </span>
-            <span className={`${styles.tag} ${styles.tagGreen}`}>나</span>
-          </span>
+          {/*
+            ┌─ 왜 '익명N' 이 잠깐 떴다가 바뀌었나 ──────────────────────────────┐
+            │ 이 자리는 lobby_name(내 좌석 행)을 읽고 있었다. 그런데 좌석 명단은  │
+            │ 내 정보(me)보다 **늦게 온다** — 그 사이 mine 이 null 이라 뒤의      │
+            │ me.player.nickname 으로 떨어졌고, 그게 자리 이름인 '익명N' 이다.    │
+            │ 이름이 한 번 틀리게 떴다가 갈아치워지는 것으로 보였다.              │
+            │                                                                  │
+            │ 이제 로비 머리말과 **같은 것을 읽는다** — 계정 이름(useProfile).    │
+            │ /main 에서 들어오면 이미 캐시에 있어서 첫 그림부터 맞고, 방 주소로  │
+            │ 바로 들어와도 아직 모르는 동안은 **빈 자리**다. 틀린 이름을 잠깐    │
+            │ 보여주느니 늦게 뜨는 편이 낫다.                                    │
+            └──────────────────────────────────────────────────────────────────┘
+            ★ 이건 계정 이름이라 대기실에서만 쓴다. 게임이 시작되면 이 화면 자체가
+              사라지고, 자리에 붙는 이름은 '익명N' 이 된다 (I1).
+          */}
+          {myName ? <AccountName name={myName} /> : <span className="h-[26px]" />}
         </div>
-      </header>
+      </TopBar>
 
       <div className="flex flex-1 overflow-hidden">
         {/* ── 가운데 ───────────────────────────────────────────────── */}
@@ -318,7 +337,7 @@ function CopyCodeButton({ code }: { code: string }) {
 /**
  * 좌석 칸. **정원만큼** 그린다 (§17.6).
  *
- * ★ 빈 칸이 곧 "시작하면 기계가 앉을 자리"라는 건 이 화면이 막을 수 없는 구멍이다.
+ * ★ 빈 칸이 곧 "시작하면 AI가 앉을 자리"라는 건 이 화면이 막을 수 없는 구멍이다.
  *   인원을 감춰도 빈칸 수가 같은 값을 준다. 그래서 최소한 문구로 그걸 알려주지는
  *   않는다 — 아래 RulePanel 의 표현을 여기서 뒤집지 말 것.
  */
@@ -431,7 +450,7 @@ function SeatGrid({
 
 /**
  * 방 규칙. 문구는 SPEC 을 따른다 — 시안의 "5명 (인간 4명 + AI 1명)"은 쓰지 않는다.
- * 정원은 방마다 다르고(§17.6), 기계가 몇인지는 **시작해야** 알려준다 (§15-3).
+ * 정원은 방마다 다르고(§17.6), AI가 몇인지는 **시작해야** 알려준다 (§15-3).
  */
 function RulePanel({ capacity }: { capacity: number }) {
   return (
@@ -461,8 +480,8 @@ function RulePanel({ capacity }: { capacity: number }) {
         <div>
           <div className={`${styles.label} mb-1`}>빈자리</div>
           <div className="text-[0.82rem]">
-            시작할 때 기계가 채운다.{" "}
-            <span style={{ color: "var(--muted)" }}>몇 대인지는 시작하면 알려준다.</span>
+            시작할 때 AI가 채운다.{" "}
+            <span style={{ color: "var(--muted)" }}>몇인지는 시작하면 알려준다.</span>
           </div>
         </div>
       </div>
@@ -474,7 +493,7 @@ function RulePanel({ capacity }: { capacity: number }) {
         <div>
           <div className={`${styles.label} mb-1`}>숨는 것</div>
           <div className="text-[0.82rem]">
-            어느 자리가 기계인지.{" "}
+            어느 자리가 AI인지.{" "}
             <span style={{ color: "var(--muted)" }}>시작할 때 모두의 자리가 다시 섞인다.</span>
           </div>
         </div>
@@ -498,7 +517,7 @@ function RulePanel({ capacity }: { capacity: number }) {
         </span>
         <div>
           <div className={`${styles.label} mb-1`}>승리</div>
-          <div className="text-[0.82rem]">진짜 기계를 지목하면 사람들의 승리.</div>
+          <div className="text-[0.82rem]">진짜 AI를 지목하면 사람들의 승리.</div>
           <div className="mt-1 text-[0.75rem]" style={{ color: "var(--muted)" }}>
             연기자에게 표가 몰리면 연기자의 승리다.
           </div>
