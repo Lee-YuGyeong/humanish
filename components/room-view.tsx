@@ -269,7 +269,7 @@ export function RoomView({ code }: { code: string }) {
         )}
 
         {/*
-          이 방의 기계 수. SPEC §15-3에서 "몇인지는 공개하고 어느 자리인지는 숨긴다"로
+          이 방의 AI 수. SPEC §15-3에서 "몇인지는 공개하고 어느 자리인지는 숨긴다"로
           정했다. lobby 에는 아직 봇이 없어서 띄우지 않는다 — 0이 뜨면 거짓말이 된다.
           시작 순간 전원의 자리가 다시 섞이므로(§15-3-결정) 이 수는 제약이지 답이 아니다.
         */}
@@ -282,13 +282,16 @@ export function RoomView({ code }: { code: string }) {
           lobby={room.phase === 'lobby'}
         />
 
-        {/* 내가 스파이라는 건 나만 본다. 남의 역할은 reveal까지 아무 데도 오지 않는다 (I1) */}
+        {/*
+          내가 연기자라는 건 나만 본다. 남의 역할은 reveal까지 아무 데도 오지 않는다 (I1).
+          역할 값 'spy'는 아직 코드에 남아 있다 — 화면에 보이는 이름만 '연기자'다 (SPEC §18.2).
+        */}
         {me?.role === 'spy' && room.phase !== 'reveal' && room.phase !== 'replay' && (
           <p className="case riveted flex items-center gap-3 border-signal/25 px-5 py-3.5">
             <SpyIcon className="h-4 w-4 shrink-0 text-signal" />
             <span className="text-[13px] leading-relaxed text-bone">
-              <span className="stencil mr-2 text-[9px] text-signal">너는 스파이다</span>
-              기계인 척해서 표를 끌어와라.
+              <span className="stencil mr-2 text-[9px] text-signal">너는 연기자다</span>
+              AI인 척해서 표를 끌어와라. 네가 지목되면 네 승리다.
             </span>
           </p>
         )}
@@ -317,14 +320,11 @@ export function RoomView({ code }: { code: string }) {
  *
  * "N / 정원"의 N은 지금 앉아 있는 사람 수다.
  *
- * ★ 이 표시는 **현재 봇 수는 못 알려주지만 미래 봇 수는 알려준다.** lobby에는
- *   아직 봇이 없지만(SPEC §17.4 — 시작 버튼에서 채운다), 시작한 순간의
- *   `정원 − N`이 곧 봇 수이고 빈 좌석 번호가 곧 봇의 자리다. 이건 이 화면의
- *   버그가 아니라 **§15-3(봇을 채우는 시점)이 미결정이라 생긴 구멍**이며,
- *   lib/server/room.ts의 fillWithBots 주석에도 같은 내용이 적혀 있다.
- *   §15-3이 정해지기 전까지 화면에서 완전히 막을 방법은 없다 —
- *   인원을 감춰도 좌석 그리드의 빈칸이 같은 정보를 준다.
- *   그래서 최소한 **인트로·규칙 문구가 "빈자리 = 기계"를 알려주지는 않게** 한다.
+ * ★ 봇이 **몇인지**는 이제 공개다 (§15-3). 여기서 조심할 것은 수가 아니라
+ *   **자리**다 — 예전에는 `정원 − N`이 곧 봇 수이고 빈 좌석 번호가 곧 봇의
+ *   자리였다. §18.1이 그 셈법을 끊었다: 봇 수는 빈자리가 아니라 **모인 사람
+ *   수**가 정하고, 시작할 때 자리를 다시 섞는다. 그래도 **문구가 "빈자리 =
+ *   AI"라고 가르치지는 않게** 한다 — 틀린 셈법이면서 동시에 자리를 가리킨다.
  */
 function LobbyHero({
   code,
@@ -554,44 +554,47 @@ function Panel({
           <Label>방 규칙</Label>
           <ul className="flex flex-col gap-px">
             {/*
-              ★ 봇이 몇 명인지 절대 쓰지 않는다 (I1). 정원과 사람 수의 차이를 화면이
-                계산해 주면 그게 곧 봇 수다. "몇 자리인지는 공개되지 않는다"가 정답이다.
+              여기 적는 것은 **플레이어가 알아야 움직일 수 있는 것**뿐이다. 내부 동작
+              (인원표·확률·페이즈 길이)은 적지 않는다.
+
+              ★ 봇이 **어느 자리**인지로 이어지는 값은 절대 쓰지 않는다 (I1). 봇이
+                **몇인지**는 공개해도 된다 (§15-3) — 다만 대기실에서는 아직 시작 전이라
+                셀 것 자체가 없다. 시작하면 MachineCount 가 알려준다.
             */}
             <RuleRow
               icon={<UserPlusIcon className="h-3.5 w-3.5" />}
               label="정원"
-              value={`${room.capacity}자리`}
+              value={`최대 ${room.capacity}자리. 실제 자리는 시작할 때 정해진다`}
             />
+            {/*
+              이제 AI 수는 공개다 (§15-3). 다만 대기실 문구가 "빈자리를 채운다"고
+              말하면 **빈칸을 세면 AI 수가 나온다**는 잘못된 셈법을 가르치게 된다 —
+              AI 수는 빈자리가 아니라 모인 사람 수가 정한다 (§18.1).
+            */}
+            <RuleRow
+              icon={<ChipIcon className="h-3.5 w-3.5" />}
+              label="AI"
+              value="시작할 때 자리에 섞인다. 몇인지는 그때 알려준다"
+            />
+            {/*
+              연기자 수는 **끝까지 숨긴다** (§18.2). 0명일 수도 있다는 가능성이
+              남아 있어야 긴장이 유지되므로, 여기에 수를 적으면 그 순간 규칙이 깨진다.
+            */}
             <RuleRow
               icon={<SpyIcon className="h-3.5 w-3.5" />}
-              label="스파이"
-              value="사람 중 1명. 사람이 2명 이상일 때만 생긴다"
+              label="연기자"
+              value="사람이면서 AI인 척한다. 몇인지는 알려주지 않는다"
               accent
             />
             <RuleRow
-              icon={<CheckIcon className="h-3.5 w-3.5" />}
-              label="시민"
-              value="스파이가 아닌 나머지 사람 전원"
-            />
-            {/*
-              아이콘도 문구다. 여기에 ChipIcon(진짜 AI)을 쓰면 "빈자리 = AI"라고
-              그림으로 말해버린다. SPEC §0은 빈자리를 봇이 채운다는 사실 자체를
-              공개하지 않는다고 못박았으므로 중립적인 InfoIcon을 쓴다.
-            */}
-            {/*
-              §15-3 이전에는 "몇 자리인지는 공개되지 않는다"였다. 이제 수는 공개한다.
-              숨기는 것은 **어느 자리인가** 하나뿐이고, 그건 시작 때 전원을 다시
-              섞어서 지킨다. 문구가 실제 동작과 어긋나면 그게 제일 나쁘다.
-            */}
-            <RuleRow
               icon={<InfoIcon className="h-3.5 w-3.5" />}
-              label="빈자리"
-              value="시작할 때 기계가 채운다. 몇 대인지는 시작하면 알려준다"
+              label="숨는 것"
+              value="어느 자리가 AI인지. 시작할 때 모두의 자리가 다시 섞인다"
             />
             <RuleRow
-              icon={<ChipIcon className="h-3.5 w-3.5" />}
-              label="숨는 것"
-              value="어느 자리가 기계인지. 시작할 때 모두의 자리가 다시 섞인다"
+              icon={<CheckIcon className="h-3.5 w-3.5" />}
+              label="승리"
+              value="지목된 한 명이 AI면 시민 승, 연기자면 연기자 승, 그 밖이면 AI 승"
             />
           </ul>
         </Box>
@@ -729,7 +732,7 @@ function Panel({
     return (
       <Box>
         <Label>투표</Label>
-        <p className="engraved text-2xl font-black">누가 기계인가?</p>
+        <p className="engraved text-2xl font-black">누가 AI인가?</p>
         <div className="mt-2">
           <PlayerGrid
             players={players}
@@ -889,16 +892,16 @@ function ChatPanel({
 }
 
 /**
- * 이 방의 기계 수 (SPEC §15-3-결정).
+ * 이 방의 AI 수 (SPEC §15-3-결정).
  *
- * ★ 0을 특별 취급한다. "0대"는 **사람만 있는 방**이라는 뜻이고, 그 가능성이 살아
+ * ★ 0을 특별 취급한다. "0"은 **사람만 있는 방**이라는 뜻이고, 그 가능성이 살아
  *   있어야 긴장이 유지된다. 숫자만 띄우고 넘어가면 0이 오류처럼 보인다.
  */
 function MachineCount({ n }: { n: number }) {
   return (
     <div className="case flex items-center gap-4 px-5 py-3">
       <ChipIcon className="h-4 w-4 shrink-0 text-bounce" />
-      <p className="stencil text-[9px] text-ash">이 방의 기계</p>
+      <p className="stencil text-[9px] text-ash">이 방의 AI</p>
       <p className="readout text-xl text-bounce">{n}</p>
       {n === 0 && <p className="ml-auto text-[11px] text-grime">전부 사람이다</p>}
     </div>
@@ -908,7 +911,7 @@ function MachineCount({ n }: { n: number }) {
 /** 역할 배지 모양. role이 null이면 시민으로 본다 (원래 표시 규칙 그대로다). */
 const ROLE_BADGE = {
   ai: { label: 'AI', tone: 'text-bounce', Icon: ChipIcon },
-  spy: { label: '스파이', tone: 'text-signal', Icon: SpyIcon },
+  spy: { label: '연기자', tone: 'text-signal', Icon: SpyIcon },   // 역할 값은 아직 'spy' (SPEC §18.2)
   citizen: { label: '시민', tone: 'text-grime', Icon: CheckIcon },
 } as const;
 
@@ -962,7 +965,7 @@ function RevealPanel({
     myVote == null
       ? { text: '기권', sub: '다음 판에는 한 명을 골라보자', tone: 'text-dust' }
       : iWasRight
-        ? { text: '맞혔다', sub: '기계를 골랐다', tone: 'lit-tung' }
+        ? { text: '맞혔다', sub: 'AI를 골랐다', tone: 'lit-tung' }
         : { text: '틀렸다', sub: '사람을 골랐다', tone: 'lit-signal' };
 
   return (

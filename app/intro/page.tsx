@@ -4,10 +4,10 @@
  * ┌─ 시안과 달라진 점 ──────────────────────────────────────────────────────┐
  * │ 화면(형광 초록 취조실 · Space Grotesk · 카드형 규칙)은 시안 그대로다.   │
  * │ **문구만 실제 규칙에 맞췄다.** 시안에는 "5명 중 단 1명이 AI" 라고 적혀  │
- * │ 있었는데 이 게임에서는 셋 다 틀린 말이다:                               │
- * │   - 정원은 방마다 2~8이다 (UI 표기 기준). 5는 기본값일 뿐이다           │
- * │   - 기계는 여러 대일 수도, 한 대도 없을 수도 있다 (빈자리를 채운다)     │
- * │   - 사람 중 한 명은 기계인 척하는 스파이다 (§8)                         │
+ * │ 있었는데 이 게임에서는 셋 다 틀린 말이다 (근거는 SPEC §18):             │
+ * │   - 자리 수는 고정이 아니다. 시작할 때 모인 사람 수가 정한다 (§18.1)    │
+ * │   - AI는 1~2대다. 빈자리를 채우는 게 아니라 사람 수가 정한다 (§18.1)    │
+ * │   - 사람 중 일부는 AI인 척하는 연기자다. **몇인지는 숨긴다** (§18.2)    │
  * │ 첫 화면에 적힌 숫자가 방에 들어가서 틀리면 그 뒤 화면을 전부 의심하게   │
  * │ 되므로, 고정 숫자 대신 범위와 기호(N · ?)로 적는다.                     │
  * │                                                                        │
@@ -44,8 +44,9 @@ const space = Space_Grotesk({
 /**
  * 한 판이 짜이는 순서. 숫자표 대신 **자리를 그려서** 보여준다.
  *
- * ★ 예시는 5인 방이다. 정원은 방마다 2~8이라 그림 하나로 다 담을 수 없어
- *   "예: 5명으로 만든 방"이라고 밝히고 하나만 그린다. 그림에 붙은 5는 규칙이 아니다.
+ * ★ 예시는 **사람 5명이 모인 방**이다. 자리 수는 모인 사람 수마다 다르므로
+ *   그림 하나로 다 담을 수 없어 하나만 그리고 "예"라고 밝힌다.
+ *   그림에 붙은 5와 2는 규칙이 아니라 그 줄의 값이다 (SPEC §18.1 인원표).
  */
 const HUMANS_IN_EXAMPLE = 5;
 
@@ -54,32 +55,38 @@ type Seat = "human" | "ai" | "unknown" | "plus";
 
 const seatsOf = (n: number, kind: Seat): Seat[] => Array.from({ length: n }, () => kind);
 
+/** 이 예시에서 AI가 몇 대 붙는지. 사람 수마다 정해져 있다 (SPEC §18.1) */
+const AI_IN_EXAMPLE = 2;
+
 const setup: { index: string; title: string; body: string; seats: Seat[] }[] = [
   {
     index: "01",
     title: "방을 만들고 사람이 모인다",
-    body: `정원은 2~8명 중에 고른다. ${HUMANS_IN_EXAMPLE}명으로 만들면 ${HUMANS_IN_EXAMPLE}자리가 생긴다.`,
+    body: `모인 사람 수에 따라 자리 수가 정해진다. ${HUMANS_IN_EXAMPLE}명이 모인 방을 예로 든다.`,
     seats: seatsOf(HUMANS_IN_EXAMPLE, "human"),
   },
   {
     index: "02",
-    title: "시작하면 AI가 한 명 더 앉는다",
-    body: "방 인원 +1. 사람인 척하며 사람들 사이에 섞여 앉는다.",
-    seats: [...seatsOf(HUMANS_IN_EXAMPLE, "human"), "plus", "ai"],
+    title: "시작하면 AI가 섞여 앉는다",
+    body: "사람인 척하며 사람들 사이에 앉는다. 몇 대인지는 시작할 때 알려준다.",
+    seats: [...seatsOf(HUMANS_IN_EXAMPLE, "human"), "plus", ...seatsOf(AI_IN_EXAMPLE, "ai")],
   },
   {
     index: "03",
     title: "자리가 섞이고, 추리가 시작된다",
-    body: "누가 어디 앉았는지 아무도 모른다. 게다가 사람 중 한 명은 AI인 척 연기하는 중이다.",
-    seats: seatsOf(HUMANS_IN_EXAMPLE + 1, "unknown"),
+    body: "누가 어디 앉았는지 아무도 모른다. 게다가 사람 중 누군가는 AI인 척 연기하는 중일 수 있다.",
+    seats: seatsOf(HUMANS_IN_EXAMPLE + AI_IN_EXAMPLE, "unknown"),
   },
 ];
 
-/** 배역 — 한 줄씩. 승리 조건만 적는다 */
+/**
+ * 배역 — 한 줄씩. 승리 조건만 적는다.
+ * 셋 다 **투표로 지목된 한 명이 누구였나** 하나로 갈린다 (SPEC §18.4).
+ */
 const roles = [
-  { tag: "AI", name: "AI", line: "사람인 척한다. 표를 한 장도 받지 않으면 승리." },
-  { tag: "Actor", name: "연기자", line: "사람이면서 AI인 척한다. 표가 자기에게 쏠리면 승리." },
-  { tag: "Human", name: "사람", line: "질문하고 의심한다. 진짜 AI를 지목하면 승리." },
+  { tag: "AI", name: "AI", line: "사람인 척한다. 애먼 사람이 지목되면 승리." },
+  { tag: "Actor", name: "연기자", line: "사람이면서 AI인 척한다. 자기가 지목되면 승리." },
+  { tag: "Citizen", name: "시민", line: "질문하고 의심한다. 진짜 AI를 지목하면 승리." },
 ];
 
 /** 한 판의 흐름. 자세한 내용은 규칙 카드에 있다 (§5.1) */
@@ -151,11 +158,11 @@ export default function IntroPage() {
             <p
               className={`${styles.fadeUp} ${styles.d2} mx-auto mb-11 max-w-md text-[0.95rem] font-light leading-[1.95] text-[#777]`}
             >
-              사람들 사이에 <span className="text-[#e8e8e8]">AI가 한 명</span> 섞여 있다.
+              사람들 사이에 <span className="text-[#e8e8e8]">AI가</span> 섞여 있다.
               <br />
-              사람 중 한 명은 <span className="text-[#e8e8e8]">AI인 척 연기한다.</span>
+              사람 중 누군가는 <span className="text-[#e8e8e8]">AI인 척 연기한다.</span>
               <br />
-              <span className="font-semibold text-[#00ff66]">진짜 AI를 찾아내면 이긴다.</span>
+              <span className="font-semibold text-[#00ff66]">진짜 AI를 지목하면 이긴다.</span>
             </p>
 
             <div className={`${styles.fadeUp} ${styles.d3} flex flex-wrap justify-center gap-4`}>
@@ -195,7 +202,7 @@ export default function IntroPage() {
               <h2 className="mt-8 text-[clamp(2.2rem,5vw,3.2rem)] font-bold leading-[1.1] tracking-[-0.03em]">
                 인간인 척하는
                 <br />
-                기계를 찾아라.
+                AI를 찾아라.
               </h2>
 
               {/*
@@ -206,16 +213,16 @@ export default function IntroPage() {
               */}
               <div className="mt-10 flex flex-col gap-5 text-[1rem] font-light leading-[1.9] text-[#777]">
                 <p>
-                  사람들 사이에 <span className="text-[#e8e8e8]">AI가 한 명</span> 섞여 앉는다. AI는
-                  사람인 척한다.
+                  사람들 사이에 <span className="text-[#e8e8e8]">AI가</span> 섞여 앉는다. AI는 사람인
+                  척한다.
                 </p>
                 <p>
-                  그리고 사람 중 한 명은 반대로{" "}
+                  그리고 사람 중 누군가는 반대로{" "}
                   <span className="text-[#e8e8e8]">AI인 척 연기한다.</span>
                 </p>
                 <p>
-                  사람 · 연기자 · 진짜 AI —{" "}
-                  <span className="text-[#00ff66]">이 셋 중에서 진짜 AI를 찾아내면 이긴다.</span>
+                  시민 · 연기자 · 진짜 AI —{" "}
+                  <span className="text-[#00ff66]">이 셋 중에서 진짜 AI를 지목하면 시민이 이긴다.</span>
                 </p>
               </div>
 
@@ -253,7 +260,7 @@ export default function IntroPage() {
               <div className={styles.figure}>
                 <Image
                   src="/intro/machine.webp"
-                  alt="어둠 속에서 이쪽을 보고 있는 기계"
+                  alt="어둠 속에서 이쪽을 보고 있는 AI"
                   width={762}
                   height={779}
                   className={styles.figureImg}
@@ -334,8 +341,8 @@ export default function IntroPage() {
 
           {/* 그래서 어떻게 이기나 — 위 세 걸음의 결론 한 줄 */}
           <p className="mt-8 text-center text-[0.9rem] font-light leading-[1.9] text-[#666]">
-            <span className="text-[#00ff66]">진짜 AI를 지목하면 사람들의 승리.</span> 연기자에게
-            표가 몰리면 연기자의 승리다.
+            <span className="text-[#00ff66]">진짜 AI를 지목하면 시민의 승리.</span> 연기자에게 표가
+            몰리면 연기자의 승리, 애먼 사람이 지목되면 AI의 승리다.
           </p>
 
           <div className="mt-14 overflow-hidden rounded-3xl border border-white/[0.07] px-7 py-8">
