@@ -38,6 +38,9 @@ const WORKER_DIR = resolve(ROOT, 'worker');
 /** 다른 컴퓨터에서 절대 닿을 수 없는 호스트. */
 const LOCAL_HOST = /^(localhost|127\.0\.0\.1|0\.0\.0\.0|\[?::1\]?)$/i;
 
+/** 월드 워커 이름 (worker/wrangler.toml 의 name). 안내 문구를 만들 때만 쓴다. */
+const WORKER_NAME = 'humanish-world';
+
 const args = process.argv.slice(2);
 const allowLocal = args.includes('--allow-local');
 
@@ -118,10 +121,10 @@ function parseOrigin(raw) {
 }
 
 /** 브라우저가 붙을 주소. NEXT_ORIGIN 과 스킴이 어긋나면 화면에서 조용히 막힌다. */
-function checkWsUrl(raw, origin) {
+function checkWsUrl(raw, origin, name = 'WORLD_WS_URL') {
   if (!raw) {
     warn(
-      'NEXT_PUBLIC_WORLD_WS_URL 이 .env.local 에 없다',
+      `${name} 이 .env.local 에 없다`,
       '티켓 발급(/api/world/ticket)이 503 을 준다. 배포된 워커의 wss:// 주소를 넣을 것.',
     );
     return;
@@ -131,24 +134,41 @@ function checkWsUrl(raw, origin) {
   try {
     url = new URL(raw);
   } catch {
-    bad(`NEXT_PUBLIC_WORLD_WS_URL 을 주소로 읽을 수 없다: ${raw}`);
+    bad(`${name} 을 주소로 읽을 수 없다: ${raw}`);
     return;
   }
 
   if (LOCAL_HOST.test(url.hostname) && !allowLocal) {
     bad(
-      `NEXT_PUBLIC_WORLD_WS_URL 이 로컬 주소다: ${url.origin}`,
+      `${name} 이 로컬 주소다: ${url.origin}`,
       '다른 컴퓨터의 브라우저는 이 주소로 붙지 못한다.',
       '배포된 워커 주소(wss://<worker>.<계정>.workers.dev)를 넣을 것.',
     );
     return;
   }
 
+  /*
+   * ★ 호스트가 **월드 워커**인지 본다. 여기서 제일 많이 틀렸다 —
+   *   Next 앱 주소(humanish.…)를 넣어 두면 소켓이 앱 워커로 가서 404 로 끊긴다.
+   *   앱과 월드는 워커가 따로다 (worker/README.md 의 표).
+   */
+  if (origin.startsWith('https://')) {
+    const appHost = new URL(origin).hostname;
+    if (url.hostname === appHost) {
+      bad(
+        `${name} 이 **Next 앱** 주소다: ${url.origin}`,
+        '소켓 경로(/rooms/<id>/ws)는 앱 워커에 없다 — 핸드셰이크가 404 로 끊긴다.',
+        `월드 워커 주소를 넣을 것: wss://${appHost.replace(/^[^.]+/, `${WORKER_NAME}`)}`,
+      );
+      return;
+    }
+  }
+
   // https 화면에서 ws:// 는 브라우저가 mixed content 로 막는다.
   // 콘솔을 열지 않으면 "월드 서버에 붙지 못했다" 한 줄만 보여서 원인을 찾기 어렵다.
   if (origin.startsWith('https://') && url.protocol === 'ws:') {
     bad(
-      `NEXT_ORIGIN 은 https 인데 NEXT_PUBLIC_WORLD_WS_URL 이 ws:// 다: ${url.origin}`,
+      `NEXT_ORIGIN 은 https 인데 ${name} 이 ws:// 다: ${url.origin}`,
       'https 로 열린 화면에서 ws:// 는 브라우저가 막는다. wss:// 로 바꿀 것.',
     );
   }
@@ -190,9 +210,14 @@ async function main() {
 
   const origin = parseOrigin(raw);
   if (origin) {
+    // ★ 이름이 둘이다. WORLD_WS_URL 이 지금 쓰는 이름이고(런타임에 읽힌다),
+    //   NEXT_PUBLIC_WORLD_WS_URL 은 옛 이름이다 — 빌드에 박혀서 고치려면 재빌드가
+    //   필요했다. 티켓 라우트가 같은 순서로 고르므로 여기도 같은 순서로 본다.
+    const wsName = env.WORLD_WS_URL ? 'WORLD_WS_URL' : 'NEXT_PUBLIC_WORLD_WS_URL';
+    const wsRaw = env.WORLD_WS_URL ?? env.NEXT_PUBLIC_WORLD_WS_URL;
     console.log(`  NEXT_ORIGIN              ${origin}`);
-    console.log(`  NEXT_PUBLIC_WORLD_WS_URL ${env.NEXT_PUBLIC_WORLD_WS_URL ?? '(없음)'}\n`);
-    checkWsUrl(env.NEXT_PUBLIC_WORLD_WS_URL?.trim(), origin);
+    console.log(`  ${wsName.padEnd(24)} ${wsRaw ?? '(없음)'}\n`);
+    checkWsUrl(wsRaw?.trim(), origin, wsName);
   }
 
   if (!env.WORLD_SHARED_SECRET) {

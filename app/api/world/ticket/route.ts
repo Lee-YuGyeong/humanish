@@ -31,9 +31,20 @@ export async function POST(req: Request): Promise<Response> {
     if (!secret) {
       throw new ApiError(503, 'WORLD_SHARED_SECRET이 없다. .env.local.example 참고');
     }
-    const wsUrl = process.env.NEXT_PUBLIC_WORLD_WS_URL;
+    /*
+     * ┌─ ★ WORLD_WS_URL 을 먼저 본다 (NEXT_PUBLIC_ 은 하위 호환) ─────────────────┐
+     * │ `NEXT_PUBLIC_` 이 붙은 값은 **빌드 때 문자열로 코드에 박힌다.** 이 값은    │
+     * │ 서버에서만 쓰는데도 그 접두사가 붙어 있어서, 주소를 고치려면 매번 다시     │
+     * │ 빌드해야 했다 — 워커에 시크릿을 넣어도 안 바뀐다(실제로 그렇게 한나절을    │
+     * │ 태웠다). 접두사 없는 이름은 런타임에 읽히므로 `wrangler secret put` 한 번  │
+     * │ 으로 바뀐다.                                                             │
+     * │                                                                          │
+     * │ 옛 이름도 계속 받는다 — 배포된 워커에 아직 그 값만 있는 환경이 있다.       │
+     * └──────────────────────────────────────────────────────────────────────────┘
+     */
+    const wsUrl = process.env.WORLD_WS_URL ?? process.env.NEXT_PUBLIC_WORLD_WS_URL;
     if (!wsUrl) {
-      throw new ApiError(503, 'NEXT_PUBLIC_WORLD_WS_URL이 없다. .env.local.example 참고');
+      throw new ApiError(503, 'WORLD_WS_URL이 없다. .env.local.example 참고');
     }
     // 주소 모양부터 본다. 여기서 안 걸러내면 티켓은 정상 발급되고 소켓만 조용히
     // 실패해서, 화면에는 원인을 못 담은 connection_failed 만 남는다.
@@ -43,12 +54,12 @@ export async function POST(req: Request): Promise<Response> {
     try {
       wsHost = new URL(wsUrl);
     } catch {
-      throw new ApiError(503, `NEXT_PUBLIC_WORLD_WS_URL을 주소로 읽을 수 없다 (${wsUrl})`);
+      throw new ApiError(503, `WORLD_WS_URL을 주소로 읽을 수 없다 (${wsUrl})`);
     }
     if (wsHost.protocol !== 'ws:' && wsHost.protocol !== 'wss:') {
       throw new ApiError(
         503,
-        `NEXT_PUBLIC_WORLD_WS_URL이 ws:// 나 wss:// 로 시작하지 않는다 (${wsUrl}). ` +
+        `WORLD_WS_URL이 ws:// 나 wss:// 로 시작하지 않는다 (${wsUrl}). ` +
           '로컬은 ws://127.0.0.1:8787, 배포는 wss://<워커>.workers.dev',
       );
     }
@@ -57,13 +68,24 @@ export async function POST(req: Request): Promise<Response> {
     // 소켓이 조용히 죽고 화면엔 "월드 서버에 붙지 못했다"만 남아 원인이 안 보인다.
     // 터널·프록시 뒤에서는 req.url이 http로 재구성되므로 x-forwarded-proto를 먼저 본다.
     const proto = req.headers.get('x-forwarded-proto')?.split(',')[0].trim() ?? new URL(req.url).protocol.replace(':', '');
-    if (proto === 'https' && wsUrl.startsWith('ws://')) {
+    if (proto === 'https' && wsHost.protocol === 'ws:') {
       throw new ApiError(
         503,
-        `화면은 https인데 NEXT_PUBLIC_WORLD_WS_URL이 ws://다 (${wsUrl}). ` +
+        `화면은 https인데 WORLD_WS_URL이 ws://다 (${wsUrl}). ` +
           '브라우저가 막는다 — 배포된 워커의 wss:// 주소를 쓸 것 (npm run world:deploy)',
       );
     }
+
+    /*
+     * ★ 손으로 적은 값을 그대로 내보내지 않는다. **파서가 정규화한 주소**를 쓴다.
+     *
+     *   `wss:/host`(슬래시 하나)처럼 흔한 오타는 URL 파서가 알아서 보정하지만,
+     *   그 보정은 파서를 탈 때만 일어난다 — 클라이언트는 이 문자열에 경로를 이어
+     *   붙이고(`${base}/rooms/...`), 어딘가에서 문자열 비교라도 하면 그때 갈린다.
+     *   여기서 한 번 정규화해 두면 그 뒤로는 아무도 그 함정을 못 밟는다.
+     *   경로가 붙은 주소(리버스 프록시 뒤)도 href 라서 그대로 살아남는다.
+     */
+    const wsUrlNormalized = wsHost.href.replace(/\/$/, '');
 
     // 쿠키로 되찾는다. 클라이언트가 보낸 player_id는 쓰지 않는다 (I9).
     const me = await requirePlayer(roomId);
@@ -94,7 +116,7 @@ export async function POST(req: Request): Promise<Response> {
     return Response.json(
       {
         ticket,
-        ws_url: wsUrl,
+        ws_url: wsUrlNormalized,
         self: {
           id: me.id,
           room_id: roomId,
