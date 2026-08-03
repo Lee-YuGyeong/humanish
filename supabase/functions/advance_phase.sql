@@ -170,8 +170,11 @@ security definer
 set search_path = public, pg_temp
 as $$
 declare
-  v_top uuid[];
-  v_n   int;
+  v_top  uuid[];
+  v_n    int;
+  -- 세는 표가 하나도 없어서 후보를 전체(또는 재투표 후보)로 채웠는가.
+  -- ★ 이걸 구분하지 않으면 무투표 판이 "동점"으로 읽혀 revote 로 샌다 (아래 분기).
+  v_none boolean := false;
 begin
   -- 사람 표만, (revote면) 후보 안에서만 센다. 최다 득표 자리들을 v_top 에 모은다.
   with tally as (
@@ -187,6 +190,7 @@ begin
 
   -- 세는 표가 하나도 없다. 판을 끝내야 하므로 무작위 지목으로 떨어진다.
   if v_top is null then
+    v_none := true;
     if p_phase = 'revote' then
       select array_agg(id) into v_top
         from players where room_id = p_room_id and id = any(p_candidates);
@@ -199,7 +203,10 @@ begin
   v_n := coalesce(array_length(v_top, 1), 0);
 
   -- vote 에서 동점이면 후보를 좁혀 재투표로 넘긴다 (지목은 아직 없다).
-  if p_phase = 'vote' and v_n > 1 then
+  -- ★ 무투표 판(v_none)은 여기로 오지 않는다. SPEC §5.1 이 revote 조건을 "**사람 표**의
+  --   최다 득표가 동점"으로 못 박았고, 표가 아예 없는 판은 동점이 아니라 표가 없는 것이다.
+  --   빼먹으면 전원 이탈한 방이 20초짜리 재투표를 한 바퀴 더 돌고 나서야 끝난다.
+  if p_phase = 'vote' and v_n > 1 and not v_none then
     nominated  := null;
     candidates := v_top;
     return;
