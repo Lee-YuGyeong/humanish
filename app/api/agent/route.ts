@@ -79,7 +79,7 @@ function nimConfig(): NimConfig | null {
      *   fallback 플래그가 안 켜져서 성공으로 집계된다. 반드시 reasoning 을 읽어야 갈린다.
      *
      *              모델                        정상   JSON깨짐  폴백  8초초과
-     *   google/gemma-4-31b-it                  92%      0       1      4   ← 채택
+     *   google/gemma-4-31b-it                  92%      0       1      4
      *   meta/llama-3.1-8b-instruct             92%      1       0      0
      *   nvidia/nemotron-3-ultra-550b-a55b      50%      2       4      6
      *   minimaxai/minimax-m3                   50%      0       6     12
@@ -97,8 +97,16 @@ function nimConfig(): NimConfig | null {
      * gemma 의 약점은 내용 붕괴다(같은 질문 10회에 전부 "마라탕 어때?"). 실시간 생성만으로
      * 봇을 굴리면 봇들이 같은 답을 한다 — SPEC §17 의 문구 풀 우선이 이걸 막는다.
      * 미리 만드는 문구 풀은 다양성이 유일하게 살아 있는 minimaxai/minimax-m3 로 뽑는다.
+     *
+     * ── 2026-08-04: 기본값을 nemotron-3-super 로 바꿨다 (지시) ────────────────
+     * ★ 위 실측과 어긋나는 선택이다. 표에 super 행이 없는 건 안 재서가 아니라
+     *   윗줄(추론 모델 탈락)에서 계열째 떨어뜨렸기 때문이고, 그때 super 가 떨어진
+     *   사유는 지연도 JSON 도 아닌 **한국어에 중국어가 섞인 것**이다. 그 증상은
+     *   parseOutput 을 통과해서 폴백 플래그가 안 켜진다 — 즉 집계로는 정상으로
+     *   잡히고 화면에서만 티가 난다. 봇 티는 여기서 난다.
+     *   되돌릴 거면 'google/gemma-4-31b-it' 로 돌아가면 된다.
      */
-    model: process.env.NVIDIA_NIM_MODEL || 'google/gemma-4-31b-it',
+    model: process.env.NVIDIA_NIM_MODEL || 'nvidia/nemotron-3-super-120b-a12b',
   };
 }
 
