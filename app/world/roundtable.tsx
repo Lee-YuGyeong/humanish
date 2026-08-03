@@ -281,9 +281,20 @@ function makeScreenTexture(c: ScreenContent, round: number, totalRounds: number)
   canvas.height = TOPIC_TEX_H;
   const ctx = canvas.getContext('2d');
   if (ctx) {
+    /*
+     * ★ **막을 통째로 덮는다. 반투명으로 두지 않는다.**
+     *   0.92 로 깔았더니 뒤에 있던 인트로 영상의 사람이 판을 뚫고 비쳤다.
+     *   여백(둥근 판 바깥 8px)도 비므로 판만 칠해서는 가장자리가 샌다.
+     *   먼저 캔버스 전체를 불투명하게 칠하고 그 위에 판을 얹는다 —
+     *   영사막과 크기가 같은 평면이라 이걸로 막이 완전히 가려진다.
+     *   (영상 자체도 판이 열리면 꺼진다. warehouse.tsx — 방어선을 둘로 둔다.)
+     */
+    ctx.fillStyle = '#0b0908';
+    ctx.fillRect(0, 0, TOPIC_TEX_W, TOPIC_TEX_H);
+
     // 둥근 어두운 판
     roundRect(ctx, 8, 8, TOPIC_TEX_W - 16, TOPIC_TEX_H - 16, 28);
-    ctx.fillStyle = 'rgba(12,9,6,0.92)';
+    ctx.fillStyle = '#0c0906';
     ctx.fill();
     ctx.lineWidth = 4;
     ctx.strokeStyle = c.accent;

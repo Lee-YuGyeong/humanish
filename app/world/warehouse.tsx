@@ -23,6 +23,9 @@ import * as THREE from "three";
 
 import { groundHeightAt, resolveCollisions } from "@/lib/mp/collide";
 import { pauseMusic, startMusic, stopMusic } from "./music";
+// 판이 열렸는지만 읽는다 (상영을 끊는 조건). roundtable.tsx 가 이 파일을 읽으므로
+// 그쪽이 아니라 **스토어**를 본다 — 순환 import 를 만들지 않는다.
+import { useRoundtableStore } from "./roundtable-store";
 
 /* ─────────────────────────── 창고 치수 (월드 단위 ≈ m) ─────────────────────────── */
 
@@ -385,6 +388,30 @@ function ScreenVideo({ onIntroEnd }: { onIntroEnd?: () => void }) {
   /** 상영이 끝났나(또는 재생 중 실패했나). 참이면 막을 끈다 */
   const [finished, setFinished] = useState(false);
   const videoRef = useRef<HTMLVideoElement | null>(null);
+
+  /*
+   * ┌─ ★ 판이 열리면 **상영을 끊는다** ─────────────────────────────────────────┐
+   * │ 막을 끄는 조건을 'ended' 하나로 두면 부족하다. 판은 **누구든 한 사람**의   │
+   * │ intro_done 으로 열리기 때문이다 — 남이 먼저 다 보고 판이 시작되면, 내 쪽   │
+   * │ 영상은 아직 한창인데 그 위에 주제가 겹친다. 실제로 그렇게 보였다:          │
+   * │ 주제 판 뒤로 영상 속 사람이 그대로 비쳤다.                                │
+   * │                                                                          │
+   * │ 늦게 들어온 사람도 같다 — 판이 도는 중에 접속하면 영상을 처음부터 틀면서    │
+   * │ 게임 화면을 가린다.                                                       │
+   * │                                                                          │
+   * │ 그래서 "내 영상이 끝났나"가 아니라 **"판이 열렸나"** 로 끊는다. 소리도 같이 │
+   * │ 멎어야 한다 — 화면만 끄면 게임 내내 영상 소리가 깔린다.                    │
+   * └──────────────────────────────────────────────────────────────────────────┘
+   */
+  const roundStarted = useRoundtableStore((s) => s.phase !== 'idle');
+  useEffect(() => {
+    if (!roundStarted || finished) return;
+    setFinished(true);
+    setTexture(null);
+    videoRef.current?.pause();
+    // 영상이 비켰으니 음악이 자리를 이어받는다 (onEnded 와 같은 순서)
+    startMusic();
+  }, [roundStarted, finished]);
 
   useEffect(() => {
     /** 카운트다운이 끝나는 시점에 부른다. 아래에서 채운다 */
