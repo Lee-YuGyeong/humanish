@@ -28,8 +28,14 @@
 
 import { timingSafeEqual } from '@/lib/mp/ticket';
 import { fitChatReply } from '@/lib/agent/chat-reply';
-import { applyTypo, observeStyle } from '@/lib/agent/disguise';
-import { FALLBACK_POOL, type AgentContext, type AgentOutput } from '@/lib/agent/generate';
+import { applyTypo, observeStyle, stretchLaugh, stripAvoidedPunct } from '@/lib/agent/disguise';
+import {
+  ASK_BACK_CHANCE,
+  ASK_BACK_CHANCE_INITIATE,
+  FALLBACK_POOL,
+  type AgentContext,
+  type AgentOutput,
+} from '@/lib/agent/generate';
 import { personaForSeat } from '@/lib/agent/persona';
 import { AGENT_SELF_URL, agentHeaders } from '@/lib/agent/prefill';
 import { WORLD_PERSONAS } from '@/lib/agent/world-persona';
@@ -62,6 +68,11 @@ interface Body {
   history?: { nickname?: string; text?: string; human?: boolean }[];
   /** 반응을 부른 사람 발화. 스스로 말을 꺼내는 경우에는 없다. */
   trigger?: string | null;
+  /**
+   * 방금 일어난 일. 발화가 아니라 **사건**이다 ("익명3이 방금 들어왔다").
+   * 워커가 입·퇴장에서 싣는다 (worker/src/room-do.ts). trigger와 같이 오지 않는다.
+   */
+  event?: string | null;
 }
 
 interface ChatLine {
@@ -172,21 +183,49 @@ export async function POST(req: Request): Promise<Response> {
      *   동문서답으로 보인다 (실측: "안녕하세요" → "야 근데 야근 너무 힘들어").
      *   게임이 시작된 방의 진짜 봇은 그대로 게임 페르소나를 쓴다.
      */
-    const jobs = bots.map((b) => ({
-      player_id: b.id,
-      context: {
-        persona: b.synthetic ? worldPersonaFor(roomId, b.seat) : personaForSeat(b.seat),
-        // 월드 AI는 무대도 라운지다 — 시스템 프롬프트에서 게임 문장이 전부 빠진다
-        // (generate.ts WORLD_RULES). 페르소나가 "게임 중이 아니다"로 게임 프레임을
-        // 되받아치던 구조를 대체한다. 게임이 시작된 방의 진짜 봇은 게임 무대 그대로.
-        setting: b.synthetic ? ('world' as const) : ('game' as const),
-        phase: 'chat' as const,
-        question: trigger ?? undefined,
-        visibleHistory,
-        styleProfile,
-        suspicionOnMe: 0.2,
-      } satisfies AgentContext,
-    }));
+    /*
+     * ★ 입·퇴장 같은 **사건**은 trigger 가 아니라 event 로 온다 (generate.ts 의
+     *   worldEvent 분기). 둘이 같이 오면 사람 말이 먼저다 — 누가 말을 걸었는데
+     *   "누가 들어왔네"로 답하면 그게 동문서답이다.
+     */
+    const event = typeof body.event === 'string' ? body.event.slice(0, MAX_TEXT_LEN) : null;
+
+    const plan = bots.map((b) => {
+      const persona = b.synthetic ? worldPersonaFor(roomId, b.seat) : personaForSeat(b.seat);
+      return {
+        player_id: b.id,
+        persona,
+        context: {
+          persona,
+          // 월드 AI는 무대도 라운지다 — 시스템 프롬프트에서 게임 문장이 전부 빠진다
+          // (generate.ts WORLD_RULES). 페르소나가 "게임 중이 아니다"로 게임 프레임을
+          // 되받아치던 구조를 대체한다. 게임이 시작된 방의 진짜 봇은 게임 무대 그대로.
+          setting: b.synthetic ? ('world' as const) : ('game' as const),
+          phase: 'chat' as const,
+          question: trigger ?? undefined,
+          worldEvent: trigger ? undefined : (event ?? undefined),
+          /*
+           * ★ 되묻기 주사위는 **여기서** 굴린다 (generate.ts 의 askBack 상자).
+           *   프롬프트에 "가끔 되물어라"를 적으면 8b 는 매번 되묻거나 아예 안 한다.
+           *   말을 거는 차례(trigger 없음)가 더 자주 묻는다 — 원래 말은 질문으로 건다.
+           *
+           * ★ 입·퇴장 인사에는 **안 붙인다.** 인사에 되묻기까지 얹으면 8b 는 인사를
+           *   버리고 질문만 낸다 (실측: 인사 자리에서 "그럼 너 오늘 뭐할까?").
+           *   사람도 문 열고 들어온 사람에게 인사부터 하지 질문부터 하지 않는다.
+           */
+          askBack:
+            !trigger && event
+              ? false
+              : Math.random() < (trigger ? ASK_BACK_CHANCE : ASK_BACK_CHANCE_INITIATE),
+          visibleHistory,
+          styleProfile,
+          suspicionOnMe: 0.2,
+        } satisfies AgentContext,
+      };
+    });
+    const jobs = plan.map(({ player_id, context }) => ({ player_id, context }));
+    // 후처리(오타·웃음 길이)가 인물마다 다르다 — 응답을 받은 뒤에도 인물을 알아야 한다.
+    const personaOf = new Map(plan.map((p) => [p.player_id, p.persona]));
 
     const res = await fetch(`${AGENT_SELF_URL}/api/agent`, {
       method: 'POST',
@@ -241,11 +280,32 @@ export async function POST(req: Request): Promise<Response> {
        *   비율은 방 사람들의 오타 빈도(styleProfile.typoRate)를 따른다 — 봇만 유난히
        *   많이/적게 틀리면 그게 거꾸로 봇 지문이다 (I1, disguise.ts의 상자).
        */
-      const typo = (s: string) => applyTypo(s, styleProfile, Math.random);
+      /*
+       * ★ 웃음 길이는 **인물을 따라** 흔든다 (disguise.ts 의 stretchLaugh 상자).
+       *   8b 는 "웃음은 ㅋㅋ만 쓴다"를 글자 수까지 지켜서 매번 정확히 두 글자로
+       *   웃는다 — 늘 같은 길이로 웃는 자리는 세어 보면 드러난다 (I1).
+       *   없던 웃음을 만들지는 않는다. 웃음을 안 쓰는 인물(laugh 없음)은 그대로다.
+       *
+       *   상한 검사 뒤라 길이가 최대 몇 글자 늘 수 있다. 그건 그대로 둔다 —
+       *   "ㅋㅋㅋㅋㅋ"는 길어도 사람이 쓰는 모양이고, 상한이 막으려던 건 봇 티가
+       *   나는 긴 **문장**이다.
+       */
+      /*
+       * ★ 인물이 안 쓰기로 한 부호는 걷어낸다. 느낌표를 금지한 인물이 "안녕하세요!"
+       *   로 인사한 게 실측됐다 — 부호 하나가 새면 그 인물이 다른 인물과 안 갈린다.
+       *   오타·웃음보다 **먼저** 건다: 오타가 붙인 글자를 다시 지울 일이 없게.
+       */
+      const persona = personaOf.get(r.player_id);
+      const human = (s: string) =>
+        stretchLaugh(
+          applyTypo(stripAvoidedPunct(s, persona?.avoidPunct), styleProfile, Math.random),
+          persona?.laugh,
+          Math.random,
+        );
       results.push({
         player_id: r.player_id,
-        text: typo(text),
-        tail: tail && !FALLBACK_POOL.includes(tail) ? typo(tail) : null,
+        text: human(text),
+        tail: tail && !FALLBACK_POOL.includes(tail) ? human(tail) : null,
       });
     }
 

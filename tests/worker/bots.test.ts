@@ -516,6 +516,33 @@ describe('pickResponder', () => {
     expect(companionHit).toBeGreaterThan(game.hit);
   });
 
+  it('확률을 갈아끼울 수 있다 — 사람 발화가 아닌 자리(봇 발화·입퇴장)용이다', () => {
+    /*
+     * 호출부가 주사위를 한 번 더 굴리면 실제 확률이 두 값의 곱이 돼서 상수만 봐서는
+     * 알 수 없어진다. 그래서 확률 자체를 받는다 (room-do.ts의 maybeChain·reactToEvent).
+     */
+    const t0 = 1_000_000;
+    let never = 0;
+    let always = 0;
+    for (let i = 0; i < 200; i += 1) {
+      if (pickResponder([walkingBot(t0)], t0, true, 0) !== null) never += 1;
+      if (pickResponder([walkingBot(t0)], t0, false, 1) !== null) always += 1;
+    }
+    expect(never).toBe(0);
+    expect(always).toBe(200);
+  });
+
+  it('확률을 갈아끼워도 쿨다운·예약 규칙은 그대로다', () => {
+    const t0 = 1_000_000;
+    const held = walkingBot(t0);
+    scheduleSpeech(held, null, t0);
+    expect(pickResponder([held], t0, true, 1)).toBeNull();
+
+    const cooling = walkingBot(t0);
+    cooling.nextReactAt = t0 + 10_000;
+    expect(pickResponder([cooling], t0, true, 1)).toBeNull();
+  });
+
   it('동행자 모드의 쿨다운이 게임보다 짧다', () => {
     const t0 = 1_000_000;
     const pick = (companion: boolean) => {

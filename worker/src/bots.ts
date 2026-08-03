@@ -595,16 +595,24 @@ export function readDelayMs(): number {
  * 고른 봇에는 쿨다운을 걸고 자발 발화 시각도 미룬다 — 방금 대꾸한 봇이 몇 초 뒤에
  * 혼잣말까지 하면 그 자리만 유난히 말이 많아진다.
  *
- * **봇의 말에는 반응하지 않는다.** 호출부가 사람 소켓의 채팅에서만 부르므로
- * 구조적으로 지켜진다 — 봇끼리 주고받기 시작하면 끝없이 돈다.
+ * ★ **말한 당사자를 빼는 건 호출부의 몫이다.** 여기 온 배열에서 고를 뿐이라,
+ *   봇 발화에 대꾸를 붙일 때 말한 봇을 안 걸러내면 자기 말에 자기가 답한다
+ *   (room-do.ts의 maybeChain). 봇→봇 연쇄를 몇 번까지 허용할지도 거기서 센다 —
+ *   이 함수는 한 번의 선택만 안다.
  */
 export function pickResponder(
   bots: BotState[],
   now: number,
   /** 게임이 안 돌아가는 방(월드 AI만 있는 방)이면 훨씬 잘 대꾸한다 — 숨길 게 없다. */
   companionMode = false,
+  /**
+   * 반응 확률을 갈아끼운다. 사람 발화가 아닌 자리(봇 발화·입퇴장)를 위한 것이다 —
+   * 여기서 안 받으면 호출부가 주사위를 한 번 더 굴리게 되고, 그러면 실제 확률이
+   * 두 값의 곱이 돼서 상수만 봐서는 알 수 없어진다.
+   */
+  chanceOverride?: number,
 ): BotState | null {
-  const chance = companionMode ? COMPANION_REACT_CHANCE : BOT_REACT_CHANCE;
+  const chance = chanceOverride ?? (companionMode ? COMPANION_REACT_CHANCE : BOT_REACT_CHANCE);
   const cooldown = companionMode ? COMPANION_REACT_COOLDOWN_MS : BOT_REACT_COOLDOWN_MS;
 
   const eligible = bots.filter((b) => !b.speechHeld && now >= b.nextReactAt);

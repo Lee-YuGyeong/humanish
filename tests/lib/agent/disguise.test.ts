@@ -11,7 +11,10 @@ import {
   MAX_TYPING_MS,
   MIN_TYPING_MS,
   observeStyle,
+  stretchLaugh,
+  stripAvoidedPunct,
   typingDelayMs,
+  type LaughStyle,
 } from '@/lib/agent/disguise';
 
 /** 난수를 손으로 먹인다 — applyTypo가 rand를 인자로 받는 이유가 이거다 (파일 규약: 순수). */
@@ -128,5 +131,91 @@ describe('applyTypo — 오타는 띄어쓰기 붙이기 하나뿐이다', () =>
       const out = applyTypo(src, style, rand);
       expect(loosen(out), `seed ${seed}`).toBe(loosen(src));
     }
+  });
+});
+
+describe('stretchLaugh — 웃음 길이는 인물을 따라 흔들린다', () => {
+  /*
+   * 8b는 "웃음은 ㅋㅋ만 쓴다"를 **글자 수까지** 지켜서 매번 정확히 두 글자로 웃는다.
+   * 사람은 ㅋ 하나로 툭 던지기도 하고 ㅋㅋㅋㅋㅋ까지 늘리기도 한다 — 늘 같은 길이로
+   * 웃는 자리는 세어 보면 드러난다 (I1). 폭은 인물마다 다르다.
+   */
+  const easy: LaughStyle = { ch: 'ㅋ', base: 2, max: 5 };
+
+  it('웃음을 안 쓰는 인물(laugh 없음)은 손대지 않는다', () => {
+    expect(stretchLaugh('ㅋㅋ 뭐야', undefined, feed([0]))).toBe('ㅋㅋ 뭐야');
+  });
+
+  it('웃음이 없는 발화는 그대로다 — 없던 웃음을 만들지 않는다', () => {
+    expect(stretchLaugh('밥 먹었어', easy, feed([0, 0]))).toBe('밥 먹었어');
+  });
+
+  it('인물이 안 쓰는 글자는 건드리지 않는다 — ㅋ 인물에게 ㅎㅎ는 남의 지문이다', () => {
+    expect(stretchLaugh('ㅎㅎ 그러네', easy, feed([0, 0]))).toBe('ㅎㅎ 그러네');
+  });
+
+  it('가끔 한 글자로 툭 던진다', () => {
+    expect(stretchLaugh('ㅋㅋ 뭐야', easy, feed([0, 0]))).toBe('ㅋ 뭐야');
+  });
+
+  it('대부분은 평소 길이 그대로다 — 매번 흔들리면 그것도 지문이다', () => {
+    expect(stretchLaugh('ㅋㅋ 뭐야', easy, feed([0, 0.5]))).toBe('ㅋㅋ 뭐야');
+  });
+
+  it('신나면 그 인물의 max까지 늘어난다', () => {
+    expect(stretchLaugh('ㅋㅋ 뭐야', easy, feed([0, 0.9, 0.99]))).toBe('ㅋㅋㅋㅋㅋ 뭐야');
+  });
+
+  it('base와 max가 같은 인물은 늘어나지 않는다 — 폭이 좁은 게 그 인물의 성격이다', () => {
+    const flat: LaughStyle = { ch: 'ㅎ', base: 2, max: 2 };
+    expect(stretchLaugh('ㅎㅎ 그러네', flat, feed([0, 0.99]))).toBe('ㅎㅎ 그러네');
+  });
+
+  it('웃음 말고는 한 글자도 안 바뀐다 — 이게 계약이다', () => {
+    const src = 'ㅋㅋ 아까 그거 봤어? ㅋㅋ';
+    const strip = (t: string) => t.replace(/ㅋ/g, '');
+    for (let seed = 0; seed < 300; seed += 1) {
+      const rand = () => ((seed * 7919 + 104729) % 65521) / 65521;
+      expect(strip(stretchLaugh(src, easy, rand)), `seed ${seed}`).toBe(strip(src));
+    }
+  });
+
+  it('한 발화에 하나만 흔든다 — 두 번 흔들면 사람이 아니라 고장 난 것이다', () => {
+    const src = 'ㅋㅋ 아까 그거 봤어 ㅋㅋ';
+    const runs = (t: string) => (t.match(/ㅋ+/g) ?? []).map((r) => r.length);
+    const before = runs(src);
+    for (let seed = 0; seed < 300; seed += 1) {
+      const rand = () => ((seed * 9301 + 49297) % 233280) / 233280;
+      const after = runs(stretchLaugh(src, easy, rand));
+      expect(after.length, `seed ${seed}`).toBe(before.length);
+      expect(after.filter((n, i) => n !== before[i]).length, `seed ${seed}`).toBeLessThanOrEqual(1);
+    }
+  });
+});
+
+describe('stripAvoidedPunct — 인물이 안 쓰는 부호는 걷어낸다', () => {
+  /*
+   * 실측: 느낌표를 금지한 선영이 "안녕하세요!"로 인사했다. 8b는 인사·감탄 자리에서
+   * 금칙을 놓친다. 부호 하나가 새면 그 인물이 다른 인물과 안 갈린다 (지문 표).
+   */
+  it('금지 목록이 없으면 그대로다', () => {
+    expect(stripAvoidedPunct('안녕하세요!', undefined)).toBe('안녕하세요!');
+    expect(stripAvoidedPunct('안녕하세요!', [])).toBe('안녕하세요!');
+  });
+
+  it('느낌표를 금지한 인물의 인사에서 느낌표가 빠진다', () => {
+    expect(stripAvoidedPunct('안녕하세요!', ['!'])).toBe('안녕하세요');
+  });
+
+  it('여러 부호를 한 번에 걷는다', () => {
+    expect(stripAvoidedPunct('그러네~ 진짜!', ['!', '~'])).toBe('그러네 진짜');
+  });
+
+  it('부호를 뺀 자리의 겹공백을 정리한다 — 빈칸 두 개는 사람이 안 친다', () => {
+    expect(stripAvoidedPunct('아 ! 그래', ['!'])).toBe('아 그래');
+  });
+
+  it('한글은 한 글자도 안 건드린다 — 자모(ㅋㅋ)는 여기서 지우지 않는다', () => {
+    expect(stripAvoidedPunct('내일 봐요 ㅋㅋ', ['!', '~', '.'])).toBe('내일 봐요 ㅋㅋ');
   });
 });

@@ -133,6 +133,106 @@ export function applyTypo(text: string, style: StyleProfile, rand: () => number)
   return ops[Math.floor(rand() * ops.length)]();
 }
 
+// ── 웃음 ────────────────────────────────────────────────────────────────────
+/*
+ * ┌─ 왜 웃음 길이를 코드에서 흔드는가 ────────────────────────────────────────┐
+ * │ 인물 프롬프트가 "웃음은 ㅋㅋ만 쓴다"라고 못 박아 두는데(world-persona.ts의    │
+ * │ 지문 표), 8b 는 그걸 **글자 수까지 그대로** 지킨다 — 매번 정확히 두 글자다.  │
+ * │ 사람은 그러지 않는다. 같은 사람이 ㅋ 하나로 툭 던지기도 하고 ㅋㅋㅋㅋㅋ까지   │
+ * │ 늘리기도 한다. 늘 같은 길이로 웃는 자리는 세어 보면 드러난다 (I1).          │
+ * │                                                                            │
+ * │ 오타(applyTypo)와 같은 자리에서 같은 규약으로 얹는다 — 발화는 멀쩡하게 받고, │
+ * │ 사람다움은 후처리로. 프롬프트에 "가끔 길게 웃어라"를 넣으면 8b 는 그것마저    │
+ * │ 매번 똑같이 지킨다.                                                        │
+ * │                                                                            │
+ * │ ★ 없던 웃음을 만들지 않는다. 이미 있는 웃음의 길이만 바꾼다 — 웃음 표기는    │
+ * │   인물을 가르는 지문이라(ㅋㅋ=easy · ㅎㅎ=warm · 나머지는 없음), 없는 자리에  │
+ * │   끼워 넣으면 인물이 뭉개진다.                                             │
+ * └──────────────────────────────────────────────────────────────────────────┘
+ */
+
+/**
+ * 웃음 표기 성향. 인물마다 다르다 (persona.ts의 `Persona.laugh`).
+ *
+ * 이 값이 **없는 인물 = 웃음을 안 쓰는 인물**이고, stretchLaugh는 손대지 않는다.
+ * 두 글자를 섞는 인물은 두지 않는다 — 그 자체가 인물을 가르는 지문이다.
+ */
+export interface LaughStyle {
+  /** 이 인물이 쓰는 웃음 글자. */
+  ch: 'ㅋ' | 'ㅎ';
+  /** 평소 길이. 인물 프롬프트가 적어 둔 것과 같아야 한다. */
+  base: number;
+  /** 제일 신났을 때 길이. base와 같으면 늘어나지 않는다. */
+  max: number;
+}
+
+/** 이 확률 아래면 한 글자로 툭 던진다 ("ㅋ"). */
+const LAUGH_SHORT = 0.2;
+/** 여기까지는 평소 길이 그대로 — 대부분의 발화는 안 바뀐다. */
+const LAUGH_BASE = 0.7;
+
+/** 이번 웃음의 길이를 고른다. base에 몰리고 양쪽으로 조금씩 흩어진다. */
+function laughLength(laugh: LaughStyle, rand: () => number): number {
+  const r = rand();
+  if (r < LAUGH_SHORT) return 1;
+  if (r < LAUGH_BASE) return laugh.base;
+  const span = laugh.max - laugh.base;
+  if (span <= 0) return laugh.base;
+  return laugh.base + 1 + Math.floor(rand() * span);
+}
+
+/**
+ * 발화 안의 웃음 하나를 골라 길이를 다시 뽑는다. 순수 함수다 — 난수는 rand로 받는다.
+ *
+ * 인물이 쓰는 글자(laugh.ch)가 이어진 자리만 후보다. **한 발화에 하나만** 바꾼다 —
+ * applyTypo와 같은 이유로, 한 줄에서 두 번 흔들면 그건 사람이 아니라 고장 난 것으로
+ * 읽힌다. laugh가 없으면(웃음을 안 쓰는 인물) 원문 그대로다.
+ */
+export function stretchLaugh(
+  text: string,
+  laugh: LaughStyle | undefined,
+  rand: () => number,
+): string {
+  if (!laugh) return text;
+
+  // 이어진 웃음 덩어리를 전부 모은다. "ㅋㅋ 뭐야 ㅋㅋ"면 후보가 둘이다.
+  const runs: { at: number; len: number }[] = [];
+  for (let i = 0; i < text.length; i += 1) {
+    if (text[i] !== laugh.ch) continue;
+    let len = 1;
+    while (i + len < text.length && text[i + len] === laugh.ch) len += 1;
+    runs.push({ at: i, len });
+    i += len - 1;
+  }
+  if (runs.length === 0) return text;
+
+  const run = runs[Math.floor(rand() * runs.length)];
+  const len = laughLength(laugh, rand);
+  if (len === run.len) return text;
+  return text.slice(0, run.at) + laugh.ch.repeat(len) + text.slice(run.at + run.len);
+}
+
+/**
+ * 인물이 안 쓰기로 한 문장부호를 걷어낸다 (persona.avoidPunct).
+ *
+ * ┌─ 왜 프롬프트로 안 끝나는가 ───────────────────────────────────────────────┐
+ * │ 실측: 느낌표를 금지한 인물이 "안녕하세요!"로 인사했다. 8b는 인사·감탄 자리   │
+ * │ 에서 금칙을 자주 놓친다. 부호 하나가 새면 그 인물이 다른 인물과 안 갈리고,   │
+ * │ 지문 표가 인물을 가르는 방식이라 인물이 뭉개지면 자리도 같이 묶인다 (I1).    │
+ * │                                                                            │
+ * │ ★ 지우는 건 부호뿐이다. 자모(ㅋㅋ·ㅠㅠ)를 지우면 "그러네 ㅎㅎ"가 "그러네"로  │
+ * │   남아 사람이 안 치는 모양이 된다 — 그건 프롬프트가 할 일이다.              │
+ * └──────────────────────────────────────────────────────────────────────────┘
+ *
+ * 부호를 뺀 자리에 생긴 겹공백은 정리한다. 순수 함수다 — 난수를 쓰지 않는다.
+ */
+export function stripAvoidedPunct(text: string, avoid: readonly string[] | undefined): string {
+  if (!avoid || avoid.length === 0) return text;
+  let t = text;
+  for (const ch of avoid) t = t.split(ch).join('');
+  return t.replace(/\s+/g, ' ').trim();
+}
+
 /** 즉답(0ms)은 그 자체로 봇 신호다 (I1). 사람은 읽고 생각하고 친다. */
 export const MIN_TYPING_MS = 900;
 /** 페이즈가 30초라 이 이상 끌면 발화가 페이즈 밖으로 밀린다 (SPEC §5). */

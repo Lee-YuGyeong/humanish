@@ -17,7 +17,7 @@
  */
 
 import { personaForSeat } from '@/lib/agent/persona';
-import { observeStyle } from '@/lib/agent/disguise';
+import { observeStyle, stretchLaugh, stripAvoidedPunct } from '@/lib/agent/disguise';
 import { FALLBACK_POOL, type AgentContext, type AgentOutput } from '@/lib/agent/generate';
 import { AGENT_SELF_URL, agentHeaders, type BotSeat } from '@/lib/agent/prefill';
 import { getServiceClient } from '@/lib/server/supabase';
@@ -166,12 +166,22 @@ export async function regenerateBotChatReply(roomId: string): Promise<void> {
     };
 
     const rowOf = new Map(pending.map((m) => [m.player_id, m.id]));
+    const seatOf = new Map(bots.map((b) => [b.id, b.seat]));
     let replaced = 0;
     for (const r of data.results ?? []) {
       // LLM 실패분·구제 문구("ㅇㅇ")보다 풀 문구가 낫다 — 덮지 않는다
       if (r.fallback) continue;
-      const text = capChatReply(r.output.messages.join(' '));
-      if (!text || FALLBACK_POOL.includes(text)) continue;
+      const capped = capChatReply(r.output.messages.join(' '));
+      if (!capped || FALLBACK_POOL.includes(capped)) continue;
+      // 인물이 안 쓰는 부호를 걷어내고 웃음 길이를 인물대로 흔든다 (disguise.ts).
+      // 8b는 "ㅋㅋ만 쓴다"를 글자 수까지 지켜서 매번 두 글자로 웃고, 금지한 느낌표는
+      // 인사 자리에서 흘린다. 길이대 판정(capChatReply) 뒤에 얹는 건 world-agent와
+      // 같은 이유다: 상한은 LLM 원문으로만 본다.
+      const seat = seatOf.get(r.player_id);
+      const persona = seat === undefined ? null : personaForSeat(seat);
+      const text = persona
+        ? stretchLaugh(stripAvoidedPunct(capped, persona.avoidPunct), persona.laugh, Math.random)
+        : capped;
       const rowId = rowOf.get(r.player_id);
       if (!rowId) continue;
 

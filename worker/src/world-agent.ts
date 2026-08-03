@@ -45,6 +45,11 @@ export async function fetchAgentLines(
   history: ChatLine[],
   /** 반응을 부른 사람 발화. 스스로 말을 꺼내는 거면 null — 그때는 흐름에 끼어드는 게 맞다. */
   trigger: string | null,
+  /**
+   * 발화가 아니라 **사건**에 대한 반응일 때의 한 줄 ("익명3이 방금 들어왔다").
+   * trigger와 같이 보내지 않는다 — 오리진은 사람 말을 먼저 본다.
+   */
+  event: string | null,
   timeoutMs: number,
 ): Promise<AgentLine[]> {
   const url = `${env.NEXT_ORIGIN.replace(/\/$/, '')}/api/internal/world-agent`;
@@ -56,7 +61,7 @@ export async function fetchAgentLines(
         authorization: `Bearer ${env.WORLD_SHARED_SECRET}`,
         'content-type': 'application/json',
       },
-      body: JSON.stringify({ room_id: roomId, player_ids: playerIds, history, trigger }),
+      body: JSON.stringify({ room_id: roomId, player_ids: playerIds, history, trigger, event }),
       // speakAt을 넘겨 오는 답은 쓸 데가 없다. 호출부가 남은 시간을 그대로 넘긴다.
       signal: AbortSignal.timeout(timeoutMs),
     });

@@ -23,6 +23,10 @@
  */
 
 import {
+  BOT_CHAIN_CHANCE,
+  BOT_CHAIN_MAX,
+  BOT_JOIN_REACT_CHANCE,
+  BOT_LEAVE_REACT_CHANCE,
   BOT_PERSIST_MS,
   BOT_TICK_MS,
   CHAT_HISTORY_MAX,
@@ -108,6 +112,11 @@ export class RoomDO {
    * LLM이 붙으면(3단계) 여기가 그대로 대화 맥락이 된다.
    */
   private chatLog: { id: string; nickname: string; text: string }[] = [];
+  /**
+   * 사람이 마지막으로 말한 뒤로 봇이 봇에게 몇 번 대꾸했나 (maybeChain).
+   * 사람이 한마디 하면 0으로 돌아간다. 잃어도 무해하므로 메모리에만 둔다.
+   */
+  private botChainHops = 0;
 
   constructor(
     private readonly ctx: DurableObjectState,
@@ -239,6 +248,11 @@ export class RoomDO {
     await this.ensureAlarm();
     this.startSim();
 
+    // 누가 들어왔다 — 라운지라면 봇 하나가 아는 척할 수 있다. 사람은 문이 열리면
+    // 웬만하면 한마디 한다 (BOT_JOIN_REACT_CHANCE).
+    // ★ startSim 뒤라야 한다. 틱이 안 돌면 예약해 둔 말을 꺼낼 사람이 없다.
+    this.reactToEvent(Date.now(), `${snapshot.nickname} 들어옴`, BOT_JOIN_REACT_CHANCE);
+
     return new Response(null, { status: 101, webSocket: client });
   }
 
@@ -315,8 +329,12 @@ export class RoomDO {
         this.broadcast({ t: 'chat', id: snap.id, nickname: snap.nickname, text, ts: now });
         this.rememberChat(snap.id, snap.nickname, text);
 
-        // 봇 하나가 대꾸할 수도 있다. **사람 소켓의 채팅에서만 부른다** —
-        // 봇 발화에서도 부르면 봇끼리 끝없이 주고받는다.
+        // 사람이 말했으니 봇→봇 연쇄를 처음으로 되돌린다. 이 값이 하는 일은
+        // "봇들끼리 몇 마디까지 주고받아도 되나"를 세는 것뿐이다 (maybeChain).
+        this.botChainHops = 0;
+
+        // 봇 하나가 대꾸할 수도 있다. **연쇄의 시작은 언제나 사람 발화다** —
+        // 봇 발화에 붙는 대꾸는 maybeChain이 상한을 세면서 따로 건다.
         this.reactToHuman(now, text);
         return;
       }
@@ -342,7 +360,13 @@ export class RoomDO {
       this.stopSim();
       await this.ctx.storage.put(KEY_EMPTY_AT, Date.now());
       await this.persistBots();
+      return; // 아무도 안 남았으면 들을 사람도 없다
     }
+
+    // 아직 사람이 남아 있다. 나간 걸 두고 한마디 할 수도 있다 — 들어올 때보다 드물다.
+    // 새로고침은 여기(4002 superseded)와 입장이 잇달아 오는데, 쿨다운에 걸려
+    // 둘 중 하나만 나간다. 그게 사람이 보는 모습에 가깝다.
+    if (snap) this.reactToEvent(Date.now(), `${snap.nickname} 나감`, BOT_LEAVE_REACT_CHANCE);
   }
 
   /* ─────────────────────────────── 알람 ─────────────────────────────── */
@@ -460,17 +484,9 @@ export class RoomDO {
       }
 
       // ③ 서 있는 시간이 끝났으면 그때 말한다. 이 틱의 stepBot은 이미 idle로 굴렸다.
+      //    뒷줄이 있으면 takeSpeech가 이미 이어 예약했다 — 그래서 tail을 넘기지 않는다.
       const said = takeSpeech(bot, now);
-      if (said !== null) {
-        this.broadcast({
-          t: 'chat',
-          id: bot.id,
-          nickname: bot.nickname,
-          text: said,
-          ts: now,
-        });
-        this.rememberChat(bot.id, bot.nickname, said);
-      }
+      if (said !== null) this.botSpoke(bot, said, now);
     }
 
     if (now - this.lastPersistAt > BOT_PERSIST_MS) {
@@ -499,6 +515,91 @@ export class RoomDO {
   }
 
   /**
+   * 사람이 들어오거나 나갔다 — 봇 하나가 아는 척할 수도 있다.
+   *
+   * ┌─ 왜 라운지에서만 하는가 ───────────────────────────────────────────────────┐
+   * │ 게임 방에서 누가 새로고침한 걸 두고 "어 왔네" 하면, 그건 사람이 아니라       │
+   * │ **접속 로그를 보는 자리**다. 게임 화면에는 입·퇴장이 보이지도 않는다.        │
+   * │ 반대로 라운지는 문이 열리면 사람도 웬만하면 한마디 한다 — 아무 반응이 없는   │
+   * │ 쪽이 더 이상하다.                                                          │
+   * └──────────────────────────────────────────────────────────────────────────┘
+   *
+   * 사건은 발화가 아니라서 trigger가 아니라 event로 넘어간다 (generate.ts의
+   * worldEvent 분기). [방금 너한테 온 말]로 주면 모델이 그 문장에 대꾸한다 —
+   * "익명3 들어옴" → "그러게 들어왔네".
+   */
+  private reactToEvent(now: number, event: string, chance: number): void {
+    if (this.meta?.companionMode !== true) return;
+    const bots = this.bots;
+    if (!bots || bots.length === 0) return;
+
+    const bot = pickResponder(bots, now, true, chance);
+    if (!bot) return;
+
+    // 여기도 읽는 시간을 준다 — 문이 열리는 순간 멈춰 서는 아바타는 그 자체가 표식이다 (I1).
+    scheduleSpeech(bot, null, now, readDelayMs());
+    void this.upgradeSpeech(bot, bot.speechSeq, null, event);
+  }
+
+  /**
+   * 봇이 실제로 한마디 했다 — 내보내고 · 기록하고 · 다른 봇이 받을지 본다.
+   *
+   * 두 경로가 여기로 모인다: 제 시각에 꺼낸 말(tick ③)과 자리를 놓치고 늦게 온
+   * 답(upgradeSpeech). 방에 보이는 결과는 같아야 한다 — 한쪽에만 연쇄가 붙으면
+   * "늦게 말한 자리만 대화가 이어지는" 편차가 생기고, 그건 자리 단위 신호다 (I1).
+   */
+  private botSpoke(bot: BotState, text: string, ts: number, tail: string | null = null): void {
+    this.broadcast({ t: 'chat', id: bot.id, nickname: bot.nickname, text, ts });
+    this.rememberChat(bot.id, bot.nickname, text);
+    // 뒷줄은 앞 줄 바로 뒤에 잇는다 — 사람은 한 생각을 두 번에 나눠 친다.
+    // (tick 경로에서는 takeSpeech가 이미 걸어 뒀으므로 여기 tail은 null이다.)
+    if (tail) scheduleSpeech(bot, tail, ts);
+    this.maybeChain(bot, text, ts);
+  }
+
+  /**
+   * 봇 말을 **다른 봇**이 받는다. 안 받을 때가 더 많다 (BOT_CHAIN_CHANCE).
+   *
+   * ┌─ 왜 열었나 (I1) ──────────────────────────────────────────────────────────┐
+   * │ 봇은 사람 말에만 반응했다. 그러면 봇이 여럿인 방에서 **사람끼리는 말을 주고  │
+   * │ 받는데 어떤 자리들은 서로에게 한마디도 안 하는** 그림이 된다. 그 자리들이    │
+   * │ 한 덩어리로 묶여 보인다.                                                   │
+   * └──────────────────────────────────────────────────────────────────────────┘
+   *
+   * ┌─ 끝없이 도는 건 무엇으로 막나 ─────────────────────────────────────────────┐
+   * │ 확률이 아니라 **연쇄 상한**이다 (BOT_CHAIN_MAX). 확률로만 막으면 아무리 낮게 │
+   * │ 잡아도 언젠가는 길게 이어지고, 그 동안 사람이 낄 자리가 없다. 사람이 한마디  │
+   * │ 하면 0으로 돌아간다 (webSocketMessage의 'chat').                            │
+   * │                                                                            │
+   * │ ★ 말한 당사자를 뺀다. 안 빼면 자기 말에 자기가 답한다 — 자발 발화에서 이미   │
+   * │   한 번 겪은 증상이다 (humanSpokeLast).                                     │
+   * │ ★ 뒷줄이 남았으면(speechHeld) 건너뛴다. 앞 줄만 보고 대꾸를 만들면 아직      │
+   * │   나오지도 않은 말에 답이 걸린다.                                          │
+   * └──────────────────────────────────────────────────────────────────────────┘
+   *
+   * 라운지는 월드 AI가 하나뿐이라(lib/server/world-ai.ts의 WORLD_AI_COUNT) 여기서
+   * 바로 돌아선다. 그 수를 늘릴 때 비로소 켜지는 길이다.
+   */
+  private maybeChain(speaker: BotState, text: string, now: number): void {
+    const bots = this.bots;
+    if (!bots || bots.length < 2) return;
+    if (speaker.speechHeld) return;
+    if (this.botChainHops >= BOT_CHAIN_MAX) return;
+
+    const bot = pickResponder(
+      bots.filter((b) => b !== speaker),
+      now,
+      this.meta?.companionMode === true,
+      BOT_CHAIN_CHANCE,
+    );
+    if (!bot) return;
+
+    this.botChainHops += 1;
+    scheduleSpeech(bot, pickLine(this.botLines(), this.recentTexts()), now, readDelayMs());
+    void this.upgradeSpeech(bot, bot.speechSeq, text);
+  }
+
+  /**
    * 잡아 둔 발화 자리를 LLM 반응으로 채운다 (SPEC §12.3의 폴백 패턴).
    *
    * ★ speakAt은 건드리지 않는다 — 발화 타이밍이 LLM 성공/실패와 무관해야 한다 (I1).
@@ -516,8 +617,10 @@ export class RoomDO {
   private async upgradeSpeech(
     bot: BotState,
     seq: number,
-    /** 반응이면 그 사람 발화. 스스로 꺼내는 말이면 null. */
+    /** 반응이면 그 발화 — 사람 것일 수도, 다른 봇 것일 수도 있다(maybeChain). 혼잣말이면 null. */
     trigger: string | null,
+    /** 발화가 아니라 **사건**에 대한 반응일 때 ("익명3 들어옴"). trigger와 같이 오지 않는다. */
+    event: string | null = null,
   ): Promise<void> {
     const roomId = this.meta?.roomId;
     if (!roomId) return;
@@ -532,6 +635,7 @@ export class RoomDO {
       [bot.id],
       this.chatContext(),
       trigger,
+      event,
       companion ? Math.max(budget, COMPANION_AGENT_TIMEOUT_MS) : budget,
     );
     const line = lines.find((l) => l.player_id === bot.id);
@@ -547,13 +651,10 @@ export class RoomDO {
     if (companion && bot.speechSeq === seq) {
       bot.speechHeld = false;
       bot.pendingText = null;
-      const ts = Date.now();
-      this.broadcast({ t: 'chat', id: bot.id, nickname: bot.nickname, text: line.text, ts });
-      this.rememberChat(bot.id, bot.nickname, line.text);
-      // ★ 뒷줄은 여기서도 살린다. 늦게라도 앞 줄을 말했으면 이어서 한 줄 더 치는 게
-      //   맞다 — 여기서 버리면 두 줄로 나눠 친 말이 늦은 판에서만 한 줄로 끝난다.
-      //   자리를 새로 잡으므로 서서 치는 모습도 평소와 같다.
-      if (line.tail) scheduleSpeech(bot, line.tail, ts);
+      // ★ 뒷줄은 여기서도 살린다(botSpoke가 이어 예약한다). 늦게라도 앞 줄을 말했으면
+      //   이어서 한 줄 더 치는 게 맞다 — 버리면 두 줄로 나눠 친 말이 늦은 판에서만
+      //   한 줄로 끝난다. 자리를 새로 잡으므로 서서 치는 모습도 평소와 같다.
+      this.botSpoke(bot, line.text, Date.now(), line.tail ?? null);
     }
   }
 
@@ -600,8 +701,12 @@ export class RoomDO {
    *
    * 기록이 비었으면 true — 아무도 말한 적 없는 방에서 첫 한마디는 걸어도 된다.
    * **어느 봇이든** 봇이 마지막이면 false다. 자기 자신만 보면 봇 둘이 서로의
-   * 발화를 핑퐁으로 받아 영원히 주고받는다 (bot_reply 가 봇 발화에서 안 불리는
-   * 것과 같은 이유 — webSocketMessage 의 'chat' 주석).
+   * 발화를 핑퐁으로 받아 영원히 주고받는다.
+   *
+   * ★ maybeChain(봇→봇 대꾸)과 헷갈리지 말 것. 저쪽은 **상대의 말을 받는** 길이라
+   *   상한(BOT_CHAIN_MAX)을 세고 사람 발화에서 초기화된다. 여기는 **혼잣말**을
+   *   여는 길이고, 그건 여전히 사람이 말한 뒤에만 열린다 — 자기가 던진 질문에
+   *   자기가 답하는 그림을 막는 게 이 함수의 전부다.
    */
   private humanSpokeLast(): boolean {
     const last = this.chatLog[this.chatLog.length - 1];

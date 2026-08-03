@@ -45,6 +45,36 @@ describe('WORLD_PERSONAS — 라운지 인물 4명', () => {
     expect(owns(/처음부터 끝까지 존댓말이다/), '끝까지 존댓말인 인물').toBe(1);
   });
 
+  it('웃음 길이의 폭도 인물마다 다르다 — 둘 다 ㅋㅋ면 길이로도 안 갈린다', () => {
+    const easy = WORLD_PERSONAS.find((p) => p.id === 'world-easy');
+    const warm = WORLD_PERSONAS.find((p) => p.id === 'world-warm');
+    expect(easy?.laugh?.ch).toBe('ㅋ');
+    expect(warm?.laugh?.ch).toBe('ㅎ');
+    expect(easy?.laugh?.max).not.toBe(warm?.laugh?.max);
+  });
+
+  it('laugh는 그 인물이 실제로 쓰는 글자다 — 금지해 둔 웃음에 폭을 주지 않는다', () => {
+    // 여기가 어긋나면 "ㅋㅋ 안 쓰는 인물"의 ㅋㅋ가 길어진다 — 지문 표가 통째로 무너진다.
+    for (const p of WORLD_PERSONAS) {
+      if (!p.laugh) continue;
+      const banned = p.system.match(/절대 안 쓰는 것: (.*)/)?.[1] ?? '';
+      expect(banned, `${p.id}가 금지한 글자에 laugh가 걸렸다`).not.toContain(p.laugh.ch);
+      expect(p.laugh.base, p.id).toBeGreaterThanOrEqual(1);
+      expect(p.laugh.max, p.id).toBeGreaterThanOrEqual(p.laugh.base);
+    }
+  });
+
+  it('name이 system 속 이름과 같다 — 어긋나면 자기소개 그물이 헛돈다', () => {
+    for (const p of WORLD_PERSONAS) expect(p.system, p.id).toContain(`"${p.name}"`);
+  });
+
+  it('avoidPunct는 인물이 "절대 안 쓰는 것"에 적어 둔 부호뿐이다', () => {
+    const word: Record<string, string> = { '!': '느낌표', '~': '물결', '.': '마침표' };
+    for (const p of WORLD_PERSONAS) {
+      for (const ch of p.avoidPunct ?? []) expect(p.system, `${p.id}: ${ch}`).toContain(word[ch]);
+    }
+  });
+
   it('worldPersonaForSeat — 연속한 자리 4개가 전부 다른 인물이다', () => {
     const ids = [1, 2, 3, 4].map((s) => worldPersonaForSeat(s).id);
     expect(new Set(ids).size).toBe(4);

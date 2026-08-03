@@ -41,6 +41,27 @@ describe('PERSONAS — 봇 4명이 서로 구분돼야 한다 (§9)', () => {
   it('시스템 프롬프트가 비어 있지 않다', () => {
     for (const p of PERSONAS) expect(p.system.length).toBeGreaterThan(50);
   });
+
+  it('name이 system 속 이름과 같다 — 어긋나면 자기소개 그물이 헛돈다', () => {
+    for (const p of PERSONAS) expect(p.system, p.id).toContain(`"${p.name}"`);
+  });
+
+  it('avoidPunct는 인물이 "절대 안 쓰는 것"에 적어 둔 부호뿐이다', () => {
+    // 쓰는 부호를 실수로 넣으면 그 인물의 지문이 통째로 지워진다 (느낌표 쓰는 인물 등)
+    const word: Record<string, string> = { '!': '느낌표', '~': '물결', '.': '마침표' };
+    for (const p of PERSONAS) {
+      for (const ch of p.avoidPunct ?? []) expect(p.system, `${p.id}: ${ch}`).toContain(word[ch]);
+    }
+  });
+
+  it('laugh는 그 인물이 실제로 쓰는 글자다 — 금지해 둔 웃음에 폭을 주지 않는다', () => {
+    for (const p of PERSONAS) {
+      if (!p.laugh) continue;
+      const banned = p.system.match(/절대 안 쓰는 것: (.*)/)?.[1] ?? '';
+      expect(banned, `${p.id}가 금지한 글자에 laugh가 걸렸다`).not.toContain(p.laugh.ch);
+      expect(p.laugh.max, p.id).toBeGreaterThanOrEqual(p.laugh.base);
+    }
+  });
 });
 
 describe('buildMessages — 이름은 물어봐야 말한다', () => {
@@ -120,6 +141,22 @@ describe('buildMessages — 인젝션 방어 구조 (§9.1)', () => {
     expect(user).not.toContain('[투표 상황]');
     expect(user).toContain('끼어들어라');
   });
+
+  it('게임 question 분기는 askBack이어도 되묻지 않는다 — 판이 던진 질문엔 답할 상대가 없다', () => {
+    // 되묻기는 서로 주고받는 자리(월드·chat)의 것이다. 여기서 되물으면 30초 뒤
+    // 페이즈가 넘어가면서 허공에 걸린 질문만 남는다 (generate.ts의 ASK_BACK 상자).
+    const user = buildMessages(ctx({ askBack: true }))[1].content;
+    expect(user).toContain('되묻지 말고');
+    expect(user).not.toContain('되물어라');
+  });
+
+  it('게임 무대에는 worldEvent가 실리지 않는다 — 게임에는 입·퇴장이 없다', () => {
+    const user = buildMessages(
+      ctx({ phase: 'chat', question: undefined, worldEvent: '익명3 들어옴' }),
+    )[1].content;
+    expect(user).not.toContain('[방금 일어난 일]');
+    expect(user).toContain('끼어들어라');
+  });
 });
 
 describe("setting: 'world' — 무대 분기 (3D 라운지, 게임이 아니다)", () => {
@@ -173,6 +210,67 @@ describe("setting: 'world' — 무대 분기 (3D 라운지, 게임이 아니다)
     );
     expect(msgs).toHaveLength(2);
     expect(msgs[1].content).toContain('관측 데이터');
+  });
+
+  /*
+   * 되묻기 — 원래는 "되묻지 말고"였고, 그 탓에 봇이 **평생 질문을 하지 않는 사람**이
+   * 됐다. 대화가 한쪽으로만 흐르는 자리는 그것만으로 눈에 띈다 (I1).
+   * 빈도는 여기서 안 정한다 — 8b는 "가끔"을 못 지켜서 호출자가 주사위를 굴린다.
+   */
+  describe('askBack — 답하고 나서 되묻기', () => {
+    it('켜면 되묻기 줄이 붙는다', () => {
+      const user = buildMessages(worldCtx({ question: '밥 먹었어?', askBack: true }))[1].content;
+      expect(user).toContain('되물어라');
+      expect(user).toContain('답 없이 질문만 돌려주지는 않는다');
+    });
+
+    it('안 켜면 붙지 않는다 — 매번 되묻는 자리도 똑같이 봇 티다', () => {
+      const user = buildMessages(worldCtx({ question: '밥 먹었어?' }))[1].content;
+      expect(user).not.toContain('되물어라');
+    });
+
+    it('켜도 얼버무림 금지는 그대로다 — 금지를 푼 게 아니라 좁힌 것이다', () => {
+      const user = buildMessages(worldCtx({ question: '밥 먹었어?', askBack: true }))[1].content;
+      expect(user).toContain('얼버무리지 말고');
+    });
+
+    it('스스로 말을 꺼내는 차례에도 붙는다 — 말은 원래 질문으로 건다', () => {
+      const user = buildMessages(worldCtx({ askBack: true }))[1].content;
+      expect(user).toContain('끼어들어라');
+      expect(user).toContain('되물어라');
+    });
+  });
+
+  describe('worldEvent — 발화가 아니라 사건 (입·퇴장)', () => {
+    it('[방금 너한테 온 말]이 아니라 [방금 일어난 일]이다', () => {
+      // 발화로 주면 모델이 그 문장에 대꾸한다 — "익명3 들어옴" → "그러게 들어왔네"
+      const user = buildMessages(worldCtx({ worldEvent: '익명3 들어옴' }))[1].content;
+      expect(user).toContain('[방금 일어난 일]');
+      expect(user).toContain('익명3 들어옴');
+      expect(user).not.toContain('[방금 너한테 온 말]');
+      expect(user).not.toContain('끼어들어라');
+    });
+
+    it('사람 말이 같이 오면 사람 말이 먼저다 — 말 걸었는데 인사로 답하면 동문서답이다', () => {
+      const user = buildMessages(
+        worldCtx({ question: '안녕', worldEvent: '익명3 들어옴' }),
+      )[1].content;
+      expect(user).toContain('[방금 너한테 온 말]');
+      expect(user).not.toContain('[방금 일어난 일]');
+    });
+
+    it('구조는 그대로 [system, user] 두 개다 — 사건도 관측 데이터다 (§9.1)', () => {
+      const msgs = buildMessages(worldCtx({ worldEvent: '익명3 들어옴' }));
+      expect(msgs).toHaveLength(2);
+      expect(msgs[1].content).toContain('관측 데이터');
+    });
+  });
+
+  it('사건 분기는 3인칭으로 가리키지 말라고 못 박는다 — 관찰자가 되면 대화가 아니라 중계다', () => {
+    // 실측: "그 일에 대해 한마디 해라"만 시켰더니 들어온 사람을 두고 3인칭으로 해설했다
+    const user = buildMessages(worldCtx({ worldEvent: '익명3 들어옴' }))[1].content;
+    expect(user).toContain('건네는 인사');
+    expect(user).toContain('이분');
   });
 
   it('setting을 안 주면 예전 그대로 게임 무대다 — 기존 호출부 전원 무변경', () => {
@@ -280,6 +378,40 @@ describe('parseOutput — 뭐가 오든 발화 가능한 모양으로 (§12.3)',
       const out = parseOutput(JSON.stringify({ messages: [fine] }), ctx());
       expect(out.messages[0]).toBe(fine);
     }
+  });
+
+  /*
+   * 이름 그물 — CONDUCT_RULES에 "먼저 꺼내지 않는다"가 있는데도 **인사 자리에서
+   * 뚫렸다** (실측: "안녕하세요! ... 저는 선영입니다"). 이 방은 전원이 '익명N'이라
+   * 혼자 본명을 대면 그 한 줄로 자리가 드러난다 (I1).
+   */
+  const polite = WORLD_PERSONAS.find((p) => p.name === '선영')!;
+
+  it('묻지도 않았는데 제 이름을 댄 발화는 버린다 — 월드에서는 그 줄이 침묵이 된다', () => {
+    const out = parseOutput(
+      JSON.stringify({ messages: ['저는 선영입니다'] }),
+      ctx({ setting: 'world', phase: 'chat', question: undefined, persona: polite }),
+    );
+    expect(FALLBACK_POOL).toContain(out.messages[0]);
+  });
+
+  it('이름을 물으면 그 이름으로 답한다 — 그물이 막지 않는다', () => {
+    for (const asked of ['이름이 뭐예요?', '성함이 어떻게 되세요', '뭐라고 불러요?']) {
+      const out = parseOutput(
+        JSON.stringify({ messages: ['선영이요'] }),
+        ctx({ setting: 'world', phase: 'chat', question: asked, persona: polite }),
+      );
+      expect(out.messages[0], asked).toBe('선영이요');
+    }
+  });
+
+  it('한 글자 이름에는 그물을 걸지 않는다 — "준"은 "기준"에도 들어 있다', () => {
+    const short = PERSONAS.find((p) => p.name.length === 1)!;
+    const out = parseOutput(
+      JSON.stringify({ messages: ['그건 기준이 다르지'] }),
+      ctx({ persona: short }),
+    );
+    expect(out.messages[0]).toBe('그건 기준이 다르지');
   });
 
   it('한자 유출을 걷어낸다 — 한국어 채팅에 한자는 봇 티다', () => {
