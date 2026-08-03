@@ -66,10 +66,19 @@ const KEY_EMPTY_AT = 'emptyAt';
 const META_TTL_MS = 60_000;
 
 /**
- * 이만큼도 안 남았으면 LLM을 아예 부르지 않는다 (ms).
+ * 이만큼도 안 남았으면 LLM을 아예 부르지 않는다 (ms). 게임 방 전용 —
  * 왕복이 이 안에 끝날 리 없으므로, 부르면 남의 지갑만 쓰고 결과는 버려진다.
+ * 월드 AI 방은 늦은 답도 말하므로 이 문턱을 안 본다 (upgradeSpeech 참고).
  */
 const MIN_AGENT_BUDGET_MS = 900;
+
+/**
+ * 월드 AI 방에서 LLM을 기다려 주는 상한 (ms). 예약 시각(speakAt)에 매이지 않는다 —
+ * 풀 문구가 없는 방이라 자리를 놓친 답은 버리면 그냥 침묵인데, 사용자 결정은
+ * "어색한 풀 문구 < 침묵 < 늦은 진짜 답"이다. /api/agent의 8초 컷(SPEC §12.3)
+ * + self-fetch 왕복 여유.
+ */
+const COMPANION_AGENT_TIMEOUT_MS = 12_000;
 
 interface CachedMeta extends RoomMeta {
   fetchedAt: number;
@@ -419,8 +428,15 @@ export class RoomDO {
       //    말풍선이 뜬다 — 사람은 타이핑 중 발이 묶이므로 그게 곧 봇 표식이다 (I1).
       //    stepBot보다 먼저 걸어야 같은 틱에 발이 묶인다.
       //    스스로 꺼내는 말이라 읽는 시간은 없다 — 읽을 게 없으니 바로 친다.
-      //    ★ 마지막 발화가 봇 것이면 꺼내지 않는다 (shouldChat 의 mayInitiate 상자).
-      //      루프 안에서 매번 다시 본다 — 앞 봇이 이 틱에 말했으면(③) 뒤 봇은 막힌다.
+      //
+      // ★ 직전 발화가 봇 것이면 얹지 않는다 — LLM이 대화를 이어 쓰다가 **자기가
+      //   던진 질문에 자기가 답하는** 그림이 된다 (실측 — 사용자 결정으로 금지).
+      //   shouldChat이 nextChatAt을 이미 미뤘으므로 이번 차례만 쉰다. 사람 발화가
+      //   끼면 다음 차례에 다시 말한다 (shouldChat 의 mayInitiate 상자).
+      //
+      //   판정은 자기 것이 아니라 **어느 봇이든**이다 (humanSpokeLast). 자기만 보면
+      //   봇 둘이 서로의 발화를 핑퐁으로 받아 끝없이 주고받는다. 루프 안에서 매번
+      //   다시 보므로, 앞 봇이 이 틱에 말했으면(③) 뒤 봇은 막힌다.
       if (shouldChat(bot, now, this.humanSpokeLast())) {
         // 로비 방은 풀이 비어 있어 null이 온다 — 자리만 잡히고 문구는 LLM이 채운다.
         scheduleSpeech(bot, pickLine(this.botLines(), this.recentTexts()), now);
@@ -486,10 +502,16 @@ export class RoomDO {
    * 잡아 둔 발화 자리를 LLM 반응으로 채운다 (SPEC §12.3의 폴백 패턴).
    *
    * ★ speakAt은 건드리지 않는다 — 발화 타이밍이 LLM 성공/실패와 무관해야 한다 (I1).
-   *   실패·지연이면 아무 일도 일어나지 않는다 — 봇은 제 시각까지 서 있다 말없이 간다.
+   *   게임 방에서 실패·지연이면 아무 일도 일어나지 않는다 — 봇은 제 시각까지 서 있다
+   *   말없이 간다.
    *
-   * 예산은 **speakAt까지 남은 시간**이다. 그 뒤에 온 답은 이미 말한 뒤라 버려지므로
-   * 더 기다릴 이유가 없다. 남은 시간이 얼마 없으면 아예 부르지 않는다.
+   * 게임 방의 예산은 **speakAt까지 남은 시간**이다. 그 뒤에 온 답은 이미 말한 뒤라
+   * 버려지므로 더 기다릴 이유가 없다. 남은 시간이 얼마 없으면 아예 부르지 않는다.
+   *
+   * ★ 월드 AI 방(companionMode)은 다르다 — 자리를 놓친 답을 버리면 그냥 침묵이다
+   *   (풀 문구가 없으니까). 사용자 결정: **어색한 풀 문구 < 침묵 < 늦은 진짜 답.**
+   *   그래서 예산이 모자라도 부르고, 자리를 놓친 답은 그 시점에 바로 말한다.
+   *   숨길 게임이 없는 방이라 지각이 자리 신호가 될 걱정도 없다.
    */
   private async upgradeSpeech(
     bot: BotState,
@@ -499,9 +521,10 @@ export class RoomDO {
   ): Promise<void> {
     const roomId = this.meta?.roomId;
     if (!roomId) return;
+    const companion = this.meta?.companionMode === true;
 
     const budget = bot.speakAt - Date.now();
-    if (budget < MIN_AGENT_BUDGET_MS) return;
+    if (!companion && budget < MIN_AGENT_BUDGET_MS) return;
 
     const lines = await fetchAgentLines(
       this.env,
@@ -509,14 +532,29 @@ export class RoomDO {
       [bot.id],
       this.chatContext(),
       trigger,
-      budget,
+      companion ? Math.max(budget, COMPANION_AGENT_TIMEOUT_MS) : budget,
     );
     const line = lines.find((l) => l.player_id === bot.id);
     if (!line?.text) return;
 
     // tail 은 LLM 이 두 줄을 냈을 때의 뒷줄이다 — 앞 줄이 실제로 나간 뒤에
     // takeSpeech 가 이어 예약한다.
-    replaceSpeech(bot, seq, line.text, Date.now(), line.tail ?? null);
+    if (replaceSpeech(bot, seq, line.text, Date.now(), line.tail ?? null)) return;
+
+    // 자리를 놓친 답. 게임 방이면 버린다 (위 머리말). 월드 AI 방은 **seq가 그대로일
+    // 때만** 지금 바로 말한다 — 다음 예약이 이미 걸렸으면(seq 불일치) 그 예약의 LLM이
+    // 이 맥락을 대신 안다. 아직 서 있는 중이면 자리도 걷는다 — 침묵과 답이 겹치지 않게.
+    if (companion && bot.speechSeq === seq) {
+      bot.speechHeld = false;
+      bot.pendingText = null;
+      const ts = Date.now();
+      this.broadcast({ t: 'chat', id: bot.id, nickname: bot.nickname, text: line.text, ts });
+      this.rememberChat(bot.id, bot.nickname, line.text);
+      // ★ 뒷줄은 여기서도 살린다. 늦게라도 앞 줄을 말했으면 이어서 한 줄 더 치는 게
+      //   맞다 — 여기서 버리면 두 줄로 나눠 친 말이 늦은 판에서만 한 줄로 끝난다.
+      //   자리를 새로 잡으므로 서서 치는 모습도 평소와 같다.
+      if (line.tail) scheduleSpeech(bot, line.tail, ts);
+    }
   }
 
   /**
