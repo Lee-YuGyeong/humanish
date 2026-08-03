@@ -160,7 +160,9 @@ async function main() {
 
   // 1) 방을 만들고 둘이 들어간 뒤 게임을 시작한다.
   //    시작해야 빈자리가 봇으로 채워진다 (POST /api/room/start).
-  const created = await a.post('/api/room', { capacity: 5 });
+  //    ★ 이 수가 곧 명부의 길이다 — welcome 은 접속 여부와 무관하게 전 좌석을 담는다.
+  const ROOM_CAPACITY = 5;
+  const created = await a.post('/api/room', { capacity: ROOM_CAPACITY });
   const roomId = created.room.id;
   const code = created.room.code;
   console.log(`  방 ${code} (${roomId})`);
@@ -178,11 +180,23 @@ async function main() {
   const welcomeA = await clientA.connect(ticketA.ws_url, roomId, ticketA.ticket);
   const welcomeB = await clientB.connect(ticketB.ws_url, roomId, ticketB.ticket);
 
-  await check('welcome에 봇 아바타가 들어 있다 (빈자리 3)', async () => {
-    // 정원 5 · 사람 2 → 봇 3. welcome은 사람과 봇을 구분해 주지 않는다(그게 정상이다).
-    // A가 처음 붙었을 때는 B가 아직 없으므로 명부 = 봇 3.
-    if (welcomeA.players.length !== 3) {
-      throw new Error(`명부가 ${welcomeA.players.length}명이다 (봇 3을 기대)`);
+  await check('welcome 은 **전 좌석**이다 (미접속 사람 포함)', async () => {
+    /*
+     * ★ 예전엔 여기서 "봇 3"을 기대했다. 그게 곧 누출이었다 —
+     *   welcome 이 **접속한 사람 + 봇 전부**였으므로, 방에 제일 먼저 들어가면
+     *   명부에 있는 id 가 전부 봇이었다. 첫 프레임만 보면 정답이 나왔다 (I1).
+     *
+     *   지금 명부는 **좌석 명단**이다: 정원 5면 아직 아무도 안 붙어도 5명이다.
+     *   미접속 사람은 마지막 자세(없으면 spawnFor 자리)로 들어가고, 봇 좌석과
+     *   필드 모양이 완전히 같다. 그래서 "명부에 있다"로는 아무것도 못 가른다.
+     */
+    if (welcomeA.players.length !== ROOM_CAPACITY) {
+      throw new Error(`명부가 ${welcomeA.players.length}명이다 (전 좌석 ${ROOM_CAPACITY}을 기대)`);
+    }
+    // 본인도 명부에 들어 있어야 한다. 본인만 빠지면 "빠진 자리 = 나"가 아니라
+    // 남의 화면에서 내 자리가 통째로 비어 보인다 (아바타가 안 그려진다).
+    if (!welcomeA.players.some((p) => p.id === clientA.selfId)) {
+      throw new Error('명부에 본인이 없다');
     }
     // ★ 사람/봇을 가르는 필드가 새지 않았는지 본다. 이게 새면 게임이 즉시 끝난다 (I1)
     const leaked = welcomeA.players.flatMap((p) =>
@@ -197,9 +211,22 @@ async function main() {
     }
   });
 
-  await check('A는 B의 입장을 통보받는다', () =>
-    clientA.waitFor((m) => m.t === 'player_joined' && m.player.id === clientB.selfId, 3000, 'player_joined'),
-  );
+  await check('사람이 붙어도 player_joined 가 나가지 않는다 (I1)', async () => {
+    /*
+     * ★ 이 검사는 **뒤집혔다.** 예전엔 "A는 B의 입장을 통보받는다"였는데,
+     *   player_joined 가 사람에게만 나가는 이벤트라 거기 한 번 등장한 id 는
+     *   그 순간 사람 확정이었다. 4분짜리 판에서 새로고침 한 번이면 아웃이다.
+     *
+     *   지금은 좌석이 이미 welcome 에 들어 있으므로 붙고 끊는 것으로는
+     *   아무 이벤트도 나지 않는다. 입퇴장은 **좌석 명단이 바뀔 때만** 난다
+     *   (ensureMeta 의 diff — 사람·봇 구분 없이).
+     */
+    const leaked = await clientA
+      .waitFor((m) => m.t === 'player_joined' && m.player.id === clientB.selfId, 1500, 'player_joined')
+      .then(() => true)
+      .catch(() => false);
+    if (leaked) throw new Error('B 가 붙자 player_joined 가 나갔다 — 그 id 는 사람 확정이다');
+  });
 
   await check('A가 움직이면 B가 받는다 (점프 높이 포함)', async () => {
     clientA.send({ t: 'move', x: 1.25, z: -2.5, y: 0.8, heading: 0.75, anim: 'walk' });
@@ -243,9 +270,19 @@ async function main() {
     );
   });
 
-  await check('A가 끊기면 B가 안다', async () => {
+  await check('사람이 끊겨도 player_left 가 나가지 않는다 (I1)', async () => {
+    /*
+     * ★ 이것도 뒤집혔다. player_left 는 사람에게만 나던 이벤트라, 봇은 영원히
+     *   나가지 않는 반면 사람은 새로고침 한 번에 자기를 드러냈다.
+     *   지금은 끊긴 사람의 자리가 마지막 자세로 명부에 남는다 —
+     *   "가만히 서 있는 사람"과 구분되지 않는 게 요점이다.
+     */
     clientA.close();
-    await clientB.waitFor((m) => m.t === 'player_left' && m.id === clientA.selfId, 4000, 'player_left');
+    const leaked = await clientB
+      .waitFor((m) => m.t === 'player_left' && m.id === clientA.selfId, 2500, 'player_left')
+      .then(() => true)
+      .catch(() => false);
+    if (leaked) throw new Error('A 가 끊기자 player_left 가 나갔다 — 그 id 는 사람 확정이다');
   });
 
   clientB.close();
