@@ -11,14 +11,16 @@
  *
  * ★ 이 파일에는 "누가 봇인가"를 알 수 있는 코드가 한 줄도 없다 (I1).
  *   아바타는 전부 같은 경로로 그려지고, 색은 좌석 번호에서만 나온다.
+ *   **처형 연출도 마찬가지다** — store 의 eliminatedId 는 players.id 일 뿐이라,
+ *   사람이 처형되든 봇이 처형되든 쓰러지는 모습·속도·표식이 완전히 같다.
  */
 
 import { Html, PointerLockControls } from '@react-three/drei';
 import { Canvas, useFrame, useThree } from '@react-three/fiber';
-import { Suspense, memo, useEffect, useMemo, useRef, useState } from 'react';
+import { Suspense, memo, useCallback, useEffect, useMemo, useRef } from 'react';
 import * as THREE from 'three';
 
-import { Avatar, avatarVariant } from './avatar';
+import { Avatar } from './avatar';
 import {
   Furniture,
   Lights,
@@ -27,6 +29,8 @@ import {
   groundHeightAt,
   resolveColliders,
 } from './warehouse';
+import { PlayerSpotlight, RoundTable, StageMood, TopicProjection } from './roundtable';
+import { useRoundtableStore } from './roundtable-store';
 import {
   EYE_HEIGHT,
   GRAVITY,
@@ -36,6 +40,7 @@ import {
   RUN_SPEED,
   WALK_SPEED,
   WORLD,
+  mayMove,
 } from '@/lib/mp/constants';
 import { sampleAt, type Pose } from '@/lib/mp/interp';
 import type { AnimState } from '@/lib/mp/protocol';
@@ -99,9 +104,22 @@ export default function WorldScene({
       <hemisphereLight args={['#8fb6ff', '#3a2a1c', 0.35]} />
 
       <Suspense fallback={null}>
-        <Warehouse />
+        {/* 인트로 영상이 끝나면 워커에 알린다 → 라운드테이블 판이 시작된다 */}
+        <Warehouse onIntroEnd={() => conn.sendIntroDone()} />
         <Furniture />
+        {/* 좌석 원 한가운데의 라운드테이블 무대 (app/world/roundtable.tsx) */}
+        <RoundTable />
+        {/*
+          주제·단계 문구는 **인트로 영상이 나오던 그 영사막**에 겹쳐 뜬다.
+          Warehouse 뒤에 두어야 영상막 위에 그려진다 (roundtable.tsx 의 TopicProjection).
+        */}
+        <TopicProjection />
       </Suspense>
+
+      {/* 지목된 한 사람만 비추는 스포트라이트. store 가 대상을 줄 때까지는 꺼져 있다 */}
+      <PlayerSpotlight />
+      {/* 단계마다 공간 색을 바꾸는 무대등 하나. 전 좌석이 같은 빛을 받는다 (연출뿐이다) */}
+      <StageMood />
 
       <Remotes />
       <LocalRig conn={conn} spawn={spawn} composing={composing} />
@@ -140,6 +158,24 @@ function LocalRig({
   composing: boolean;
 }) {
   const { camera } = useThree();
+  /*
+   * ★★ 내가 지금 움직일 수 있나 (I1 — lib/mp/constants.ts 의 mayMove).
+   *
+   *   포인터락만 봐서는 부족하다. page.tsx 가 잠금을 푸는 데는 수백 ms 가 걸리고
+   *   (round 수신 → 리렌더 → exitPointerLock), 그 사이 걷던 사람은 좌표를 몇 개 더
+   *   내보낸다. 봇은 서버 틱에서 **그 틱에** 얼어붙으므로 그 몇 패킷이 곧 사람 표식이다.
+   *   그래서 잠금 상태가 아니라 **단계**로 한 번 더 막는다. 워커도 같은 함수로
+   *   좌표를 거절하므로 방어선은 셋이다(여기 · 포인터락 · 서버).
+   *
+   *   ★ defense 에서는 **지목된 내가 아닐 때만** 걷는다. 조명을 받는 자리는 서고,
+   *     나머지는 사람도 봇도 평소대로 움직인다 (mayMove 의 상자).
+   *
+   *   단계·지목은 판당 열 번 남짓 바뀔 뿐이라 구독해도 리렌더 비용이 없다 — 좌표와 다르다.
+   */
+  const phase = useRoundtableStore((s) => s.phase);
+  const nomineeId = useRoundtableStore((s) => s.nomineeId);
+  const selfId = useWorldStore((s) => s.selfId);
+  const movementLocked = !mayMove(phase, nomineeId !== null && nomineeId === selfId);
   const keys = useRef<Record<string, boolean>>({});
   // ★ pos.y 는 **발 높이**다(눈높이가 아니다). 카메라만 EYE_HEIGHT를 더해 올린다 —
   //   네트워크로 나가는 값도, 가구 충돌이 보는 값도 발 높이라 여기서 갈리면 안 된다.
@@ -218,12 +254,14 @@ function LocalRig({
 
   useFrame((_, delta) => {
     const k = keys.current;
-    // 조작을 받는 조건은 둘이다.
+    // 조작을 받는 조건은 셋이다.
     //   1) 마우스가 잠겨 있다 — ESC 로 풀어 설정을 여는 동안에는 걷지 않는다.
     //   2) 말하는 중이 아니다 — 말하기는 **잠금을 유지한 채** 열리므로(page.tsx),
     //      잠금만 보면 타이핑하는 동안 몸이 걸어간다. 키 핸들러의 typing() 가드가
     //      이미 한 겹 막지만, 포커스가 어디로 튀든 안전하도록 여기서도 막는다.
-    const active = !composing && document.pointerLockElement !== null;
+    //   3) 이동이 잠긴 단계가 아니다 — 봇이 서버 틱에서 즉시 얼어붙는 그 순간에
+    //      맞춰 사람도 멈춰야 한다 (위 movementLocked 의 상자, I1).
+    const active = !composing && !movementLocked && document.pointerLockElement !== null;
     const ax = active ? (k.KeyD || k.ArrowRight ? 1 : 0) - (k.KeyA || k.ArrowLeft ? 1 : 0) : 0;
     const az = active ? (k.KeyW || k.ArrowUp ? 1 : 0) - (k.KeyS || k.ArrowDown ? 1 : 0) : 0;
     const running = active && Boolean(k.ShiftLeft || k.ShiftRight);
@@ -290,6 +328,12 @@ function LocalRig({
       Math.abs(s.heading - heading) > 0.001 ||
       Number.isNaN(s.x);
 
+    // ★ 이동이 잠긴 단계에서는 **한 패킷도 내보내지 않는다** (I1).
+    //   active 를 끄는 것만으로는 부족하다 — 잠금이 아직 안 풀린 몇백 ms 동안
+    //   마우스만 움직여도 heading 이 바뀌어 10Hz 로 나간다. 봇은 그 구간에
+    //   단 한 패킷도 안 내므로 그 차이가 그대로 명단이다.
+    if (movementLocked) return;
+
     // 가만히 서 있으면 패킷이 0이다. changed 검사를 빼면 8명 방에서 초당 80패킷을 낭비한다
     if (changed && now - s.at >= MOVE_THROTTLE_MS) {
       conn.sendMove(pos.current.x, pos.current.z, pos.current.y, heading, anim);
@@ -326,6 +370,25 @@ function Remotes() {
   );
 }
 
+/** 쓰러지는 감쇠 계수. 1초 남짓에 눕는다 — 더 빠르면 넘어지는 게 아니라 사라지는 것처럼 보인다 */
+const FALL_K = 3.2;
+/** 다 누웠을 때 몸을 띄우는 높이(m). 0이면 몸통 절반이 바닥에 파묻힌다 */
+const FALL_LIFT = 0.16;
+/** 옆으로 살짝 비틀어 눕힌다(rad). 정확히 뒤로만 넘어가면 인형이 넘어진 것 같다 */
+const FALL_ROLL = 0.2;
+/** 처형된 몸의 밝기 배수. 0이면 실루엣도 안 보여서 "누가 죽었는지"를 못 읽는다 */
+const CORPSE_DIM = 0.3;
+
+/**
+ * 잠긴 자리가 땅으로 내려앉는 감쇠 계수 (I1 — useFrame 의 상자).
+ *
+ * 봇은 haltBot 안에서 중력(GRAVITY 15)을 그대로 먹고 떨어진다. 여기는 물리를 다시
+ * 풀지 않고 감쇠로 흉내 내되 **비슷한 시간에 닿게** 맞춘다 — 점프 최고점(≈1.05m)에서
+ * 8 이면 0.4초 남짓이라 봇의 자유낙하(≈0.37초)와 눈으로 구분되지 않는다.
+ * 더 키우면 순간이동처럼 보이고, 그 "툭 떨어짐"이 다시 사람 표식이 된다.
+ */
+const SETTLE_K = 8;
+
 const RemoteAvatar = memo(function RemoteAvatar({
   player,
   bubbleTick,
@@ -335,6 +398,7 @@ const RemoteAvatar = memo(function RemoteAvatar({
   bubbleTick: number;
 }) {
   const group = useRef<THREE.Group>(null);
+  const fall = useRef<THREE.Group>(null);
   const shadow = useRef<THREE.Mesh>(null);
   const pose = useRef<Pose>({
     x: player.pose.x,
@@ -343,21 +407,119 @@ const RemoteAvatar = memo(function RemoteAvatar({
     heading: player.pose.heading,
   });
   const color = useMemo(() => seatColor(player.seat), [player.seat]);
-  /** 어떤 캐릭터인가. id 해시라 모두의 화면에서 같다 (avatar.tsx) */
-  const variant = useMemo(() => avatarVariant(player.id), [player.id]);
 
   /*
-   * 공중 여부만 상태로 올린다. 좌표는 useFrame 안에서 직접 만지고 리렌더하지 않는다 —
-   * 8명 × 10Hz 를 setState 로 돌리면 초당 80번 다시 그린다 (store.ts 머리말과 같은 이유).
-   * 점프는 초당 몇 번이 아니라 몇 초에 한 번이라 상태로 둬도 싸다.
+   * ★ 처형만은 **구독으로 받는다.** 좌표·anim 과 정반대의 선택인데 근거가 있다:
+   *   처형은 판당 최대 한 번뿐이라 리렌더 한 번이 공짜고, 이름표(DOM)를 같이 고쳐야
+   *   하기 때문이다. 좌표처럼 10Hz 로 움직이는 값이었다면 절대 이렇게 두지 않는다.
+   *   selector 가 boolean 을 돌려주므로 **내 자리가 처형될 때만** 이 컴포넌트가 돈다 —
+   *   남이 처형돼도 여긴 안 돈다.
+   *
+   * ★ I1 — eliminatedId 는 players.id 일 뿐 정체가 아니다. 사람이 처형되든 봇이 처형되든
+   *   여기 오는 값의 모양은 완전히 같고, 이 아래 연출도 완전히 같다.
    */
-  const [airborne, setAirborne] = useState(false);
-  const airborneRef = useRef(false);
+  const eliminated = useRoundtableStore((s) => s.eliminatedId === player.id);
+  // useFrame 은 memo 를 통과하지 않으므로 최신 값을 ref 로 건네준다
+  const elim = useRef(eliminated);
+  elim.current = eliminated;
+  /** 0 = 서 있다, 1 = 완전히 누웠다. 프레임 사이에 이어서 감쇠 보간한다 */
+  const fallT = useRef(eliminated ? 1 : 0);
 
-  const bubble = player.bubbleUntil > performance.now() ? player.bubbleText : '';
+  /*
+   * ★★ 이 자리가 지금 **못 움직이는 단계인가** (I1 — lib/mp/constants.ts 의 mayMove).
+   *
+   * ┌─ 왜 마지막 anim 을 믿으면 안 되나 ────────────────────────────────────────┐
+   * │ 단계가 잠기는 순간, 봇은 서버 틱에서 haltBot 이 anim='idle' 한 장을 **보내고** │
+   * │ 선다. 그런데 사람 클라는 같은 순간 송신이 막히므로(mayMove) 마지막으로 나간  │
+   * │ anim 이 **'walk' 인 채로 남는다.** 그러면 그 20~30초 동안                    │
+   * │   · 봇 좌석    → 선 자세                                                    │
+   * │   · 걷다 잠긴 사람 → 제자리에서 걷는 자세로 굳음                             │
+   * │ 이 되어, **걷는 자세로 굳은 자리 = 사람**이 된다. 총 자리·AI 수가 공개라      │
+   * │ 소거법으로 나머지도 갈린다.                                                 │
+   * │                                                                            │
+   * │ 고치는 자리를 프로토콜이 아니라 **그리는 쪽**으로 잡은 이유:                  │
+   * │   · 서버가 사람 몫의 정지 패킷을 대신 쏘면, 그 패킷이 봇의 지터(emitAsBot)와  │
+   * │     다른 타이밍으로 도착해 **새 신호**가 된다. 막으려던 것과 같은 종류의 사고. │
+   * │   · 여기서 막으면 모든 클라가 **모든 좌석에 같은 규칙**을 적용한다. 사람인지  │
+   * │     봇인지 묻지 않고 "지금 못 움직이는 자리인가"만 본다 — 그래서 대칭이다.    │
+   * │                                                                            │
+   * │ ★ 판정은 단계 하나가 아니라 **좌석마다** 다르다. defense 에서는 지목된 한     │
+   * │   자리만 서므로, 나머지는 걷는 클립이 그대로 살아 있어야 한다.               │
+   * └──────────────────────────────────────────────────────────────────────────┘
+   */
+  const frozen = useRoundtableStore((s) => !mayMove(s.phase, s.nomineeId === player.id));
+  const frz = useRef(frozen);
+  frz.current = frozen;
+  /** 실제로 그리는 발 높이. 잠긴 동안에는 pose.y 가 아니라 이 값이 내려앉는다 */
+  const shownY = useRef(player.pose.y);
+
+  /*
+   * ★ 아바타에게 anim · airborne 을 **값이 아니라 함수로** 준다.
+   *
+   *   이 컴포넌트는 memo 라서 멤버십이 바뀔 때만 다시 그린다. player 는 Map 안에서
+   *   제자리 변형되므로 걷기 시작해도 리렌더가 나지 않는다 — 값을 넘기면 입장 시점의
+   *   'idle' 이 굳어 **선 자세로 미끄러진다.** 아바타가 매 프레임 직접 물어보게 한다
+   *   (좌표를 useFrame 에서 읽는 것과 같은 규약, avatar.tsx 머리말 참고).
+   *
+   *   처형·정지도 같은 통로로 넘긴다 — 둘 다 ref 라 deps 가 그대로다. 시체는 걷지도
+   *   뛰지도 않고(idle = 완전한 정지 클립), 높이가 남아 있어도 점프 클립을 켜지 않는다.
+   */
+  const getAnim = useCallback(
+    (): AnimState => (elim.current || frz.current ? 'idle' : player.anim),
+    [player],
+  );
+  // 공중인지는 높이로만 판단한다 (protocol.ts 의 ANIM_STATES 주석)
+  const getAirborne = useCallback(
+    () => !elim.current && !frz.current && player.pose.y > 0.02,
+    [player],
+  );
+
+  /*
+   * ★ 처형된 자리만 어둡게 한다 — **머티리얼을 그냥 만지면 전원이 같이 어두워진다.**
+   *   avatar.tsx 의 SkeletonUtils.clone 은 뼈대만 복제하고 지오메트리·머티리얼은
+   *   모든 아바타가 공유한다. 그래서 이 자리 것만 복제해 갈아 끼우고, 원본을 들고
+   *   있다가 되돌린다(판이 끝나 store 가 reset 되는 경우).
+   *
+   *   traverse 대상은 group 이 아니라 fall 이다 — group 아래에는 바닥 그림자 원판도
+   *   있어서, 거기까지 훑으면 상관없는 머티리얼을 공연히 복제·폐기하게 된다.
+   */
+  useEffect(() => {
+    const root = fall.current;
+    if (!root || !eliminated) return;
+
+    const swapped: { mesh: THREE.Mesh; original: THREE.Material | THREE.Material[] }[] = [];
+    const dim = (m: THREE.Material): THREE.Material => {
+      const c = m.clone();
+      // 재질 종류를 모른다(Basic 에는 emissive 가 없다). 있는 것만 만진다.
+      const std = c as Partial<THREE.MeshStandardMaterial>;
+      if (std.color) std.color.multiplyScalar(CORPSE_DIM);
+      if (std.emissive) std.emissive.setScalar(0);
+      return c;
+    };
+
+    root.traverse((o) => {
+      if (!(o instanceof THREE.Mesh)) return;
+      const src = o.material as THREE.Material | THREE.Material[] | undefined;
+      if (!src) return;
+      swapped.push({ mesh: o, original: src });
+      o.material = Array.isArray(src) ? src.map(dim) : dim(src);
+    });
+
+    return () => {
+      for (const s of swapped) {
+        const cur = Array.isArray(s.mesh.material) ? s.mesh.material : [s.mesh.material];
+        // 복제본은 우리가 만든 것이므로 우리가 버린다. 원본은 남이 쓰고 있으니 그대로 돌려준다.
+        for (const m of cur) m.dispose();
+        s.mesh.material = s.original;
+      }
+    };
+  }, [eliminated]);
+
+  // 시체는 말하지 않는다. 마지막 말풍선이 누운 몸 위에 그대로 떠 있으면 우스워진다.
+  const bubble = !eliminated && player.bubbleUntil > performance.now() ? player.bubbleText : '';
   void bubbleTick;
 
-  useFrame((state) => {
+  useFrame((_, delta) => {
     const g = group.current;
     if (!g) return;
 
@@ -370,26 +532,63 @@ const RemoteAvatar = memo(function RemoteAvatar({
       player.pose.heading = pose.current.heading;
     }
 
-    g.position.set(player.pose.x, player.pose.y, player.pose.z);
+    /*
+     * ★★ 잠긴 자리는 **땅에 내려놓는다** (I1 — anim 을 idle 로 누르는 것과 같은 이유).
+     *
+     * ┌─ 점프 도중에 잠기면 공중에 뜬 채로 남았다 ────────────────────────────┐
+     * │ 봇은 haltBot 안에서 stepJump 가 계속 돌아 **중력을 먹고 착지한다.**    │
+     * │ 사람은 그 순간 송신이 막혀(mayMove) 마지막으로 나간 y 가 그대로 얼어    │
+     * │ 붙는다. 그 20~30초 동안 공중에 뜬 자리가 있으면 그건 사람 확정이다 —   │
+     * │ 봇은 잠긴 단계에서 y>0 으로 멈추는 일이 **구조적으로 없다.**           │
+     * │                                                                      │
+     * │ 바닥으로 **순간이동시키지 않는다.** 봇은 중력으로 내려오므로 툭 떨어지는 │
+     * │ 자리가 있으면 그 자체가 다시 신호다. 봇의 낙하와 비슷한 속도로 내린다.  │
+     * │                                                                      │
+     * │ 목표 높이는 0 이 아니라 groundHeightAt 이다 — 가구 위에 선 채로 잠긴    │
+     * │ 자리를 바닥까지 끌어내리면 몸이 소파를 뚫는다(봇도 이제 가구에 올라간다).│
+     * └──────────────────────────────────────────────────────────────────────┘
+     */
+    const rawY = player.pose.y;
+    if (frz.current) {
+      const ground = groundHeightAt(player.pose.x, player.pose.z, shownY.current);
+      shownY.current += (ground - shownY.current) * Math.min(delta * SETTLE_K, 1);
+    } else {
+      shownY.current = rawY;
+    }
+    const y = shownY.current;
+
+    g.position.set(player.pose.x, y, player.pose.z);
     g.rotation.y = player.pose.heading;
 
     /*
-     * 공중인지는 높이로만 판단한다 (protocol.ts의 ANIM_STATES 주석).
      * 예전에는 여기서 몸통을 위아래로 흔들어 걸음을 흉내 냈다. 이제는 뼈대가 있는
      * 클립(walk/run/jump)이 그 일을 하므로 **흔들지 않는다** — 같이 하면 두 번 튄다.
+     * 공중 여부는 아바타가 getAirborne 으로 직접 읽어 간다.
      */
-    const airborne = player.pose.y > 0.02;
-    if (airborne !== airborneRef.current) {
-      airborneRef.current = airborne;
-      setAirborne(airborne);
+
+    /*
+     * 쓰러짐. ★ 바깥 group 은 매 프레임 위에서 통째로 덮어써지므로 여기에 회전을 얹으면
+     *   다음 프레임에 지워진다. **안쪽 group(fall)을 따로 두고 그것만 돌린다** — 축도
+     *   갈라져서 heading 회전과 섞이지 않는다. 회전축 원점이 발밑이라 그대로 눕힌다.
+     */
+    const f = fall.current;
+    if (f) {
+      fallT.current += ((elim.current ? 1 : 0) - fallT.current) * Math.min(delta * FALL_K, 1);
+      const t = fallT.current;
+      if (t > 0.0005) {
+        f.rotation.x = (-Math.PI / 2) * t;
+        f.rotation.z = FALL_ROLL * t;
+        f.position.y = FALL_LIFT * t;
+      }
     }
-    void state;
 
     // 그림자는 아바타를 따라 올라가지 않는다 — 늘 바닥에 붙어 있고 멀어질수록 작아진다.
     // 이게 없으면 점프가 "위로 간 것"인지 "커진 것"인지 구분이 안 된다.
+    // ★ 몸이 내려앉는 값(y)을 같이 쓴다. 원본 pose.y 를 쓰면 몸은 착지했는데
+    //   그림자만 작은 채로 남아 "떠 있는 자리"가 그림자로 다시 새어 나온다.
     if (shadow.current) {
-      shadow.current.position.y = 0.02 - player.pose.y;
-      const s = Math.max(0.45, 1 - player.pose.y * 0.35);
+      shadow.current.position.y = 0.02 - y;
+      const s = Math.max(0.45, 1 - y * 0.35);
       shadow.current.scale.set(s, s, 1);
     }
   });
@@ -399,10 +598,13 @@ const RemoteAvatar = memo(function RemoteAvatar({
       {/*
         아바타. 모델이 늦게 와도 방은 돌아야 하므로 Suspense 로 감싸고, 그동안에는
         발밑 그림자만 떠 있게 둔다 — 자리에 아무것도 없는 것보다 낫다.
+        바깥 group 이 아니라 이 fall 그룹이 쓰러짐을 맡는다 (useFrame 주석).
       */}
-      <Suspense fallback={null}>
-        <Avatar variant={variant} anim={player.anim} airborne={airborne} />
-      </Suspense>
+      <group ref={fall}>
+        <Suspense fallback={null}>
+          <Avatar getAnim={getAnim} getAirborne={getAirborne} />
+        </Suspense>
+      </group>
 
       {/* 바닥 그림자 대용 — 실제 그림자는 8명이면 비싸다. 높이는 useFrame이 잡는다 */}
       <mesh ref={shadow} rotation-x={-Math.PI / 2} position={[0, 0.02, 0]}>
@@ -410,7 +612,13 @@ const RemoteAvatar = memo(function RemoteAvatar({
         <meshBasicMaterial color="#000000" transparent opacity={0.35} />
       </mesh>
 
-      <Html position={[0, 2.0, 0]} center distanceFactor={9} zIndexRange={[10, 0]}>
+      {/* 누우면 이름표도 같이 내려온다. 시체 위 2m 에 떠 있으면 누구 것인지 안 읽힌다 */}
+      <Html
+        position={[0, eliminated ? 0.85 : 2.0, 0]}
+        center
+        distanceFactor={9}
+        zIndexRange={[10, 0]}
+      >
         <div className="pointer-events-none flex flex-col items-center gap-1">
           {bubble ? (
             // w-max 가 없으면 Html 래퍼(폭 0)에 눌려 **한 글자씩 세로로** 줄바꿈된다.
@@ -419,11 +627,23 @@ const RemoteAvatar = memo(function RemoteAvatar({
               {bubble}
             </div>
           ) : null}
-          <div
-            className="whitespace-nowrap rounded-full bg-black/60 px-2 py-0.5 text-[11px] font-bold"
-            style={{ color }}
-          >
-            {player.nickname}
+          <div className="flex items-center gap-1">
+            <div
+              className="whitespace-nowrap rounded-full bg-black/60 px-2 py-0.5 text-[11px] font-bold"
+              style={{
+                color,
+                opacity: eliminated ? 0.55 : 1,
+                textDecoration: eliminated ? 'line-through' : undefined,
+              }}
+            >
+              {player.nickname}
+            </div>
+            {eliminated ? (
+              // ★ 표식은 "처형됐다"까지만 말한다. 그가 무엇이었는지는 reveal 이 말한다 (I1)
+              <div className="whitespace-nowrap rounded-full bg-red-950/85 px-1.5 py-0.5 text-[10px] font-bold text-red-200 ring-1 ring-red-500/40">
+                처형
+              </div>
+            ) : null}
           </div>
         </div>
       </Html>

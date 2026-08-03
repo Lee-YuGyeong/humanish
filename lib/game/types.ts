@@ -12,6 +12,7 @@ export type Phase =
   | 'target' // 지목 질문
   | 'chat' // 자유 채팅
   | 'vote'
+  | 'revote' // ★ §18.3 — 사람 표 최다가 동점일 때만. 20초, 후보는 동점자뿐
   | 'reveal'
   | 'replay';
 
@@ -42,6 +43,19 @@ export interface Room {
   phase_ends_at: string | null; // ISO. null이면 무기한(lobby)
   round: number; // question 페이즈에서만 의미 있음
   host_id: string | null;
+  /**
+   * 투표로 지목된 한 자리 (SPEC §18.3, §18.4). vote/revote를 벗어날 때 서버가 확정한다.
+   * 그 전에는 null. reveal이 이 자리의 정체로 진영 승패를 정한다.
+   *
+   * ★ player_id일 뿐 봇 여부를 담지 않는다 (I1). reveal 전까지는 아무도 이걸로
+   *   정체를 역산할 수 없다 — 지목됐다는 사실만으로는 사람/봇/연기자가 안 갈린다.
+   */
+  nominated_player_id: string | null;
+  /**
+   * 재투표 후보 (SPEC §18.3). vote에서 사람 표가 동점이면 그 동점자들로 채워지고,
+   * revote 화면은 이 목록 안에서만 고르게 한다. 동점이 아니면 null.
+   */
+  revote_candidates: string[] | null;
   /**
    * 참가자 명단이 바뀌었다는 신호 (SPEC §17.3).
    * 이 값이 변하면 클라이언트가 public_players를 다시 읽는다.

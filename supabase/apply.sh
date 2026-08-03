@@ -29,7 +29,14 @@ command -v psql >/dev/null || { echo "psql이 없다. brew install postgresql@16
 # ── 접속 문자열 ──────────────────────────────────────────────────────────────
 DB_URL="${SUPABASE_DB_URL_DIRECT:-}"
 if [ -z "$DB_URL" ] && [ -f "$ROOT/.env.local" ]; then
-  DB_URL="$(grep -E '^[[:space:]]*SUPABASE_DB_URL_DIRECT=' "$ROOT/.env.local" | head -1 | cut -d= -f2-)"
+  # ★ || true 를 빼지 않는다. 그 줄이 없으면 grep 이 아무것도 못 찾았을 때
+  #   set -euo pipefail 이 여기서 스크립트를 죽여, 바로 아래 안내 문구가 영영 안 나온다.
+  #   증상은 "출력 한 줄 없이 exit 1" 이라 원인이 전혀 안 보인다 (실제로 그랬다).
+  # ★ 등호 **앞뒤** 공백을 허용한다. dotenv 는 `KEY = value` 를 받아주므로 Next 와
+  #   wrangler 는 멀쩡히 읽는데 여기만 못 읽는 상황이 생긴다. 그러면 증상이
+  #   "앱은 도는데 마이그레이션만 값이 없다더라" 가 되어 원인이 안 보인다.
+  DB_URL="$(grep -E '^[[:space:]]*SUPABASE_DB_URL_DIRECT[[:space:]]*=' "$ROOT/.env.local" | head -1 | cut -d= -f2- || true)"
+  DB_URL="$(printf '%s' "$DB_URL" | sed -E 's/^[[:space:]]+//; s/[[:space:]]+$//')"
   DB_URL="${DB_URL%\"}"; DB_URL="${DB_URL#\"}"
   DB_URL="${DB_URL%\'}"; DB_URL="${DB_URL#\'}"
 fi

@@ -15,8 +15,43 @@ import type {
   C2SMessage,
   ErrorCode,
   PlayerSnapshot,
+  RevealIdentity,
+  RevealVote,
+  RoundPhase,
+  RoundWinner,
   S2CMessage,
 } from '@/lib/mp/protocol';
+
+/** round 메시지 알맹이. 씬·HUD 가 읽는 진행 상태다 (protocol.ts 의 t:'round'). */
+export interface RoundInfo {
+  phase: RoundPhase;
+  /** ★ 조명의 소스는 이것 **하나**다. defense 에서만 채워진다 (protocol.ts 참고) */
+  spotlightId: string | null;
+  topic: string | null;
+  /** 서버 시각(epoch ms). 카운트다운은 표시용이다 (I2) */
+  endsAt: number;
+  /** 몇 번째 주제 라운드인가 (1-based). 주제 라운드가 아니면 0 */
+  round: number;
+  /** 주제 라운드 총 수 (①/② 표시용) */
+  totalRounds: number;
+  /** 확정된 지목 대상. defense 부터 채워진다 */
+  nomineeId: string | null;
+}
+
+/**
+ * reveal 메시지 알맹이 — **판이 끝난 뒤의 결과 전문**.
+ *
+ * ★ `identities` 가 이 프로젝트에서 정체가 실리는 **유일한 경로**다 (I1 의 예외).
+ *   이 타입을 다른 이벤트에 재사용하지 마라 — 재사용하는 순간 통로가 하나 더 생긴다.
+ */
+export interface RevealResult {
+  nomineeId: string | null;
+  executed: boolean;
+  winner: RoundWinner;
+  verdict: { guilty: number; innocent: number };
+  votes: RevealVote[];
+  identities: RevealIdentity[];
+}
 
 export interface WorldEvents {
   onWelcome(selfId: string, players: PlayerSnapshot[]): void;
@@ -24,6 +59,17 @@ export interface WorldEvents {
   onLeft(id: string): void;
   onMoved(id: string, x: number, z: number, y: number, heading: number, anim: AnimState): void;
   onChat(id: string, nickname: string, text: string, ts: number): void;
+  /** 라운드테이블 진행 상태가 바뀌었다 (단계 전환 · 입장 시 1회) */
+  onRound(round: RoundInfo): void;
+  /**
+   * 투표 진행 현황. **숫자 둘뿐이다** — 누가 냈는지도, 누구를 찍었는지도 오지 않는다 (I1).
+   * 서버가 고정 간격으로 묶어 보내므로 내 표를 보낸 직후에 바로 오지 않는다.
+   */
+  onVoteProgress(voted: number, total: number): void;
+  /** 처형이 확정됐다. 판당 최대 한 번. 정체는 실려 있지 않다 */
+  onEliminated(id: string): void;
+  /** 판이 끝났다. 정체가 실린 유일한 이벤트다 */
+  onReveal(reveal: RevealResult): void;
   onError(code: ErrorCode | 'connection_failed'): void;
   onClose(): void;
 }
@@ -90,6 +136,33 @@ export class WorldConnection {
         case 'chat':
           events.onChat(msg.id, msg.nickname, msg.text, msg.ts);
           break;
+        case 'round':
+          events.onRound({
+            phase: msg.phase,
+            spotlightId: msg.spotlightId,
+            topic: msg.topic,
+            endsAt: msg.endsAt,
+            round: msg.round,
+            totalRounds: msg.totalRounds,
+            nomineeId: msg.nomineeId,
+          });
+          break;
+        case 'vote_progress':
+          events.onVoteProgress(msg.voted, msg.total);
+          break;
+        case 'eliminated':
+          events.onEliminated(msg.id);
+          break;
+        case 'reveal':
+          events.onReveal({
+            nomineeId: msg.nomineeId,
+            executed: msg.executed,
+            winner: msg.winner,
+            verdict: msg.verdict,
+            votes: msg.votes,
+            identities: msg.identities,
+          });
+          break;
         case 'error':
           this.failed = true;
           events.onError(msg.code);
@@ -108,10 +181,36 @@ export class WorldConnection {
     this.send({ t: 'chat', text });
   }
 
-  /** 연결 전 호출은 정상 상황이다(씬이 먼저 뜬다). 조용히 버린다. */
-  private send(msg: C2SMessage): void {
-    if (this.ws?.readyState !== WebSocket.OPEN) return;
+  /** 인트로 영상이 끝났다 — 워커가 라운드테이블 판을 시작하는 신호다. */
+  sendIntroDone(): void {
+    this.send({ t: 'intro_done' });
+  }
+
+  /**
+   * 지목 투표. 마감까지 몇 번이든 다시 보낼 수 있고 마지막 것이 유효하다.
+   *
+   * ★ **나갔는지(true)를 돌려준다.** 서버는 "네 표를 받았다"를 좌석 단위로 되돌려
+   *   주지 않는다 — 그런 메시지를 만드는 순간 그게 I1 누출이다 (protocol.ts 의
+   *   vote_progress 주석). 그래서 내 선택 표시의 유일한 근거가 이 반환값이다.
+   *   소켓이 닫혀 있으면 false 이고, 호출부는 그때 선택을 확정하면 안 된다.
+   */
+  sendVote(targetId: string): boolean {
+    return this.send({ t: 'vote', targetId });
+  }
+
+  /** 생사 재투표. 반환값의 뜻은 sendVote 와 같다. */
+  sendVerdict(guilty: boolean): boolean {
+    return this.send({ t: 'verdict', guilty });
+  }
+
+  /**
+   * 연결 전 호출은 정상 상황이다(씬이 먼저 뜬다). 조용히 버린다.
+   * 실제로 나갔으면 true — 투표처럼 "보냈나"가 화면에 남는 요청이 이 값을 본다.
+   */
+  private send(msg: C2SMessage): boolean {
+    if (this.ws?.readyState !== WebSocket.OPEN) return false;
     this.ws.send(JSON.stringify(msg));
+    return true;
   }
 
   close(): void {

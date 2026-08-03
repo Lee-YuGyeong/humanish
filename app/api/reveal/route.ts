@@ -38,7 +38,7 @@ export async function GET(req: Request): Promise<Response> {
     // 1. 페이즈 검사가 먼저다
     const { data: room, error: roomErr } = await db
       .from('rooms')
-      .select('id, phase')
+      .select('id, phase, nominated_player_id')
       .eq('id', roomId)
       .single();
     if (roomErr) throw new ApiError(500, `방 조회 실패: ${roomErr.message}`);
@@ -67,6 +67,27 @@ export async function GET(req: Request): Promise<Response> {
 
     const roles: Record<string, Role> = {};
     for (const r of roleRows ?? []) roles[r.player_id] = r.role as Role;
+
+    /*
+     * 지목된 한 명의 정체가 판을 끝낸다 (SPEC §18.4). 지목 자리는 vote/revote 를
+     * 벗어날 때 서버가 rooms.nominated_player_id 에 확정해 둔 값이다 (§18.3).
+     *   AI 를 지목 → 시민 승 · 연기자(spy) 지목 → 연기자 승 · 시민 지목 → AI 승.
+     * 언제나 정확히 한 진영이 이긴다 (무승부 없음). nominated 가 null 인 건 옛 판
+     * (이 컬럼이 없던 시절)뿐이고, 그때는 winner 도 null 로 둔다 — 화면이 대비한다.
+     *
+     * ★ 점수(calcScores)는 아직 그대로 둔다. 개인 점수 폐기와 전적을 진영 승패로
+     *   바꾸는 것은 §18.7 4단계(별건, lib/game·lib/server)라 이 라우트만으로는 못 끝낸다.
+     */
+    const nominatedId = (room.nominated_player_id as string | null) ?? null;
+    const nominatedRole: Role | null = nominatedId ? (roles[nominatedId] ?? null) : null;
+    const winner: 'citizen' | 'actor' | 'ai' | null =
+      nominatedRole === 'ai'
+        ? 'citizen'
+        : nominatedRole === 'spy' // 역할 값은 아직 'spy'(연기자) — §18.2 개명 미완
+          ? 'actor'
+          : nominatedRole === 'citizen'
+            ? 'ai'
+            : null;
 
     const votes = (voteRows ?? []).map((v) => ({ voterId: v.voter_id, targetId: v.target_id }));
     const scores = calcScores(votes, roles);
@@ -122,6 +143,11 @@ export async function GET(req: Request): Promise<Response> {
         reason: v.reason,
         correct: roles[v.target_id] === 'ai',
       })),
+      // 지목 결과와 진영 승패 (SPEC §18.3, §18.4). 화면이 "누가 지목됐고 어느
+      // 진영이 이겼나"를 이 두 값으로 그린다. 자세한 표는 아래 rule/scores 를 쓴다.
+      nominated_id: nominatedId,
+      nominated_role: nominatedRole,
+      winner,
       rule: SCORE_RULE,
     });
   } catch (e) {

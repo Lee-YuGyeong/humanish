@@ -35,12 +35,22 @@ export async function POST(req: Request): Promise<Response> {
 
     const { data: room, error: roomErr } = await db
       .from('rooms')
-      .select('id, phase, phase_seq')
+      .select('id, phase, phase_seq, revote_candidates')
       .eq('id', roomId)
       .single();
     if (roomErr) throw new ApiError(500, `방 조회 실패: ${roomErr.message}`);
-    if (room.phase !== 'vote') {
+    // vote 와 revote 둘 다 투표를 받는다 (SPEC §18.3). 그 밖의 페이즈는 거절한다.
+    if (room.phase !== 'vote' && room.phase !== 'revote') {
       throw new ApiError(409, `지금은 투표할 때가 아니다 (${room.phase})`);
+    }
+
+    // 재투표에서는 후보(동점자)만 지목할 수 있다 (SPEC §18.3). 자기 자신 금지는 위에서
+    // 이미 걸렀고, 후보에 오른 사람은 남은 후보 중에서 고른다.
+    if (room.phase === 'revote') {
+      const candidates: string[] = room.revote_candidates ?? [];
+      if (!candidates.includes(targetId)) {
+        throw new ApiError(400, '재투표에서는 후보 중에서만 고를 수 있다');
+      }
     }
 
     // 지목 대상이 같은 방 사람인지 확인한다. 다른 방 player_id를 넣으면 안 된다 (I10).

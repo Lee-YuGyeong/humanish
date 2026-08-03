@@ -30,6 +30,7 @@
 import {
   BOT_CHAT_MAX_MS,
   BOT_CHAT_MIN_MS,
+  BOT_GATHER_RADIUS,
   BOT_DISTRACTED_CHANCE,
   BOT_DISTRACTED_MAX_MS,
   BOT_DISTRACTED_MIN_MS,
@@ -54,10 +55,10 @@ import {
   WORLD,
 } from '../../lib/mp/constants';
 import type { AnimState, PlayerSnapshot } from '../../lib/mp/protocol';
-import { spawnFor } from '../../lib/mp/spawn';
+import { SPAWN_CENTER, spawnFor } from '../../lib/mp/spawn';
 // 가구는 클라이언트만 아는 게 아니다 — 좌표를 만드는 건 서버라, 서버가 같은 가구를
 // 보지 않으면 봇이 소파를 뚫고 지나간다. 데이터·판정은 lib/mp/collide.ts 하나뿐이다.
-import { isBlocked, resolveCollisions } from '../../lib/mp/collide';
+import { STEP_UP, groundHeightAt, isBlocked, resolveCollisions } from '../../lib/mp/collide';
 // 타이핑 지연은 2D 게임과 **같은 곡선**을 쓴다 (lib/agent/disguise.ts — 소유 B).
 // 재는 대상이 같기 때문이다: "사람이 이 길이의 한국어를 치는 데 걸리는 시간".
 // 여기 복사해 두면 그 순간 두 벌이 되고, 한쪽만 손보면 월드에서만 티가 나기 시작한다.
@@ -72,14 +73,22 @@ const TURN_RATE = 3.4;
 const EDGE_INSET = 1.2;
 
 /**
- * 봇은 낮은 탁자에도 올라서지 않는다 (stepUp = 0 — 전부 막는 것으로 본다).
- *
- * 사람은 STEP_UP(0.55) 아래 턱을 걸어서 넘고, 넘는 순간 발 높이가 탁자 윗면으로
- * 올라간다(groundHeightAt). 봇에게 같은 걸 주려면 y 도 같이 올려야 하는데,
- * 빠뜨리면 **탁자를 뚫고 걷는 그림**이 된다 — 지금 고치려는 바로 그 증상이다.
- * 돌아가게 두는 쪽이 안전하고, 봇이 가구에 안 올라가는 건 원래 정한 바다.
+ * ┌─ ★ 봇도 사람과 **같은 STEP_UP 을 쓴다** (I1) ─────────────────────────────┐
+ * │ 여기 예전에 `BOT_STEP_UP = 0` 이 있었고, 주석은 "봇이 가구에 안 올라가는 건 │
+ * │ 원래 정한 바"라고 그 차이를 수용하고 있었다. **I1 앞에서는 성립하지 않는다.**│
+ * │                                                                          │
+ * │ 사람은 낮은 탁자를 걸어서 넘고 그 위에 선다. 봇은 낮은 턱도 못 넘고 발 높이가 │
+ * │ 언제나 0이었다. 그래서 규칙이 하나 섰다 — **가구 위에 서 있으면 사람 확정,   │
+ * │ 낮은 턱을 그냥 넘어가면 사람 확정.** 총 자리·AI 수가 공개(§15-3)라 사람이     │
+ * │ 몇 자리만 확정돼도 소거법으로 봇이 드러난다.                                │
+ * │                                                                          │
+ * │ 원래 이걸 0으로 둔 이유("y 를 같이 안 올리면 탁자를 뚫고 걷는다")는 진짜      │
+ * │ 문제였는데, 답은 **y 를 같이 올리는 것**이다 — 사람 클라이언트(LocalRig)가    │
+ * │ 하는 그대로 groundHeightAt 으로 발밑을 묻는다. 아래 stepBot 의 수직 처리는    │
+ * │ world-scene.tsx 의 그것과 같은 순서·같은 상수여야 한다.                      │
+ * └──────────────────────────────────────────────────────────────────────────┘
  */
-const BOT_STEP_UP = 0;
+const BOT_STEP_UP = STEP_UP;
 
 /** 목적지를 고를 때 가구를 피해 다시 뽑는 횟수. 다 실패하면 그냥 마지막 값을 쓴다. */
 const TARGET_TRIES = 12;
@@ -113,10 +122,17 @@ export interface BotState {
 
   x: number;
   z: number;
-  /** 발 높이. 봇은 바닥에서만 뛴다(가구에 올라서지 않는다) */
+  /** 발 높이. 0이 바닥이고 점프·가구 위에서만 >0이다 (사람과 같다) */
   y: number;
-  /** 수직 속도 (m/s). y > 0 인 동안에만 의미가 있다 */
+  /** 수직 속도 (m/s). 발이 땅에 붙어 있으면 0 */
   vy: number;
+  /**
+   * 발이 땅(또는 가구 윗면)에 붙어 있는가.
+   * 사람 클라이언트(LocalRig)의 같은 이름 필드와 **같은 규칙**으로 굴린다 —
+   * 발판 밖으로 걸어 나가면 false 가 되고 떨어진다. 여기가 갈리면 봇만
+   * 허공을 걷거나 봇만 탁자를 뚫는다 (I1).
+   */
+  grounded: boolean;
   heading: number;
   anim: AnimState;
 
@@ -231,14 +247,39 @@ function rand(min: number, max: number): number {
 /**
  * 설 수 있는 자리 하나. **가구 안은 피한다** —
  * 가구 안을 목적지로 잡으면 봇이 그 앞에서 영원히 비빈다.
+ *
+ * ┌─ ★ gather — 판이 도는 동안에는 테이블 주변에서만 뽑는다 (I1) ─────────────┐
+ * │ 주제는 중앙 스크린에 뜬다. 사람은 그걸 읽어야 하니 테이블 근처에 모여 그쪽을 │
+ * │ 본다. 그런데 이 함수는 **월드 전체 균등 추첨**이었다 — topic 6초 + speak 45초 │
+ * │ 짜리 라운드가 둘이니 102초 동안, 주제가 떠 있는데 혼자 창고 구석으로 걸어가는 │
+ * │ 자리가 생긴다. devtools 도 자동화도 필요 없다. 두 라운드면 눈으로 갈린다.    │
+ * │                                                                          │
+ * │ 그래서 판이 도는 동안에는 반경을 좁힌다. 균등 추첨(√r)이라 가장자리에 몰리지  │
+ * │ 않고, 반경 안에서도 계속 서성이므로 "전원이 테이블에 붙어 선" 그림은 안 된다. │
+ * └──────────────────────────────────────────────────────────────────────────┘
  */
-function randomPoint(): { x: number; z: number } {
+function randomPoint(gather: boolean): { x: number; z: number } {
+  const clampX = (v: number) =>
+    Math.min(Math.max(v, WORLD.minX + EDGE_INSET), WORLD.maxX - EDGE_INSET);
+  const clampZ = (v: number) =>
+    Math.min(Math.max(v, WORLD.minZ + EDGE_INSET), WORLD.maxZ - EDGE_INSET);
+
   let p = { x: 0, z: 0 };
   for (let i = 0; i < TARGET_TRIES; i += 1) {
-    p = {
-      x: rand(WORLD.minX + EDGE_INSET, WORLD.maxX - EDGE_INSET),
-      z: rand(WORLD.minZ + EDGE_INSET, WORLD.maxZ - EDGE_INSET),
-    };
+    if (gather) {
+      // √r 을 쓰는 이유: 그냥 r 을 균등으로 뽑으면 원 중심에 몰린다(넓이가 r² 이므로).
+      const a = Math.random() * Math.PI * 2;
+      const r = Math.sqrt(Math.random()) * BOT_GATHER_RADIUS;
+      p = {
+        x: clampX(SPAWN_CENTER.x + Math.cos(a) * r),
+        z: clampZ(SPAWN_CENTER.z + Math.sin(a) * r),
+      };
+    } else {
+      p = {
+        x: rand(WORLD.minX + EDGE_INSET, WORLD.maxX - EDGE_INSET),
+        z: rand(WORLD.minZ + EDGE_INSET, WORLD.maxZ - EDGE_INSET),
+      };
+    }
     if (!isBlocked(p.x, p.z, 0, BOT_STEP_UP)) return p;
   }
   return p; // 다 막혔다면(있을 수 없다) 그냥 간다 — 아래 막힘 판정이 곧 다시 잡는다
@@ -259,9 +300,9 @@ export function createBot(
   // 가구 안에서 시작하면 첫 틱에 튕겨 나가는 게 보인다 — 여기서 미리 밀어낸다.
   const pushed = resolveCollisions(raw.x, raw.z, 0, BOT_STEP_UP);
   // 밀어내도 안 풀리는 쐐기(소파 두 개 사이 구석)일 수 있다. 그러면 빈자리를 새로 뽑는다.
-  const free = isBlocked(pushed.x, pushed.z, 0, BOT_STEP_UP) ? randomPoint() : pushed;
+  const free = isBlocked(pushed.x, pushed.z, 0, BOT_STEP_UP) ? randomPoint(false) : pushed;
   const start = { ...raw, x: free.x, z: free.z };
-  const target = randomPoint();
+  const target = randomPoint(false);
   return {
     ...seed,
     x: start.x,
@@ -270,6 +311,7 @@ export function createBot(
     vy: 0,
     heading: start.heading,
     anim: 'idle',
+    grounded: true,
     tx: target.x,
     tz: target.z,
     // 전부 동시에 출발하면 그 순간 8명이 똑같이 움직여서 바로 들킨다. 흩뿌린다.
@@ -299,9 +341,21 @@ export function createBot(
   };
 }
 
+/**
+ * 지금 걸어가던 목적지를 버리고 새로 잡는다. **판이 열리는 순간** 호출부가 부른다.
+ *
+ * ★ I1 — 안 부르면, 판이 시작되기 전에 잡아 둔 "창고 구석" 목적지가 그대로 살아서
+ *   봇이 첫 주제가 뜨는 10초 동안 화면을 등지고 걸어 나간다. 사람은 그때 스크린을
+ *   보고 있다(스폰이 애초에 스크린 쪽을 향한다 — world-scene 의 LocalRig).
+ *   그 10초가 라운드마다 반복되면 눈으로 갈린다.
+ */
+export function gatherBot(bot: BotState, now: number): void {
+  retarget(bot, now, true);
+}
+
 /** 다음 목적지를 잡고 막힘 판정을 초기화한다. */
-function retarget(bot: BotState, now: number): void {
-  const next = randomPoint();
+function retarget(bot: BotState, now: number, gather: boolean): void {
+  const next = randomPoint(gather);
   bot.tx = next.x;
   bot.tz = next.z;
   bot.bestDist = Infinity;
@@ -327,7 +381,16 @@ function turnToward(bot: BotState, want: number, dt: number): void {
  * 사람 클라이언트(LocalAvatar)와 **같아야 한다** — 값이 변했고, 마지막 송신에서
  * MOVE_THROTTLE_MS가 지났을 때.
  */
-export function stepBot(bot: BotState, now: number, dt: number): boolean {
+export function stepBot(
+  bot: BotState,
+  now: number,
+  dt: number,
+  /**
+   * 판이 도는 동안인가 — 목적지를 라운드테이블 주변으로 좁힌다 (randomPoint 의 상자, I1).
+   * 판이 없는 방(라운지)에서는 false 라 예전처럼 창고 전체를 돌아다닌다.
+   */
+  gather = false,
+): boolean {
   // ★ 타이핑 중에는 발이 묶인다 (I1 — 머리말 3번 상자). 목적지 추적을 건너뛰므로
   //   waitUntil·tx·tz는 그대로 남고, 말하고 나면 가던 길을 이어서 간다.
   //   예약이 걸려도 typeAt 전(= 읽는 중)에는 평소처럼 걷는다.
@@ -349,13 +412,13 @@ export function stepBot(bot: BotState, now: number, dt: number): boolean {
 
     if (dist < ARRIVE_EPS) {
       // 도착 — 잠깐 서 있다가 다음 목적지로. 속도도 다시 뽑아 걸음걸이를 바꾼다.
-      retarget(bot, now);
+      retarget(bot, now, gather);
       bot.waitUntil = now + rand(BOT_IDLE_MIN_MS, BOT_IDLE_MAX_MS);
       bot.speed = rand(BOT_SPEED_MIN, BOT_SPEED_MAX);
       bot.anim = 'idle';
     } else if (dist >= bot.bestDist - PROGRESS_EPS && now - bot.progressAt > STUCK_MS) {
       // 몇 초째 가까워지지 못했다 = 가구에 막혔다. 사람은 못 가는 데를 계속 밀지 않는다.
-      retarget(bot, now);
+      retarget(bot, now, gather);
       bot.anim = 'idle';
     } else {
       if (dist < bot.bestDist - PROGRESS_EPS) {
@@ -368,20 +431,20 @@ export function stepBot(bot: BotState, now: number, dt: number): boolean {
       const fromZ = bot.z;
 
       // 가구에 막히면 밀려난다 — 벽을 따라 미끄러지는 느낌이 난다.
-      // ★ 사람(LocalRig)과 **같은 함수**를 쓴다. 여기만 다르면 봇이 가구를 뚫는다.
-      // ★ 발 높이를 bot.y 가 아니라 **0으로 고정해서** 본다. 점프 중(y>0)에 판정을
-      //   풀면 봇이 소파를 뛰어넘고 그 안에 착지한다 — 봇의 착지 높이는 항상 0이라
-      //   가구 안에 서 있게 된다. 뛰어도 가구는 못 넘는 편이 낫다.
+      // ★ 사람(LocalRig)과 **같은 함수·같은 인자**를 쓴다. 여기만 다르면 봇이 가구를
+      //   뚫거나(느슨하면) 봇만 낮은 탁자를 못 넘는다(빡빡하면). 후자가 곧 I1 누출이다 —
+      //   예전엔 발 높이를 0으로 고정하고 stepUp 을 0으로 뒀는데, 그래서 **가구 위에
+      //   선 아바타 = 사람 확정**이 됐다. 지금은 실제 발 높이(bot.y)로 본다.
       const moved = resolveCollisions(
         bot.x + (dx / dist) * step,
         bot.z + (dz / dist) * step,
-        0,
+        bot.y,
         BOT_STEP_UP,
       );
       // ★ 밀어냈는데도 아직 가구 안이면 **그 자리로 가지 않는다.**
       //   소파 두 개가 ㄱ 자로 놓인 구석처럼, A 에서 밀면 B 안이고 B 에서 밀면 A 안인
       //   쐐기가 있다. 거기는 몇 번을 밀어도 안 풀린다 — 들어가지 않는 게 유일한 답이다.
-      if (!isBlocked(moved.x, moved.z, 0, BOT_STEP_UP)) {
+      if (!isBlocked(moved.x, moved.z, bot.y, BOT_STEP_UP)) {
         bot.x = moved.x;
         bot.z = moved.z;
       }
@@ -394,7 +457,7 @@ export function stepBot(bot: BotState, now: number, dt: number): boolean {
         // ★ 여기서 'walk' 를 유지하면 **제자리걸음**이 된다 — 화면에서 제일 이상해
         //   보이는 게 그거다. 사람도 부딪히면 멈추고 방향을 튼다.
         bot.anim = 'idle';
-        if (now - bot.blockedAt > BLOCKED_MS) retarget(bot, now);
+        if (now - bot.blockedAt > BLOCKED_MS) retarget(bot, now, gather);
       } else {
         bot.blockedAt = now;
         bot.anim = 'walk';
@@ -428,28 +491,41 @@ export function stepBot(bot: BotState, now: number, dt: number): boolean {
 }
 
 /**
- * 점프 한 틱. 사람 클라이언트(LocalRig)와 **같은 상수·같은 적분**을 쓴다 —
- * 중력이 다르면 체공 시간이 달라지고, 그 차이가 곧 봇 표식이 된다 (I1).
+ * 수직 한 틱. 사람 클라이언트(LocalRig)의 수직 블록과 **같은 상수·같은 순서**다 —
+ * 중력이 다르면 체공 시간이 달라지고, 발밑을 다르게 물으면 한쪽만 가구에 올라선다.
+ * 그 차이는 전부 자리 단위 신호다 (I1).
  *
- * 봇은 걷는 중에도 뛴다(사람도 그렇다). 대신 가구 위에는 올라서지 않으므로
- * 착지 높이는 항상 0이다.
+ * 순서가 곧 규칙이다: 발밑이 무엇인지 먼저 묻고(바닥 0 또는 가구 윗면) → 발판 밖으로
+ * 걸어 나갔으면 떨어뜨리고 → 땅에 있으면 그 높이에 붙인다.
  *
  * allowNew가 false면 **새로 뛰지만 않는다** — 공중이었으면 착지까지 굴린다.
  * 타이핑 중에 공중에서 얼어붙으면 그게 곧 봇 표식이다 (I1).
  */
 function stepJump(bot: BotState, now: number, dt: number, allowNew: boolean): void {
-  if (bot.y <= 0 && bot.vy === 0) {
-    if (!allowNew || now < bot.nextJumpAt) return;
+  // 발밑. fromY 를 지금 발 높이로 주면 "옆을 걷다 갑자기 소파 위로 순간이동"이 안 난다.
+  const ground = groundHeightAt(bot.x, bot.z, bot.y);
+
+  if (bot.grounded && allowNew && now >= bot.nextJumpAt) {
     bot.nextJumpAt = now + rand(BOT_JUMP_MIN_MS, BOT_JUMP_MAX_MS);
     bot.vy = JUMP_SPEED;
+    bot.grounded = false;
+  }
+
+  // 발판 밖으로 걸어 나갔다. 뛰지 않았으니 초기 속도는 0이다.
+  if (bot.grounded && bot.y > ground + 0.02) bot.grounded = false;
+
+  if (bot.grounded) {
+    bot.y = ground;
+    bot.vy = 0;
+    return;
   }
 
   bot.vy -= GRAVITY * dt;
   bot.y += bot.vy * dt;
-
-  if (bot.y <= 0) {
-    bot.y = 0;
+  if (bot.vy <= 0 && bot.y <= ground) {
+    bot.y = ground;
     bot.vy = 0;
+    bot.grounded = true;
   }
 }
 
@@ -478,6 +554,101 @@ export function shouldChat(bot: BotState, now: number, mayInitiate: boolean): bo
   if (now < bot.nextChatAt) return false;
   bot.nextChatAt = now + rand(BOT_CHAT_MIN_MS, BOT_CHAT_MAX_MS);
   return mayInitiate;
+}
+
+/**
+ * 주제가 떴다 — 이 창(speak) 안에서 한 번 말하도록 발화 시각을 **당긴다**.
+ *
+ * ┌─ 왜 shouldChat 만으로는 안 되나 (I1) ─────────────────────────────────────┐
+ * │ 자발 발화 간격은 25~75초다 (BOT_CHAT_*). speak 창은 45초라, 그대로 두면     │
+ * │ **말 안 하고 지나가는 봇이 절반쯤 생긴다.** 사람은 다 같이 답하라고 주제를   │
+ * │ 띄운 45초라 웬만하면 한마디씩 한다 — 그 창에서 조용한 자리가 한 덩어리로     │
+ * │ 묶이면 그게 곧 명단이다.                                                   │
+ * │                                                                          │
+ * │ ★ 그렇다고 **전원이 반드시 말하게 하면 정반대로 샌다** (SPEC §18.5):        │
+ * │   사람은 AFK·패스가 흔해서 빈 답을 만든다. 봇이 매 라운드 100% 답하면        │
+ * │   "두 라운드 다 답한 자리 = 봇", 뒤집어 "빈 답 = 사람 확정"이 된다.          │
+ * │   그래서 speak=false(침묵)를 좌석마다 · 라운드마다 **독립으로** 뽑아 넘긴다  │
+ * │   (호출부의 BOT_SILENCE_CHANCE). 같은 봇이 늘 걸러도, 늘 답해도 표식이다.   │
+ * │                                                                          │
+ * │ ★ 좌석 인덱스로 스태거하지 않는다 — 간격이 규칙적이면 간격 자체가 신호다.    │
+ * └──────────────────────────────────────────────────────────────────────────┘
+ *
+ * ┌─ ★ 상한을 0.62 → 0.85 로 올렸다 (I1) ────────────────────────────────────┐
+ * │ 0.62 는 "말이 다음 단계로 넘어가서 터지는 것"을 막으려고 잡은 값이었다.      │
+ * │ 그런데 45초 창에서 **치기 시작**하는 시각이 최대 27.9초라, 타이핑(8~34자) +   │
+ * │ 지터를 더해도 대략 35초 전에는 반드시 끝난다. 즉 **창의 뒤 38%에는 봇의 주제  │
+ * │ 답이 절대 오지 않았다.** 그 구간에 자발 발화가 나온 자리는 사람 쪽으로 크게   │
+ * │ 기울고, 두 라운드 누적이면 좌석 두엇이 확정된다. 경계 넘김을 막으려고 분포를   │
+ * │ 잘랐더니 **분포 자체가 신호**가 된 셈이다.                                   │
+ * │                                                                            │
+ * │ 경계 넘김은 분포가 아니라 **경계에서 끊어서** 막는다 — speak 다음은 topic 이나 │
+ * │ freechat 이고 둘 다 사람도 말할 수 있는 단계라 조금 넘어가도 표식이 아니다.    │
+ * │ 진짜 위험한 건 말이 잠기는 단계(CHAT_LOCKED_PHASES)로 넘어가는 것인데, 거기는  │
+ * │ room-do 의 hushBots 가 진입 훅에서 통째로 끊는다.                            │
+ * └──────────────────────────────────────────────────────────────────────────┘
+ */
+const TOPIC_SPEAK_MIN_FRAC = 0.12;
+const TOPIC_SPEAK_MAX_FRAC = 0.85;
+
+export function primeForTopic(bot: BotState, now: number, windowMs: number, speak: boolean): void {
+  if (!speak) {
+    // 이 라운드는 건너뛴다. 창 **밖으로** 밀어 둔다 — 그냥 두면 25~75초 타이머가
+    // 우연히 창 안에서 터져서, 침묵하기로 한 자리가 말해 버린다.
+    bot.nextChatAt = Math.max(bot.nextChatAt, now + windowMs + 1_000);
+    return;
+  }
+  bot.nextChatAt = now + rand(TOPIC_SPEAK_MIN_FRAC * windowMs, TOPIC_SPEAK_MAX_FRAC * windowMs);
+}
+
+/**
+ * 봇을 그 자리에 세운다. 걸음도 점프도 새로 시작하지 않는다.
+ * 반환값의 뜻은 stepBot과 같다 — true면 이번 틱에 player_moved를 내보내라.
+ *
+ * ┌─ ★ 왜 필요한가 (I1 — 이번 판에서 제일 크게 샐 뻔한 자리) ──────────────────┐
+ * │ 투표·변론·판결 화면이 뜨는 동안 사람은 **포인터락이 풀려 한 발짝도 못 움직인다** │
+ * │ (마우스를 UI에 써야 하니까). 그때 봇만 서버 틱으로 계속 걸어 다니면          │
+ * │ **30초 만에 전 좌석이 갈린다.** 봇도 같이 세운다.                            │
+ * │                                                                            │
+ * │ 공중이었으면 착지까지는 굴린다 — 허공에서 얼어붙는 것도 똑같이 표식이다      │
+ * │ (stepJump의 allowNew 주석과 같은 이유).                                     │
+ * └──────────────────────────────────────────────────────────────────────────┘
+ */
+export function haltBot(bot: BotState, now: number, dt: number): boolean {
+  bot.anim = 'idle';
+  stepJump(bot, now, dt, false);
+
+  const changed =
+    bot.anim !== bot.sentAnim ||
+    Math.abs(bot.y - bot.sentY) > 0.001 ||
+    Math.abs(bot.x - bot.sentX) > 0.001 ||
+    Math.abs(bot.z - bot.sentZ) > 0.001;
+
+  if (!changed || now - bot.sentAt < MOVE_THROTTLE_MS) return false;
+
+  bot.sentX = bot.x;
+  bot.sentZ = bot.z;
+  bot.sentY = bot.y;
+  bot.sentHeading = bot.heading;
+  bot.sentAnim = bot.anim;
+  bot.sentAt = now;
+  return true;
+}
+
+/**
+ * 잡아 둔 발화 자리를 **말하지 않고** 놓아준다. 단계 경계에서 부른다.
+ *
+ * ★ 근거 (I1): freechat 끝에 예약된 말은 읽는 시간 + 치는 시간이 붙어 vote 창으로
+ *   넘어가 터진다. 그 순간 사람은 투표 패널 때문에 입력이 막혀 있으므로,
+ *   "단계가 바뀐 뒤에도 말하는 자리 = 봇"이 된다.
+ */
+export function cancelSpeech(bot: BotState): void {
+  if (!bot.speechHeld) return;
+  bot.speechHeld = false;
+  bot.pendingText = null;
+  bot.pendingTail = null;
+  // seq를 올려 둔다 — 이 자리를 노리던 LLM 응답이 뒤늦게 와서 다음 예약을 덮어쓰면 안 된다.
+  bot.speechSeq += 1;
 }
 
 /**

@@ -25,29 +25,44 @@
 import {
   BOT_CHAIN_CHANCE,
   BOT_CHAIN_MAX,
+  BOT_DEFENSE_SILENCE_CHANCE,
+  BOT_EMIT_JITTER_MS,
   BOT_JOIN_REACT_CHANCE,
   BOT_LEAVE_REACT_CHANCE,
   BOT_PERSIST_MS,
+  BOT_SILENCE_CHANCE,
   BOT_TICK_MS,
+  BOT_VOTE_CHANGE_CHANCE,
+  BOT_VOTE_MAX_FRAC,
+  BOT_VOTE_MIN_FRAC,
   CHAT_HISTORY_MAX,
   CHAT_MAX_LEN,
   CHAT_MIN_INTERVAL_MS,
+  GAME_MSG_MIN_INTERVAL_MS,
   MAX_GAME_MESSAGE_LEN,
   MAX_WS_MESSAGE_LEN,
   MOVE_MIN_INTERVAL_MS,
   PROTOCOL_VERSION,
   SOCKET_TIMEOUT_MS,
   SWEEP_ALARM_MS,
+  VOTE_PROGRESS_INTERVAL_MS,
+  isChatLocked,
+  mayMove,
+  mayChat,
 } from '../../lib/mp/constants';
-import type { ErrorCode, PlayerSnapshot, S2CMessage } from '../../lib/mp/protocol';
+import type { ErrorCode, PlayerSnapshot, RoundPhase, S2CMessage } from '../../lib/mp/protocol';
 import { verifyTicket } from '../../lib/mp/ticket';
-import { isC2SMessage, parseMove } from '../../lib/mp/validate';
+import { isC2SMessage, parseMove, parseVerdict, parseVote } from '../../lib/mp/validate';
 import {
   botSnapshot,
+  cancelSpeech,
   createBot,
+  gatherBot,
+  haltBot,
   hasContent,
   pickLine,
   pickResponder,
+  primeForTopic,
   readDelayMs,
   replaceSpeech,
   scheduleSpeech,
@@ -59,6 +74,19 @@ import {
   type BotPose,
   type BotState,
 } from './bots';
+import {
+  abortRound,
+  castVerdict,
+  castVote,
+  eliminatedId,
+  haveAllVoted,
+  revealSnapshot,
+  roundSnapshot,
+  startRound,
+  stepRound,
+  voteProgress,
+  type RoundState,
+} from './roundtable';
 import { fetchRoomMeta, type RoomMeta } from './room-meta';
 import { fetchAgentLines, type ChatLine } from './world-agent';
 import type { Env } from './bindings';
@@ -66,6 +94,79 @@ import type { Env } from './bindings';
 const KEY_META = 'meta';
 const KEY_BOTS = 'bots';
 const KEY_EMPTY_AT = 'emptyAt';
+const KEY_ROUND = 'round';
+
+/**
+ * 판이 이만큼 뒤처져 있으면 따라잡지 않고 **끝낸다** (ms).
+ *
+ * ┌─ 사람이 전부 나가면 판을 어떻게 하나 ─────────────────────────────────────┐
+ * │ 마지막 사람이 나가면 stopSim 으로 틱이 멈추고 판이 그 자리에 얼어붙는다.    │
+ * │ 그 상태로 며칠 뒤 누가 들어와 판이 이어지면 안 된다 —                      │
+ * │  · 판정을 내릴 사람들이 이미 없다. 남의 판결을 낯선 사람이 이어받는 셈이다. │
+ * │  · reveal 은 **정체를 공개하는 유일한 메시지**다 (I1의 예외). 그 판을 함께  │
+ * │    보지 않은 사람에게 정체를 보여 줄 이유가 없다.                          │
+ * │ 그래서 abortRound 로 ended 로만 끝낸다 — reveal 을 내지 않는다.            │
+ * │                                                                          │
+ * │ ★ 그런데 즉시 끝내면 안 된다. 새로고침은 "나감 → 들어옴"이라 한 명짜리 방은  │
+ * │   매 새로고침마다 판이 죽는다. 45초를 준다 — 새로고침은 덮고, 진짜로 자리를  │
+ * │   뜬 판은 못 덮는 길이다.                                                  │
+ * │                                                                          │
+ * │ ★ 판이 도는 동안에는 **봇이 0기여도 틱이 돈다**(startSim 참고). 그래서 이   │
+ * │   문턱에 걸리는 경우는 사실상 "사람이 전부 나갔던 판" 하나뿐이다.           │
+ * └──────────────────────────────────────────────────────────────────────────┘
+ */
+const ROUND_ABANDON_MS = 45_000;
+
+/**
+ * 지목된 봇에게 던지는 최후변론 질문. LLM 맥락의 [지금 답할 질문]으로 들어간다
+ * (app/api/internal/world-agent → lib/agent/generate.ts의 setting:'game' 분기).
+ */
+const DEFENSE_PROMPT = '너를 AI라고 지목했다. 마지막으로 할 말은?';
+
+/**
+ * 최후변론을 읽고 치기 시작하기까지 (ms). **readDelayMs()를 쓰지 않는다** —
+ * 저쪽은 딴짓 분기가 최대 16초라 20초짜리 defense 창을 통째로 넘길 수 있고,
+ * 그러면 upgradeSpeech의 예산(MIN_AGENT_BUDGET_MS)에도 걸려 LLM을 아예 안 부른다.
+ * 지목당한 사람이 폰을 보다 말고 답하지는 않는다 — 짧은 게 오히려 자연스럽다.
+ */
+const DEFENSE_READ_MIN_MS = 700;
+const DEFENSE_READ_MAX_MS = 2_500;
+
+function rand(min: number, max: number): number {
+  return min + Math.random() * (max - min);
+}
+
+/**
+ * 봇이 낸 표의 예약. **BotState에 담지 않는다.**
+ *
+ * ★ 근거: ensureMeta는 좌석 명단이 바뀌면 봇을 다시 만드는데(createBot이 speechSeq까지
+ *   0으로 되돌린다), 예약을 BotState에 두면 **누가 접속한 순간 전 봇의 표가 사라진다.**
+ *   이미 낸 봇이 또 내거나(중복), 예약이 사라져 영영 안 낸다 — 후자는 "투표 안 한 자리
+ *   = 봇"이라 I1 정면 위반이다. 그래서 좌석 id를 키로 DO가 따로 들고, 판과 함께 굽는다.
+ */
+interface BotVotePlan {
+  /** 이 시각에 표를 넣는다 (epoch ms) */
+  at: number;
+  targetId: string;
+  cast: boolean;
+  /** 표를 한 번 바꿀 시각. 안 바꾸면 null */
+  changeAt: number | null;
+  changeTargetId: string | null;
+  changed: boolean;
+}
+
+interface BotVerdictPlan {
+  at: number;
+  guilty: boolean;
+  cast: boolean;
+}
+
+/** 판 하나를 통째로 굽는 모양. 전부 구조화 복제 가능한 값이다. */
+interface StoredRound {
+  round: RoundState;
+  botVotes: Record<string, BotVotePlan>;
+  botVerdicts: Record<string, BotVerdictPlan>;
+}
 
 /** 방 메타(좌석 명단) 캐시 수명. 이보다 자주 사람이 들어오면 pid 미발견 시 강제 갱신된다. */
 const META_TTL_MS = 60_000;
@@ -105,6 +206,25 @@ export class RoomDO {
   private lastChatAt = new WeakMap<WebSocket, number>();
   /** 소켓별 마지막 이동 시각. 위와 같은 이유로 메모리에만 둔다. */
   private lastMoveAt = new WeakMap<WebSocket, number>();
+  /** 소켓별 마지막 게임 메시지(vote·verdict·intro_done) 시각. 자원 보호용 (L1). */
+  private lastGameMsgAt = new WeakMap<WebSocket, number>();
+  /**
+   * 좌석별 **마지막으로 알려진 자세.** 소켓이 끊겨도 명부에서 그 자리가 사라지지
+   * 않게 하는 값이다 (seatSnapshots 의 상자 — I1).
+   *
+   * 메모리에만 둔다. evict 로 날아가면 그 좌석이 스폰 자리로 돌아갈 뿐인데,
+   * 그건 봇도 마찬가지고(BotPose 는 5초마다만 굽는다) 사람이 재접속해도 같은 일이
+   * 일어난다 — 자리 단위 차이가 아니다.
+   */
+  private lastPose = new Map<string, PlayerSnapshot>();
+  /**
+   * 봇 좌석별 **송신 위상 오프셋** (ms, 0~BOT_EMIT_JITTER_MS).
+   *
+   * ★ I1 (BOT_EMIT_JITTER_MS 의 상자): 이게 없으면 봇 N기의 player_moved 가 같은
+   *   이벤트 루프 턴에 나가 **같은 배치로 도착**한다. 도착 시각으로 클러스터링하면
+   *   봇 집합이 통째로 갈린다. 좌석마다 고정이라 사람의 안정적인 송신 위상과 닮는다.
+   */
+  private emitPhase = new Map<string, number>();
   /**
    * 최근 채팅. 사람·봇 것을 같이 담는다 (id로 나중에 가른다).
    *
@@ -118,6 +238,19 @@ export class RoomDO {
    * 사람이 한마디 하면 0으로 돌아간다. 잃어도 무해하므로 메모리에만 둔다.
    */
   private botChainHops = 0;
+
+  /**
+   * 진행 중인 판. **단계가 바뀔 때마다 storage에 굽는다** (매 틱 아니다 — 100ms마다
+   * 쓰면 그게 곧 과금이다). null이면 아직 안 열렸거나 아직 storage에서 안 읽었다.
+   */
+  private round: RoundState | null = null;
+  /** storage를 한 번은 봤는가. 없는 키를 매번 읽지 않으려는 표시일 뿐이다. */
+  private roundLoaded = false;
+  private botVotes: Record<string, BotVotePlan> = {};
+  private botVerdicts: Record<string, BotVerdictPlan> = {};
+  /** 마지막으로 내보낸 vote_progress의 voted 값. -1이면 아직 안 보냈다. */
+  private progressSent = -1;
+  private progressAt = 0;
 
   constructor(
     private readonly ctx: DurableObjectState,
@@ -208,12 +341,11 @@ export class RoomDO {
 
     // ⑥ 같은 사람의 기존 소켓 정리 (중복 탭 · 새로고침 잔재).
     //    안 지우면 새로고침할 때마다 유령이 한 명씩 는다.
+    //    ★ 여기서도 player_left 를 내지 않는다 — 같은 좌석이 곧바로 다시 들어오므로
+    //      명부에서 지웠다 넣으면 그 깜빡임이 곧 "사람이 새로고침했다" 는 신호다 (I1).
     for (const other of this.ctx.getWebSockets()) {
       const s = other.deserializeAttachment() as PlayerSnapshot | null;
-      if (s?.id === ticket.pid) {
-        this.broadcast({ t: 'player_left', id: s.id }, other);
-        other.close(4002, 'superseded');
-      }
+      if (s?.id === ticket.pid) other.close(4002, 'superseded');
     }
 
     // ⑦ 상태 구성 → accept → 명부 교환
@@ -230,20 +362,30 @@ export class RoomDO {
       anim: 'idle',
     };
 
-    // accept 전에 모아야 한다. 뒤에 모으면 자기 자신이 명부에 섞인다.
-    const others = this.humanSnapshots().filter((s) => s.id !== snapshot.id);
-    const bots = await this.ensureBots(meta);
+    // 봇을 먼저 세운다 — 명부(seatSnapshots)가 봇 좌표를 읽어야 한다.
+    await this.ensureBots(meta);
+    // ★ accept 전에 모아야 한다. 뒤에 모으면 이 소켓이 humanSnapshots 에 섞여
+    //   자기 자신이 명부에 두 번 들어간다.
+    const roster = this.seatSnapshots(meta, snapshot);
 
     this.ctx.acceptWebSocket(server);
     server.serializeAttachment(snapshot);
 
-    this.send(server, {
-      t: 'welcome',
-      selfId: snapshot.id,
-      // 사람과 봇을 한 배열에 섞는다. 순서로도 갈리지 않게 좌석순으로 정렬한다.
-      players: [...others, ...bots.map(botSnapshot)].sort((a, b) => a.seat - b.seat),
-    });
-    this.broadcast({ t: 'player_joined', player: snapshot }, server);
+    this.send(server, { t: 'welcome', selfId: snapshot.id, players: roster });
+
+    // ★ `player_joined` 를 여기서 **보내지 않는다** (I1 — seatSnapshots 의 상자).
+    //   이 좌석은 이미 방 전원의 명부에 들어 있다(그들도 좌석 명단으로 welcome 을
+    //   받았다). 접속할 때마다 이벤트를 내면 **사람에게만** 나는 이벤트가 되고,
+    //   거기 한 번이라도 등장한 id 는 사람 확정이다. 새로고침 한 번이면 아웃된다.
+    //   명부가 실제로 늘어나는 경우(좌석 추가)는 ensureMeta 가 사람·봇 구분 없이 낸다.
+
+    // 판이 돌고 있으면 **지금 단계를 이 소켓 하나에** 알려 준다. 안 보내면 판 중간에
+    // 들어온 사람의 화면이 'idle'로 멈춘 채 4분을 서 있는다.
+    // ★ revealSnapshot 은 여기서 **절대** 부르지 않는다 — 정체를 실어 나르는 메시지는
+    //   그것 하나뿐이고(I1의 유일한 예외), 판을 함께 보지 않은 사람에게 결말만 던져
+    //   줄 이유가 없다. roundSnapshot 은 nomineeId·spotlightId 를 단계로 막아 준다.
+    await this.ensureRound();
+    if (this.round) this.send(server, { t: 'round', ...roundSnapshot(this.round) });
 
     await this.ctx.storage.delete(KEY_EMPTY_AT);
     await this.ensureAlarm();
@@ -289,6 +431,21 @@ export class RoomDO {
         if (nowMs - (this.lastMoveAt.get(ws) ?? 0) < MOVE_MIN_INTERVAL_MS) return;
         this.lastMoveAt.set(ws, nowMs);
 
+        // 처형된 자리는 더 안 움직인다. **역방향 누출을 막는 줄이다** (I1):
+        // 봇이 처형되면 서버가 조종을 멈추는데, 사람이 처형됐을 때만 아바타가
+        // 계속 꿈틀대면 "쓰러진 뒤에도 움직인 자리 = 사람"이 된다.
+        if (this.round && eliminatedId(this.round) === snap.id) return;
+
+        // ★★ 이동이 잠긴 단계에서는 사람 좌표도 받지 않는다 (I1 — mayMove 의 상자).
+        //    클라도 같은 함수로 입력을 막지만, **거기서만 막으면 소켓으로 우회된다** —
+        //    그리고 봇은 이 구간에서 단 한 패킷도 안 내므로, 우회한 한 사람 때문에
+        //    나머지 전원이 소거법으로 갈린다.
+        //    잠금 전환 순간의 인플라이트 패킷도 여기서 같이 잘린다.
+        //
+        // ★ defense 는 지목된 자리 하나만 막는다. 지목된 봇도 haltBot 으로 똑같이
+        //   서므로(tick) 그 자리의 정체는 여전히 안 갈린다.
+        if (!mayMove(this.phase(), snap.id === (this.round?.nomineeId ?? null))) return;
+
         const move = parseMove(parsed);
         if (!move) return; // NaN 하나가 통과하면 모든 클라의 보간이 영구히 깨진다
 
@@ -321,6 +478,15 @@ export class RoomDO {
         const text = raw.trim().slice(0, CHAT_MAX_LEN);
         if (!text) return;
 
+        // ★★ 말이 잠긴 단계에서는 사람 채팅도 거절한다 (I1 — mayChat 의 상자).
+        //    이 구간에서 봇의 발화 확률은 **정확히 0** 이다(botsMayChat · hushBots).
+        //    확률적 잡음이 없으므로 사람이 한 줄만 쳐도 그 자리가 사람으로 확정되고,
+        //    총 자리·AI 수가 공개라 소거법으로 나머지가 따라 갈린다.
+        //    클라 UI 도 같은 함수로 막지만 그건 편의고, 방어선은 여기다.
+        //    ★ 유일한 예외는 defense 의 지목된 본인이다 — 그 자리는 봇이든 사람이든
+        //      똑같이 말할 수 있어야 한다(안 그러면 최후변론이 정체 판별기가 된다).
+        if (!mayChat(this.phase(), snap.id === this.round?.nomineeId)) return;
+
         const now = Date.now();
         if (now - (this.lastChatAt.get(ws) ?? 0) < CHAT_MIN_INTERVAL_MS) return;
         this.lastChatAt.set(ws, now);
@@ -340,6 +506,41 @@ export class RoomDO {
         return;
       }
 
+      case 'intro_done': {
+        // 첫 신호에만 판이 열린다. 나머지는 maybeStartRound가 그냥 돌아선다 —
+        // 여러 사람이 제각기 보내고, 그중 누가 먼저인지는 아무 의미가 없다.
+        if (!this.allowGameMessage(ws)) return;
+        await this.ensureRound();
+        await this.maybeStartRound(Date.now());
+        return;
+      }
+
+      case 'vote': {
+        if (!this.allowGameMessage(ws)) return;
+        const s = this.round;
+        if (!s) return;
+        const v = parseVote(parsed);
+        if (!v) return;
+        // ★ 투표자는 **소켓에서** 되찾은 snap.id 다. 클라가 보낸 id는 애초에 받지 않는다
+        //   (프로토콜 규칙 4) — 받으면 남의 이름으로 찍을 수 있다.
+        // 거절돼도 아무것도 돌려주지 않는다. 에러를 내려주면 "왜 거절됐는지"가
+        // 단계·좌석 정보로 새고, 자기 자신 투표 거부 여부까지 관측된다 (I1).
+        castVote(s, snap.id, v.targetId, Date.now());
+        // 진행 카운터는 여기서 즉시 쏘지 않는다 — VOTE_PROGRESS_INTERVAL_MS 참고.
+        // 사람 표만 즉시 나가면 봇 표(틱 배차)와 도착 시각으로 갈린다.
+        return;
+      }
+
+      case 'verdict': {
+        if (!this.allowGameMessage(ws)) return;
+        const s = this.round;
+        if (!s) return;
+        const v = parseVerdict(parsed);
+        if (!v) return;
+        castVerdict(s, snap.id, v.guilty, Date.now());
+        return;
+      }
+
       default:
         return; // 전방 호환. 모르는 타입은 무시한다
     }
@@ -355,12 +556,21 @@ export class RoomDO {
 
   private async handleLeave(ws: WebSocket): Promise<void> {
     const snap = ws.deserializeAttachment() as PlayerSnapshot | null;
-    if (snap) this.broadcast({ t: 'player_left', id: snap.id }, ws);
+    // ★ `player_left` 를 **보내지 않는다** (I1 — seatSnapshots 의 상자).
+    //   이 이벤트는 사람에게만 났다. 봇은 영원히 안 나가므로, 4분짜리 판에서
+    //   한 번이라도 여기 등장한 id 는 그대로 사람 확정이었다. 대신 마지막 자세를
+    //   기억해 두고 아바타는 명부에 남긴다 — 가만히 서 있는 사람과 구분되지 않는다.
+    //   좌석이 실제로 없어지는 경우만 ensureMeta 가 사람·봇 구분 없이 낸다.
+    if (snap) this.lastPose.set(snap.id, snap);
 
     if (this.humanCount() === 0) {
       this.stopSim();
       await this.ctx.storage.put(KEY_EMPTY_AT, Date.now());
       await this.persistBots();
+      // 판은 여기서 얼어붙는다 — **끝내지 않는다.** 새로고침은 "나감 → 들어옴"이라
+      // 한 명짜리 방은 매 새로고침마다 판이 죽어 버린다. 실제 종료 판정은
+      // 다시 누가 들어와 틱이 돌 때 driveRound 가 한다 (ROUND_ABANDON_MS 의 상자).
+      await this.saveRound();
       return; // 아무도 안 남았으면 들을 사람도 없다
     }
 
@@ -398,7 +608,22 @@ export class RoomDO {
 
     await this.reviveIfNeeded();
     await this.persistBots();
-    await this.ctx.storage.setAlarm(now + SWEEP_ALARM_MS);
+    await this.ctx.storage.setAlarm(this.nextAlarmAt(now));
+  }
+
+  /**
+   * 다음 알람 시각. 평소엔 30초 뒤지만 **판이 도는 동안에는 다음 단계 마감에 맞춘다.**
+   *
+   * 판이 도는 방은 봇이 0기여도 틱 타이머가 돌지만(startSim), evict 로 그 타이머가
+   * 죽으면 다음 알람까지 아무도 판을 굴리지 않는다. 30초를 통째로 흘려보내면
+   * 30초짜리 투표가 60초가 된다 — 단계 길이가 흔들리는 건 그 자체로 I1 위험이다(§5.3).
+   */
+  private nextAlarmAt(now: number): number {
+    const sweep = now + SWEEP_ALARM_MS;
+    const s = this.round;
+    if (!s || s.done) return sweep;
+    // 최소 1초 — 마감이 이미 지났어도 알람이 폭주하지 않게 바닥을 깐다.
+    return Math.min(sweep, Math.max(now + 1_000, s.phaseEndsAt + 100));
   }
 
   private async ensureAlarm(): Promise<void> {
@@ -411,7 +636,13 @@ export class RoomDO {
 
   private startSim(): void {
     if (this.simTimer !== null) return;
-    if (!this.bots || this.bots.length === 0) return;
+    // ★ "봇이 1기 이상"이 아니라 **"봇이 있거나 판이 돌고 있다"** 이다.
+    //   판 진행(driveRound)이 이 틱에 얹혀 있는데 예전 조건 그대로 두면,
+    //   봇이 0기인 방 — 즉 사람만 모여서 테스트하기 제일 쉬운 방 — 에서 타이머가
+    //   아예 안 돌아 판이 topic 에서 영원히 멈춘다.
+    //   덤으로 판이 도는 동안 DO가 잠들지 않는다: 투표 중에는 아무도 안 움직여서
+    //   (포인터락이 풀려 있다) 깨울 메시지조차 없다.
+    if ((!this.bots || this.bots.length === 0) && !this.roundActive()) return;
     if (this.humanCount() === 0) return;
 
     this.lastTickAt = Date.now();
@@ -426,7 +657,7 @@ export class RoomDO {
     this.simTimer = null;
   }
 
-  /** evict 후 첫 이벤트에서 메타·봇·타이머를 되살린다. */
+  /** evict 후 첫 이벤트에서 메타·봇·판·타이머를 되살린다. */
   private async reviveIfNeeded(): Promise<void> {
     if (this.simTimer !== null) return;
     if (this.humanCount() === 0) return;
@@ -434,6 +665,7 @@ export class RoomDO {
     const meta = this.meta ?? (await this.loadMeta());
     if (!meta) return;
     await this.ensureBots(meta);
+    await this.ensureRound();
     this.startSim();
   }
 
@@ -442,11 +674,24 @@ export class RoomDO {
     const dt = Math.min((now - this.lastTickAt) / 1000, 0.5);
     this.lastTickAt = now;
 
-    const bots = this.bots;
-    if (!bots || bots.length === 0 || this.humanCount() === 0) {
+    const bots = this.bots ?? [];
+    if (this.humanCount() === 0 || (bots.length === 0 && !this.roundActive())) {
       this.stopSim();
       return;
     }
+
+    // ★ 봇보다 먼저 굴린다. 단계가 이 틱에 바뀌면 그 결정(봇 표 예약·변론 예약·
+    //   발 묶기)이 같은 틱의 봇 루프에 곧바로 반영돼야 한다.
+    this.driveRound(now);
+
+    // 투표·판결·공개 화면이 뜨는 동안에는 봇도 그 자리에 선다 (haltBot의 상자 — I1).
+    // ★ defense 는 좌석마다 다르다 — 지목된 자리만 서고 나머지 봇은 걷는다.
+    //   그래서 여기서 한 번에 정하지 못하고 루프 안에서 봇마다 묻는다 (mayMove).
+    const nomineeId = this.round?.nomineeId ?? null;
+    const phase = this.phase();
+    // 판이 도는 동안에는 목적지를 라운드테이블 주변으로 좁힌다. 주제를 읽으러 모인
+    // 사람들 사이에서 혼자 창고 구석으로 걸어가면 그게 곧 표식이다 (randomPoint, I1).
+    const gather = this.roundActive();
 
     for (const bot of bots) {
       // ① 말할 때가 됐으면 **예약만** 한다. 여기서 바로 broadcast하면 걸어가면서
@@ -462,18 +707,48 @@ export class RoomDO {
       //   판정은 자기 것이 아니라 **어느 봇이든**이다 (humanSpokeLast). 자기만 보면
       //   봇 둘이 서로의 발화를 핑퐁으로 받아 끝없이 주고받는다. 루프 안에서 매번
       //   다시 보므로, 앞 봇이 이 틱에 말했으면(③) 뒤 봇은 막힌다.
-      if (shouldChat(bot, now, this.humanSpokeLast())) {
+      //
+      // ★ speak 페이즈에서는 mayInitiate 를 묻지 않는다. 저 규칙("마지막 발화가 봇이면
+      //   쉰다")은 **대화를 받는** 자리를 위한 것인데, speak 은 전원이 같은 주제에
+      //   각자 답하는 창이라 남이 먼저 답했다고 내 답이 막히면 안 된다. 막아 두면
+      //   먼저 말한 자리만 답하고 나머지가 통째로 조용해진다 — 그게 곧 덩어리다 (I1).
+      //
+      // ★ botsMayChat 을 **shouldChat 뒤에** 본다. 앞에 두면 말 못 하는 단계 동안
+      //   nextChatAt 이 안 밀려서, 투표가 끝나는 순간 밀린 타이머가 **전 봇에서 한꺼번에
+      //   터진다** — 그 동시 발화가 곧 명단이다 (I1). shouldChat 은 막히든 말든 다음
+      //   시각을 다시 잡아 준다(그 함수의 상자).
+      const speakWindow = this.speakTopic();
+      const wantsChat = shouldChat(bot, now, speakWindow !== null || this.humanSpokeLast());
+      if (wantsChat && this.botsMayChat()) {
         // 로비 방은 풀이 비어 있어 null이 온다 — 자리만 잡히고 문구는 LLM이 채운다.
         scheduleSpeech(bot, pickLine(this.botLines(), this.recentTexts()), now);
         // ★ 스스로 꺼내는 말도 LLM 을 태운다. 안 태우면 이 자리는 아무 말도 못 한다
         //   (예전에는 평생 풀 문구만 말했고, 사용자가 본 게 정확히 그거였다).
         //   trigger 는 없다(답할 상대가 없으니 흐름에 끼어드는 게 맞다).
-        void this.upgradeSpeech(bot, bot.speechSeq, null);
+        //
+        // ★ 단 speak 페이즈에서는 **지금 주제**를 trigger 로 싣는다. 그래야 LLM 맥락의
+        //   [지금 답할 질문] 분기를 타고 그 주제에 답한다. 안 실으면 SPEC §17.2가
+        //   기록한 사고가 그대로 재현된다 — "배터리 몇 퍼센트야?"에 "어제랑 비슷했던
+        //   것 같아". 첫 질문 한 번으로 봇이 전부 갈렸다.
+        //   LLM이 없는 방은 풀 문구가 그대로 나간다(폴백 유지).
+        void this.upgradeSpeech(bot, bot.speechSeq, speakWindow);
       }
 
       // ② 굴린다. 예약이 걸려 있으면 stepBot이 세워 둔다.
-      if (stepBot(bot, now, dt)) {
-        this.broadcast({
+      //    투표 화면이 떠 있는 동안에는 굴리지 않고 세운다 — 사람은 포인터락이 풀려
+      //    한 발짝도 못 움직이는 구간이다 (haltBot, I1).
+      //
+      // ★ defense 에서는 **지목된 봇만** 선다. 사람 쪽도 똑같이 지목된 한 명만
+      //   묶이므로(world-scene.tsx 의 mayMove) 나머지는 양쪽 다 걷는다.
+      //   여기를 `still` 하나로 되돌려 전 봇을 세우면, 걸어다니는 사람들 사이에서
+      //   **봇만 20초간 얼어붙어** 이 단계가 통째로 봇 판별기가 된다.
+      const still = !mayMove(phase, bot.id === nomineeId);
+      const moved = still ? haltBot(bot, now, dt) : stepBot(bot, now, dt, gather);
+      if (moved) {
+        // ★ this.broadcast 가 아니라 emitAsBot 이다 (I1 — BOT_EMIT_JITTER_MS).
+        //   여기서 바로 보내면 봇 전원의 좌표가 **같은 이벤트 루프 턴**에 나가
+        //   같은 배치로 도착한다. 도착 시각만 찍어도 봇 집합이 갈린다.
+        this.emitAsBot(bot.id, {
           t: 'player_moved',
           id: bot.id,
           x: bot.x,
@@ -503,6 +778,8 @@ export class RoomDO {
   private reactToHuman(now: number, trigger: string): void {
     const bots = this.bots;
     if (!bots || bots.length === 0) return;
+    // 투표·변론·판결 중에는 대꾸하지 않는다 — 그 화면에서 사람은 채팅을 못 친다.
+    if (!this.botsMayChat()) return;
 
     // 답할 거리가 없는 말("ㅋㅋ", "ㅇㅇ")에는 자리를 잡지 않는다 (bots.ts의 hasContent).
     // 여기서 안 막으면 풀 문구든 LLM 답이든 동문서답으로 나간다 — 잡은 자리는 반드시 채워지므로
@@ -555,7 +832,11 @@ export class RoomDO {
    * "늦게 말한 자리만 대화가 이어지는" 편차가 생기고, 그건 자리 단위 신호다 (I1).
    */
   private botSpoke(bot: BotState, text: string, ts: number, tail: string | null = null): void {
-    this.broadcast({ t: 'chat', id: bot.id, nickname: bot.nickname, text, ts });
+    // ★ 발화도 좌표와 **같은 위상**으로 흘린다 (I1 — BOT_EMIT_JITTER_MS).
+    //   틱에서 꺼낸 말은 100ms 격자 위에 정확히 얹혀 나가는데, 사람 채팅은 소켓
+    //   수신 즉시라 아무 격자에도 안 맞는다. "봇 이동 배치와 같은 프레임에 온 채팅"
+    //   은 id 가 붙어 있으므로 그 한 줄로 그 자리가 봇 확정이다.
+    this.emitAsBot(bot.id, { t: 'chat', id: bot.id, nickname: bot.nickname, text, ts });
     this.rememberChat(bot.id, bot.nickname, text);
     // 뒷줄은 앞 줄 바로 뒤에 잇는다 — 사람은 한 생각을 두 번에 나눠 친다.
     // (tick 경로에서는 takeSpeech가 이미 걸어 뒀으므로 여기 tail은 null이다.)
@@ -589,6 +870,7 @@ export class RoomDO {
   private maybeChain(speaker: BotState, text: string, now: number): void {
     const bots = this.bots;
     if (!bots || bots.length < 2) return;
+    if (!this.botsMayChat()) return; // 위와 같다 — 사람이 못 치는 구간에서는 봇도 안 친다
     if (speaker.speechHeld) return;
     if (this.botChainHops >= BOT_CHAIN_MAX) return;
     // 사람 발화와 같은 규칙이다 — 봇이 "ㅋㅋ"만 했으면 거기 붙일 대꾸도 없다.
@@ -767,6 +1049,414 @@ export class RoomDO {
     await this.ctx.storage.put(KEY_BOTS, this.bots.map(toPose));
   }
 
+  /* ────────────────────────── 라운드테이블 (한 판) ────────────────────────── */
+
+  private roundActive(): boolean {
+    return this.round !== null && !this.round.done;
+  }
+
+  private phase(): RoundPhase {
+    return this.round?.phase ?? 'idle';
+  }
+
+  /** 지금이 speak 페이즈면 그 주제, 아니면 null. 봇 발화의 trigger 로 쓴다. */
+  private speakTopic(): string | null {
+    const s = this.round;
+    return s && s.phase === 'speak' ? s.topic : null;
+  }
+
+
+  /**
+   * 봇이 **스스로** 말을 꺼내도 되는 단계인가.
+   * 판이 없는 방(라운지)은 'idle'이라 늘 참이다 — 저긴 숨길 게 없다.
+   * 최후변론은 여기를 거치지 않는다 (scheduleBotDefense 가 따로 예약한다).
+   *
+   * ★ 사람 채팅도 **같은 함수**로 막힌다 (webSocketMessage 의 'chat').
+   *   한쪽만 막으면 그 구간의 발화가 통째로 한쪽 진영 것이 된다 (I1).
+   * ★ isNominee 를 false 로 넘긴다 — 최후변론은 이 길이 아니라 scheduleBotDefense 다.
+   *   여기를 열면 지목된 봇이 변론과 혼잣말을 둘 다 하게 된다.
+   */
+  private botsMayChat(): boolean {
+    return mayChat(this.phase(), false);
+  }
+
+  /** 이 판의 좌석에 실제로 앉아 있는 봇들. 판 도중에 생긴 봇 좌석은 끼지 않는다. */
+  private roundBots(): BotState[] {
+    const s = this.round;
+    if (!s || !this.bots) return [];
+    return this.bots.filter((b) => s.seatIds.includes(b.id));
+  }
+
+  /**
+   * 지금 **소켓이 살아 있는** 사람 좌석. vote 조기 종료 임계다 (haveAllVoted).
+   * 나간 사람의 자리는 남지만 그 사람은 영영 표를 안 내므로, 넣으면 조건이 참이
+   * 되지 않아 매번 30초를 꽉 채운다 (SPEC §18.6).
+   */
+  private connectedHumanSeats(): string[] {
+    const s = this.round;
+    if (!s) return [];
+    const humans = new Set(s.humanIds);
+    return this.humanSnapshots()
+      .map((p) => p.id)
+      .filter((id) => humans.has(id));
+  }
+
+  private async ensureRound(): Promise<void> {
+    if (this.round || this.roundLoaded) return;
+    this.roundLoaded = true;
+    const stored = await this.ctx.storage.get<StoredRound>(KEY_ROUND);
+    if (!stored?.round) return;
+    this.round = stored.round;
+    this.botVotes = stored.botVotes ?? {};
+    this.botVerdicts = stored.botVerdicts ?? {};
+  }
+
+  /** 판을 굽는다. **단계가 바뀐 틱에만** 부른다 — 100ms마다 쓰면 그게 곧 과금이다. */
+  private async saveRound(): Promise<void> {
+    const s = this.round;
+    if (!s) return;
+    await this.ctx.storage.put(KEY_ROUND, {
+      round: s,
+      botVotes: this.botVotes,
+      botVerdicts: this.botVerdicts,
+    } satisfies StoredRound);
+  }
+
+  /**
+   * 판을 연다. `intro_done` 첫 신호에만 실제로 열리고, 두 번째부터는 그냥 돌아선다.
+   * **끝난 판도 다시 시작하지 않는다** (this.round 가 남아 있으므로 첫 줄에서 걸린다).
+   */
+  private async maybeStartRound(now: number): Promise<void> {
+    if (this.round) return;
+    const meta = this.meta;
+    // ★ 메타가 없으면 열지 않는다. 좌석 명단 없이는 사람과 봇을 가를 수 없고,
+    //   그러면 "승패를 정하는 표는 사람 표만 센다"(SPEC §18.3)가 통째로 무너진다.
+    //   봇 표까지 세면 판정이 주사위가 된다.
+    if (!meta) return;
+
+    const seatIds = meta.seats.map((s) => s.id);
+    const humanIds = meta.seats.filter((s) => !s.is_bot).map((s) => s.id);
+    const round = startRound(seatIds, humanIds, now);
+    if (!round) return;
+
+    this.round = round;
+    this.botVotes = {};
+    this.botVerdicts = {};
+    this.progressSent = -1;
+    this.progressAt = 0;
+    // 판이 열렸다 — 걸어가던 창고 구석 목적지를 버리고 테이블 쪽으로 다시 잡는다.
+    // 안 하면 첫 주제가 뜨는 동안 봇만 화면을 등지고 걸어 나간다 (gatherBot, I1).
+    for (const bot of this.roundBots()) gatherBot(bot, now);
+    this.broadcastRound();
+    await this.saveRound();
+    this.startSim();
+  }
+
+  /**
+   * 판을 한 틱 굴린다. tick() 맨 앞에서 부른다.
+   *
+   * 순서가 곧 규칙이다:
+   *  ① 너무 뒤처진 판은 따라잡지 않고 끝낸다 (ROUND_ABANDON_MS 의 상자)
+   *  ② 예약된 봇 표를 반영한다 — **마감을 당기기 전에** 넣어야 castVote 가 받아 준다
+   *  ③ 접속 중인 사람이 전부 냈으면 vote 마감을 당긴다
+   *  ④ 한 단계 굴린다. 부수효과(브로드캐스트·예약·저장)는 **넘어간 그 틱에만**
+   */
+  private driveRound(now: number): void {
+    const s = this.round;
+    if (!s || s.done) return;
+
+    if (now - s.phaseEndsAt > ROUND_ABANDON_MS) {
+      abortRound(s, now);
+      this.broadcastRound();
+      void this.saveRound();
+      return;
+    }
+
+    this.driveBotPlans(now);
+    this.maybeCloseVote(now);
+
+    if (stepRound(s, now)) {
+      this.onPhaseEnter(now);
+      void this.saveRound();
+      return;
+    }
+    this.pumpVoteProgress(now);
+  }
+
+  /**
+   * 단계가 막 바뀌었다. 이 틱에만 불린다.
+   *
+   * ★ 브로드캐스트 순서: round → eliminated → reveal.
+   *   클라이언트가 reveal 단계로 들어간 뒤에 아바타가 쓰러지고, 그다음 결과가 뜬다.
+   */
+  private onPhaseEnter(now: number): void {
+    const s = this.round;
+    if (!s) return;
+
+    this.progressSent = -1;
+    this.progressAt = 0;
+
+    // ★ 말이 잠기는 단계로 들어왔으면 **예약된 발화를 전부 끊는다** (cancelSpeech).
+    //   경계를 넘어온 말은 사람이 입력을 못 하는 구간에서 터지고, 그러면
+    //   "단계가 바뀐 뒤에도 말하는 자리 = 봇"이 된다 (I1).
+    //   ★ vote 만이 아니라 CHAT_LOCKED_PHASES **전부**다. 단계 목록은
+    //     lib/mp/constants.ts 한 곳에만 적는다.
+    if (isChatLocked(s.phase)) this.hushBots();
+
+    switch (s.phase) {
+      case 'speak':
+        this.primeBotsForSpeak(now);
+        break;
+      case 'vote':
+        this.planBotVotes(now);
+        break;
+      case 'defense':
+        this.scheduleBotDefense(now);
+        break;
+      case 'verdict':
+        this.planBotVerdicts(now);
+        break;
+      default:
+        break;
+    }
+
+    this.broadcastRound();
+
+    if (s.phase === 'reveal') {
+      const dead = eliminatedId(s);
+      if (dead) this.broadcast({ t: 'eliminated', id: dead });
+      // ★★ 정체가 밖으로 나가는 **유일한 지점**이다 (I1의 예외).
+      //    revealSnapshot 은 phase 가 reveal/ended 이고 판정이 끝났을 때만 값을 준다.
+      //    이 반환값을 다른 메시지에 재사용하지 마라.
+      const reveal = revealSnapshot(s);
+      if (reveal) this.broadcast({ t: 'reveal', ...reveal });
+    }
+  }
+
+  private broadcastRound(): void {
+    const s = this.round;
+    if (!s) return;
+    this.broadcast({ t: 'round', ...roundSnapshot(s) });
+  }
+
+  /**
+   * 투표 진행 현황. **숫자 둘뿐이고, 고정 배차로 나간다.**
+   *
+   * ┌─ ★ 표가 들어올 때마다 즉시 쏘면 안 된다 (I1) ──────────────────────────┐
+   * │ 봇의 서버발 이벤트는 전부 100ms 봇 틱 위에 실려 나가고(봇 이동 배치와 같은 │
+   * │ 프레임), 사람 표는 소켓 수신 즉시 나간다. 즉시 중계하면 네트워크 탭에서    │
+   * │ "봇 이동 배치와 같은 프레임에 도착한 progress 증가"를 골라낼 수 있다.      │
+   * │ 1초 배차에 실으면 사람 표와 봇 표가 같은 봉투에 담겨 구분이 사라진다.       │
+   * │ (SPEC §6.1이 Realtime Broadcast를 버리고 폴링을 택한 것과 같은 근거다.)    │
+   * └──────────────────────────────────────────────────────────────────────┘
+   *
+   * 값이 안 바뀌었으면 아예 보내지 않는다 — 1초마다 같은 숫자가 오가면 그 자체가 소음이다.
+   */
+  private pumpVoteProgress(now: number): void {
+    const s = this.round;
+    if (!s || (s.phase !== 'vote' && s.phase !== 'verdict')) return;
+    if (now - this.progressAt < VOTE_PROGRESS_INTERVAL_MS) return;
+    this.progressAt = now;
+
+    const p = voteProgress(s);
+    if (p.voted === this.progressSent) return;
+    this.progressSent = p.voted;
+    this.broadcast({ t: 'vote_progress', voted: p.voted, total: p.total });
+  }
+
+  /**
+   * 조기 종료. **vote 에만 있다** (SPEC §5.1, I5 — verdict·speak 에는 넣지 마라,
+   * lib/mp/constants.ts 의 단계 길이 상자 3번 참고).
+   *
+   * 새지 않는 근거: 좌석 수도 AI 수도 공개이므로(§15-3) 사람 수 H도 공개다. 종료 시점의
+   * progress 가 H 근방이라는 건 모두가 이미 아는 수를 다시 보여 줄 뿐이고, 종료 **시각**은
+   * 오직 사람들의 클릭으로 정해진다 — 봇 쪽 정보가 시간 축에 실리지 않는다.
+   * 단 **progress 에 좌석 정보를 실으면 그 순간 즉사한다** ("안 낸 자리 = 봇" 확정).
+   */
+  private maybeCloseVote(now: number): void {
+    const s = this.round;
+    if (!s || s.phase !== 'vote' || now >= s.phaseEndsAt) return;
+    if (!haveAllVoted(s, this.connectedHumanSeats())) return;
+
+    // ★ 남은 봇 표를 **먼저** 넣는다. 마감을 당기고 나면 castVote 가 거절하고,
+    //   그러면 reveal 의 votes[] 에 "표를 안 낸 자리"가 남는다. 그 판은 어차피 정체가
+    //   공개되지만, **다음 판**에 "조기 종료 때 표가 잘리는 자리 = 봇"이라는 메타가
+    //   남는다 (§18.6 다시 하기 — 같은 방 · 같은 사람). 여기서 지운다.
+    for (const [id, plan] of Object.entries(this.botVotes)) {
+      if (plan.cast) continue;
+      castVote(s, id, plan.targetId, now);
+      plan.cast = true;
+    }
+    s.phaseEndsAt = now; // 이 틱의 stepRound 가 곧바로 넘긴다
+  }
+
+  /** speak 창이 열렸다 — 봇들의 발화 시각을 창 안으로 당긴다 (primeForTopic 의 상자). */
+  private primeBotsForSpeak(now: number): void {
+    const s = this.round;
+    if (!s) return;
+    const win = Math.max(0, s.phaseEndsAt - now);
+    for (const bot of this.roundBots()) {
+      // 침묵 추첨은 **좌석마다 · 라운드마다 독립**이다 (BOT_SILENCE_CHANCE).
+      primeForTopic(bot, now, win, Math.random() >= BOT_SILENCE_CHANCE);
+    }
+  }
+
+  private hushBots(): void {
+    for (const bot of this.bots ?? []) cancelSpeech(bot);
+  }
+
+  /**
+   * 봇의 표를 **미리 정하고 시각만 흩뿌린다** (BOT_VOTE_*_FRAC 의 상자).
+   *
+   * ┌─ ★ 왜 즉시 투표가 I1 위반인가 ──────────────────────────────────────────┐
+   * │ 페이즈가 열린 그 순간 표를 넣으면 vote_progress 가 0 → (봇 수)로 **튄다.**  │
+   * │ 봇이 몇인지는 어차피 공개지만(§15-3), "판 시작 0.1초에 들어온 표"라는       │
+   * │ **타이밍 패턴**은 공개 대상이 아니다. 몇 판만 보면 그 계단이 몇 명분인지가   │
+   * │ 읽히고, 조기 종료와 겹치면 남은 미제출 좌석 수까지 확정된다.                │
+   * │ 그래서 표는 여기서 정하되(생성), 반영은 예약 시각에 한다(driveBotPlans) —   │
+   * │ SPEC §5.3의 visible_at 패턴과 같은 구조다.                                │
+   * └────────────────────────────────────────────────────────────────────────┘
+   *
+   * 자기 자신은 찍지 않는다 — 뽑을 때 빼고, castVote 가 한 번 더 거부한다.
+   * 사람은 마감까지 표를 바꾸므로 봇도 가끔 바꾼다 (BOT_VOTE_CHANGE_CHANCE).
+   */
+  private planBotVotes(now: number): void {
+    const s = this.round;
+    if (!s) return;
+    this.botVotes = {};
+    const win = Math.max(0, s.phaseEndsAt - now);
+
+    for (const bot of this.roundBots()) {
+      const targetId = this.pickVoteTarget(bot.id, s.seatIds, null);
+      if (!targetId) continue;
+
+      // 좌석마다 독립 추첨이다. 인덱스로 스태거(base + i·Δ)하면 간격이 규칙적이 되어
+      // **간격 자체가 신호**가 된다 (§18.5가 침묵 임계에 대해 경고한 것과 같다).
+      const at = now + win * rand(BOT_VOTE_MIN_FRAC, BOT_VOTE_MAX_FRAC);
+
+      let changeAt: number | null = null;
+      let changeTargetId: string | null = null;
+      if (Math.random() < BOT_VOTE_CHANGE_CHANCE) {
+        changeTargetId = this.pickVoteTarget(bot.id, s.seatIds, targetId);
+        if (changeTargetId !== null) changeAt = at + (s.phaseEndsAt - at) * rand(0.2, 0.85);
+      }
+
+      this.botVotes[bot.id] = { at, targetId, cast: false, changeAt, changeTargetId, changed: false };
+    }
+  }
+
+  /**
+   * 생사 재투표도 같은 규칙이다 — 미리 정하고 시각만 흩뿌린다.
+   * **지목된 봇 본인은 빠진다** (기권). castVerdict 가 한 번 더 거부한다.
+   * 찬반은 대략 반반이다 — 봇이 늘 찬성(또는 늘 반대)이면 그 자리들이 한 덩어리가 된다.
+   */
+  private planBotVerdicts(now: number): void {
+    const s = this.round;
+    if (!s) return;
+    this.botVerdicts = {};
+    const win = Math.max(0, s.phaseEndsAt - now);
+
+    for (const bot of this.roundBots()) {
+      if (bot.id === s.nomineeId) continue;
+      this.botVerdicts[bot.id] = {
+        at: now + win * rand(BOT_VOTE_MIN_FRAC, BOT_VOTE_MAX_FRAC),
+        guilty: Math.random() < 0.5,
+        cast: false,
+      };
+    }
+  }
+
+  /** 예약 시각이 지난 봇 표를 실제로 넣는다. 한 번 넣은 예약은 다시 보지 않는다. */
+  private driveBotPlans(now: number): void {
+    const s = this.round;
+    if (!s) return;
+
+    if (s.phase === 'vote') {
+      for (const [id, plan] of Object.entries(this.botVotes)) {
+        if (!plan.cast && now >= plan.at) {
+          castVote(s, id, plan.targetId, now);
+          plan.cast = true;
+        }
+        if (
+          plan.cast &&
+          !plan.changed &&
+          plan.changeAt !== null &&
+          plan.changeTargetId !== null &&
+          now >= plan.changeAt
+        ) {
+          castVote(s, id, plan.changeTargetId, now);
+          plan.changed = true;
+        }
+      }
+      return;
+    }
+
+    if (s.phase === 'verdict') {
+      for (const [id, plan] of Object.entries(this.botVerdicts)) {
+        if (plan.cast || now < plan.at) continue;
+        castVerdict(s, id, plan.guilty, now);
+        plan.cast = true;
+      }
+    }
+  }
+
+  /**
+   * 봇이 누구를 찍을까. 자기 자신과 `avoid`(방금 찍었던 자리)는 뺀다.
+   *
+   * ★ 균등 무작위로 두지 않는다. reveal 이 votes[] 를 전부 공개하므로, 몇 판만 하면
+   *   **"자유대화에서 아무도 의심하지 않은 자리를 찍은 표 = AI"** 라는 메타가 학습된다
+   *   (§18.6 다시 하기에서 살아 돌아온다). 그래서 채팅에서 이름이 오르내린 자리에
+   *   가중치를 준다 — 사람도 의심받은 사람을 찍는다.
+   *   맥락은 chatLog 하나뿐이고, 그건 이미 갖고 있다.
+   */
+  private pickVoteTarget(voterId: string, seatIds: string[], avoid: string | null): string | null {
+    const cands = seatIds.filter((id) => id !== voterId && id !== avoid);
+    if (cands.length === 0) return null;
+
+    const heat = new Map<string, number>();
+    for (const line of this.chatLog) {
+      for (const seat of this.meta?.seats ?? []) {
+        if (seat.id === voterId) continue;
+        if (line.text.includes(seat.nickname)) heat.set(seat.id, (heat.get(seat.id) ?? 0) + 1);
+      }
+    }
+
+    // 언급 한 번마다 가중치 +2, 상한 4회. 상한이 없으면 한 번 도마에 오른 자리를
+    // **전 봇이 몰아서** 찍고, 그 만장일치가 다시 표식이 된다.
+    const weights = cands.map((id) => 1 + Math.min(heat.get(id) ?? 0, 4) * 2);
+    const total = weights.reduce((a, b) => a + b, 0);
+    let roll = Math.random() * total;
+    for (let i = 0; i < cands.length; i += 1) {
+      roll -= weights[i];
+      if (roll <= 0) return cands[i];
+    }
+    return cands[cands.length - 1];
+  }
+
+  /**
+   * 지목된 자리가 봇이면 최후변론을 한 번 예약한다. 사람이면 아무것도 하지 않는다.
+   *
+   * ★ 15% 확률로 침묵한다 (BOT_DEFENSE_SILENCE_CHANCE): "변론 안 하면 봇"도
+   *   "꼭 변론하면 봇"도 둘 다 신호라 양쪽을 다 열어 둔다.
+   * ★ defense 는 지목된 자리가 사람이든 봇이든 **20초를 꽉 채운다.** 여기서 뭘 하든
+   *   단계 길이는 안 바뀐다 — 그게 §5.3의 대칭이다.
+   */
+  private scheduleBotDefense(now: number): void {
+    const s = this.round;
+    if (!s?.nomineeId) return;
+    const bot = (this.bots ?? []).find((b) => b.id === s.nomineeId);
+    if (!bot) return;
+    if (Math.random() < BOT_DEFENSE_SILENCE_CHANCE) return;
+
+    scheduleSpeech(
+      bot,
+      pickLine(this.botLines(), this.recentTexts()),
+      now,
+      rand(DEFENSE_READ_MIN_MS, DEFENSE_READ_MAX_MS),
+    );
+    void this.upgradeSpeech(bot, bot.speechSeq, DEFENSE_PROMPT);
+  }
+
   /* ─────────────────────────────── 방 메타 ─────────────────────────────── */
 
   private async loadMeta(): Promise<CachedMeta | null> {
@@ -783,13 +1473,71 @@ export class RoomDO {
     const fresh = await fetchRoomMeta(this.env, roomId);
     if (!fresh) return this.meta; // Next가 잠깐 죽어도 캐시로 버틴다
 
-    // 좌석 명단이 바뀌었으면(사람이 들어왔거나 게임이 시작돼 봇이 생겼으면) 봇을 다시 만든다.
-    const before = this.meta?.seats.map((s) => s.id).join(',') ?? '';
+    // 좌석 명단이 바뀌었다 (사람이 들어왔거나, 게임이 시작돼 봇이 생겼다).
+    //
+    // ┌─ ★ 전부 다시 만들지 않는다 — 예전엔 여기가 `this.bots = null` 이었다 ─────┐
+    // │ createBot 은 waitUntil·nextChatAt·speechSeq 를 전부 새로 뽑는다. 그래서    │
+    // │ 누가 접속한 그 순간 **모든 봇이 동시에 멈춰 서고(최대 7초), 그 뒤 25초간   │
+    // │ 한 마디도 못 한다.** 사람들은 계속 떠드는데 조용해진 자리들이 한 덩어리로  │
+    // │ 묶인다 — 입장 한 번에 명단이 드러난다 (I1). createBot 주석이 "전부 동시에  │
+    // │ 출발하면 들킨다"고 적어 둔 그 상황이 **입장마다** 재현되고 있었다.         │
+    // │ 그래서 없어진 자리만 지우고 새로 생긴 자리만 만든다. 남은 봇은 안 건드린다.│
+    // └──────────────────────────────────────────────────────────────────────────┘
+    //
+    // ★ 진행 중인 판(this.round)은 **좌석이 바뀌어도 버리지 않는다.** 판의 좌석·사람
+    //   명단은 startRound 시점에 얼어붙어 있고(RoundState.seatIds) 집계는 그것만 본다 —
+    //   늦게 들어온 사람의 표는 castVote 가 거절하므로 분모가 흔들리지 않는다.
+    //   여기서 판을 지우면 4분을 달려 온 투표가 "누가 새로고침했다"는 이유로 사라진다.
+    const prev = this.meta;
+    const before = prev?.seats.map((s) => s.id).join(',') ?? '';
     const after = fresh.seats.map((s) => s.id).join(',');
-    if (before !== after) this.bots = null;
+    if (before !== after && this.bots) {
+      const botSeats = fresh.seats.filter((s) => s.is_bot);
+      const alive = new Set(botSeats.map((s) => s.id));
+      const kept = this.bots.filter((b) => alive.has(b.id));
+      const known = new Set(kept.map((b) => b.id));
+      for (const s of botSeats) {
+        if (known.has(s.id)) continue;
+        kept.push(
+          createBot(
+            { id: s.id, seat: s.seat, nickname: s.nickname, maskId: s.mask_id },
+            fresh.capacity,
+            now,
+          ),
+        );
+      }
+      this.bots = kept.sort((a, b) => a.seat - b.seat);
+    }
 
     this.meta = { ...fresh, fetchedAt: now, roomId };
     await this.ctx.storage.put(KEY_META, this.meta);
+
+    // ┌─ 명부가 실제로 바뀐 경우 (I1 — seatSnapshots 의 상자) ────────────────────┐
+    // │ player_joined · player_left 는 이제 **좌석 명단의 변화**만 뜻한다. 접속·   │
+    // │ 퇴장이 아니다 — 그건 사람에게만 나는 이벤트라 그 자체가 명단이었다.        │
+    // │ 여기서는 사람 좌석이든 봇 좌석이든 **똑같이** 낸다. 게임이 시작돼 봇이     │
+    // │ 생기는 순간이 대표적인데, 예전엔 그 좌석이 아무 예고 없이 player_moved 만  │
+    // │ 보냈다 — "명부에 없던 id 가 움직이면 봇 확정"이었고, 덤으로 그 아바타는    │
+    // │ 재접속 전까지 화면에 아예 안 보였다(클라가 모르는 id 의 move 를 버린다).   │
+    // │                                                                          │
+    // │ prev 가 없으면(첫 조회·storage 유실) 아무것도 내지 않는다. 비교 대상이     │
+    // │ 없으므로 전 좌석이 "새로 생긴" 것으로 보여 명부가 통째로 다시 나간다.      │
+    // └──────────────────────────────────────────────────────────────────────────┘
+    if (prev && before !== after) {
+      const gone = new Set(fresh.seats.map((s) => s.id));
+      for (const s of prev.seats) {
+        if (!gone.has(s.id)) {
+          this.broadcast({ t: 'player_left', id: s.id });
+          this.lastPose.delete(s.id);
+          this.emitPhase.delete(s.id);
+        }
+      }
+      const known = new Set(prev.seats.map((s) => s.id));
+      for (const p of this.seatSnapshots(this.meta)) {
+        if (!known.has(p.id)) this.broadcast({ t: 'player_joined', player: p });
+      }
+    }
+
     return this.meta;
   }
 
@@ -797,6 +1545,20 @@ export class RoomDO {
 
   private humanCount(): number {
     return this.ctx.getWebSockets().length;
+  }
+
+  /**
+   * 게임 메시지(vote · verdict · intro_done)를 받아 줄 때인가 — **자원 보호만** 한다.
+   *
+   * ★ 거절해도 아무것도 돌려주지 않는다. 이유를 내려주면 그게 곧 단계·좌석 정보다 (I1).
+   *   위조는 여기서 막는 게 아니다 — voter 는 소켓 attachment 에서 되찾고, 판정은
+   *   castVote/castVerdict 가 한다.
+   */
+  private allowGameMessage(ws: WebSocket): boolean {
+    const now = Date.now();
+    if (now - (this.lastGameMsgAt.get(ws) ?? 0) < GAME_MSG_MIN_INTERVAL_MS) return false;
+    this.lastGameMsgAt.set(ws, now);
+    return true;
   }
 
   private humanSnapshots(): PlayerSnapshot[] {
@@ -808,12 +1570,83 @@ export class RoomDO {
     return out;
   }
 
+  /**
+   * 방의 **명부** — 좌석 명단 전부를 사람·봇 구분 없이 한 배열로.
+   *
+   * ┌─ ★★ I1 — 이 저장소에서 제일 크게 샜던 자리 ──────────────────────────────┐
+   * │ 예전 welcome 은 `접속 중인 사람들 + 봇 전부` 였다. 그래서 **방에 제일 먼저 │
+   * │ 들어가면 앞부분이 통째로 비고, players[] 가 그대로 봇 명단**이었다.        │
+   * │ 좌석순 정렬은 아무 방어도 되지 않았다 — 개수가 답이었으니까.               │
+   * │ 두 번째로 들어온 사람도 마찬가지다: 받은 명부에서 뒤이어 오는 사람들을      │
+   * │ 빼면 명단이 완성된다.                                                     │
+   * │                                                                          │
+   * │ 그래서 명부의 뜻을 **소켓 상태에서 좌석 명단으로** 바꿨다. 접속했는지는     │
+   * │ 명부에 나타나지 않는다. 미접속 사람은 마지막으로 알려진 자세로(없으면       │
+   * │ 스폰 자리에) 서 있고, 그건 "가만히 서 있는 사람"과 구분되지 않는다.        │
+   * │                                                                          │
+   * │ ★ 봇 좌석과 사람 좌석이 **같은 모양**으로 나가야 한다. 봇에게만 있는 필드도, │
+   * │   사람에게만 있는 기본값도 두지 마라 — 그 자체가 답이 된다.               │
+   * │ ★ 배열은 좌석순이다. 사람 먼저·봇 먼저로 모으면 순서가 곧 명단이다.        │
+   * └──────────────────────────────────────────────────────────────────────────┘
+   *
+   * @param self 아직 accept 되지 않은 이 소켓의 스냅샷. 있으면 그 좌석에 얹는다 —
+   *             입장 시점에는 humanSnapshots 에 아직 안 잡히기 때문이다.
+   */
+  private seatSnapshots(meta: CachedMeta, self?: PlayerSnapshot): PlayerSnapshot[] {
+    const live = new Map<string, PlayerSnapshot>();
+    for (const s of this.humanSnapshots()) live.set(s.id, s);
+    if (self) live.set(self.id, self);
+    const botById = new Map((this.bots ?? []).map((b) => [b.id, b]));
+
+    return meta.seats
+      .map((seat): PlayerSnapshot => {
+        const bot = botById.get(seat.id);
+        if (bot) return botSnapshot(bot);
+        // 사람 좌석: 접속 중이면 지금 자세, 아니면 마지막으로 본 자세, 그것도
+        // 없으면 스폰 자리. 봇도 접속 전에는 정확히 같은 스폰 자리에 서 있다.
+        const known = live.get(seat.id) ?? this.lastPose.get(seat.id);
+        if (known) return known;
+        const start = spawnFor(seat.seat, meta.capacity);
+        return {
+          id: seat.id,
+          seat: seat.seat,
+          nickname: seat.nickname,
+          maskId: seat.mask_id,
+          x: start.x,
+          z: start.z,
+          y: 0,
+          heading: 0,
+          anim: 'idle',
+        };
+      })
+      .sort((a, b) => a.seat - b.seat);
+  }
+
   private send(ws: WebSocket, msg: S2CMessage): void {
     try {
       ws.send(JSON.stringify(msg));
     } catch {
       // 이미 닫힌 소켓. close 이벤트가 곧 온다
     }
+  }
+
+  /**
+   * 봇 좌석에서 나가는 이벤트를 **봇 틱 격자에서 떼어** 내보낸다 (I1).
+   *
+   * 좌석마다 0~BOT_EMIT_JITTER_MS 중 하나를 뽑아 **고정으로** 쓴다. 매번 새로 뽑으면
+   * 송신 간격이 덜덜 떨려서 그게 다시 신호다 — 사람의 위상은 rAF 에 물려 안정적이다.
+   * setTimeout 이라 별개의 이벤트 루프 턴으로 밀려 나가고, 그게 이 함수의 전부다.
+   *
+   * DO 가 evict 되어 대기 중이던 타이머가 날아가면 그 한 샘플은 사라진다 — 다음 틱이
+   * 다시 보내므로 무해하다(사람 패킷이 하나 유실된 것과 구분되지 않는다).
+   */
+  private emitAsBot(botId: string, msg: S2CMessage): void {
+    let phase = this.emitPhase.get(botId);
+    if (phase === undefined) {
+      phase = Math.random() * BOT_EMIT_JITTER_MS;
+      this.emitPhase.set(botId, phase);
+    }
+    setTimeout(() => this.broadcast(msg), phase);
   }
 
   private broadcast(msg: S2CMessage, exclude?: WebSocket): void {

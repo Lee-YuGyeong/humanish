@@ -83,6 +83,7 @@ const PHASE_LABEL: Record<Phase, string> = {
   target: '지목 질문',
   chat: '자유 채팅',
   vote: '투표',
+  revote: '재투표', // SPEC §18.3 — 사람 표가 동점일 때 20초
   reveal: '결과',
   replay: '다시 하기',
 };
@@ -728,11 +729,21 @@ function Panel({
     );
   }
 
-  if (room.phase === 'vote') {
+  if (room.phase === 'vote' || room.phase === 'revote') {
+    // ★ 재투표(SPEC §18.3): 사람 표가 동점이라 후보(동점자)만 다시 고른다.
+    //   후보 강제는 서버(/api/vote)가 확실히 한다 — 후보 밖을 고르면 400이 배너로 뜬다.
+    //   TODO(C): 재투표 화면에서 후보가 아닌 자리는 눌리지 않게(선택 비활성) 표시할 것.
+    const isRevote = room.phase === 'revote';
+    const candidates = room.revote_candidates ?? [];
     return (
       <Box>
-        <Label>투표</Label>
+        <Label>{isRevote ? '재투표 — 후보 중에서' : '투표'}</Label>
         <p className="engraved text-2xl font-black">누가 AI인가?</p>
+        {isRevote && candidates.length > 0 && (
+          <p className="stencil text-[9px] text-signal">
+            동점이다. 후보 {candidates.length}명 중에서 다시 고른다
+          </p>
+        )}
         <div className="mt-2">
           <PlayerGrid
             players={players}

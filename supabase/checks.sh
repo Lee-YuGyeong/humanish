@@ -70,6 +70,25 @@ schema_checks() {
             from (select pg_get_constraintdef(oid) d from pg_constraint
                    where conname = 'rooms_name_check') t;")"
 
+  # ── 투표 · 재투표 · 지목 (SPEC §18.3, §18.4) ──────────────────────────────
+  # 지목 자리와 재투표 후보를 담는 컬럼. 없으면 vote/revote 전환이 42703으로 죽는다.
+  check "rooms에 지목·재투표 컬럼이 있다 (§18.3)" "2" \
+    "$(q "select count(*) from information_schema.columns where table_name='rooms'
+           and column_name in ('nominated_player_id','revote_candidates');")"
+
+  # ★ 컬럼만 보면 부족하다. phase 체크에 revote 가 빠지면 advance_phase 가 revote 로
+  #   갈아타는 순간 update 가 체크 위반으로 죽어 방이 vote 에서 영영 멈춘다.
+  check "rooms.phase 제약이 revote 를 허용한다 (§18.3)" "t" \
+    "$(q "select pg_get_constraintdef(oid) like '%revote%'
+            from pg_constraint where conname='rooms_phase_check';")"
+
+  # 재투표는 20초, 그리고 언제나 reveal 로 끝난다(재투표는 한 번뿐). 한쪽만 고치면
+  # SQL 과 lib/server/phase.ts 가 갈린다 — 여기서 SQL 쪽을 못 박는다.
+  check "재투표 길이가 20초다 (§18.3)" "00:00:20" \
+    "$(q "select phase_duration('revote');")"
+  check "revote 다음은 reveal 이다 (§18.3)" "reveal" \
+    "$(q "select phase from next_phase('revote', 0);")"
+
   # 대기방 프리셋 발화 (§15-3-결정). 넷이 다 있어야 쿨다운·총량이 성립한다.
   check "players에 대기방 컬럼 5개가 있다" "5" \
     "$(q "select count(*) from information_schema.columns where table_name='players'
@@ -368,6 +387,7 @@ schema_checks() {
     "advance_phase(uuid,int,uuid)" \
     "advance_expired_rooms(int)" \
     "on_enter_phase(uuid,text,int,timestamptz)" \
+    "resolve_vote(uuid,text,uuid[])" \
     "pick_bot_line(text)" \
     "cleanup_stale_rooms(interval)" \
     "bot_reply(uuid,int)" \

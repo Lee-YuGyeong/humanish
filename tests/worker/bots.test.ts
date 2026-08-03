@@ -34,7 +34,7 @@ import {
   MOVE_THROTTLE_MS,
   SPEAK_JITTER_MS,
 } from '../../lib/mp/constants';
-import { COLLIDERS, isBlocked } from '../../lib/mp/collide';
+import { COLLIDERS, STEP_UP, groundHeightAt, isBlocked } from '../../lib/mp/collide';
 import { typingDelayMs } from '../../lib/agent/disguise';
 
 const SEED = { id: 'bot-1', seat: 2, nickname: '익명2', maskId: 'mask-02' };
@@ -84,8 +84,11 @@ describe('가구 충돌', () => {
     for (let i = 0; i < 300; i += 1) {
       now += MOVE_THROTTLE_MS;
       stepBot(bot, now, MOVE_THROTTLE_MS / 1000);
-      // 봇은 낮은 탁자에도 안 올라선다 → stepUp = 0 으로 본다
-      expect(isBlocked(bot.x, bot.z, 0, 0)).toBe(false);
+      // ★ 사람과 **같은 기준**으로 본다 (STEP_UP · 실제 발 높이). 예전엔 여기가
+      //   `(…, 0, 0)` 이었는데, 그게 곧 "봇은 낮은 턱도 못 넘는다"는 규칙이었고
+      //   그 차이가 I1 누출이었다 (bots.ts 의 BOT_STEP_UP 상자).
+      //   소파(top 0.99)는 STEP_UP(0.55)보다 높으므로 여전히 못 넘는다.
+      expect(isBlocked(bot.x, bot.z, bot.y, STEP_UP)).toBe(false);
     }
   });
 
@@ -156,15 +159,58 @@ describe('가구 충돌', () => {
   it('가구 안에서 시작해도 첫 틱 전에 밀려나 있다', () => {
     const t0 = 1_000_000;
     const bot = createBot(SEED, 5, t0, { id: SEED.id, x: SOFA.x, z: SOFA.z, heading: 0 });
-    expect(isBlocked(bot.x, bot.z, 0, 0)).toBe(false);
+    expect(isBlocked(bot.x, bot.z, bot.y, STEP_UP)).toBe(false);
   });
 
   it('목적지를 가구 안에 잡지 않는다', () => {
     const t0 = 1_000_000;
     for (let i = 0; i < 100; i += 1) {
       const bot = createBot(SEED, 5, t0);
-      expect(isBlocked(bot.tx, bot.tz, 0, 0)).toBe(false);
+      expect(isBlocked(bot.tx, bot.tz, 0, STEP_UP)).toBe(false);
     }
+  });
+
+  /*
+   * ┌─ ★ I1 회귀 — 봇의 발이 사람과 같은 규칙을 탄다 ──────────────────────────┐
+   * │ 예전 봇은 stepUp = 0 이라 낮은 턱을 **돌아갔고**, 발 높이는 무슨 짓을 해도 │
+   * │ 0이었다. 사람은 낮은 탁자의 자리로 그냥 걸어 들어가고, 뛰어오르면 가구     │
+   * │ 윗면에 선다. 그래서 규칙이 둘 섰다 —                                      │
+   * │   · 낮은 탁자를 굳이 빙 돌아가면 봇                                       │
+   * │   · **가구 위에 서 있으면 사람**                                          │
+   * │ 총 자리·AI 수가 공개(§15-3)라 몇 자리만 확정돼도 소거법으로 나머지가 갈린다.│
+   * └──────────────────────────────────────────────────────────────────────────┘
+   */
+  it('낮은 턱은 사람처럼 그냥 지난다 — 돌아가면 그게 표식이다 (I1)', () => {
+    /** STEP_UP 아래 턱 — 사람의 이동을 막지 않는 낮은 탁자 */
+    const TABLE = COLLIDERS.find((c) => c.top < STEP_UP)!;
+    const t0 = 1_000_000;
+    // 탁자 한가운데에서 시작한다. stepUp = 0 이던 시절에는 createBot 의
+    // resolveCollisions 가 여기서 옆으로 밀어냈다 — 그 밀림이 곧 "돌아간다"였다.
+    const bot = createBot(SEED, 5, t0, { id: SEED.id, x: TABLE.x, z: TABLE.z, heading: 0 });
+
+    expect(bot.x).toBe(TABLE.x);
+    expect(bot.z).toBe(TABLE.z);
+    expect(isBlocked(bot.x, bot.z, bot.y, STEP_UP)).toBe(false);
+  });
+
+  it('가구 위로 떨어지면 그 윗면에 선다 — 착지 높이가 늘 0이면 그게 표식이다 (I1)', () => {
+    /** STEP_UP 보다 높은 가구 — 걸어서는 못 올라가고 뛰어야 올라간다 */
+    const SOFA_TOP = SOFA.top;
+    const t0 = 1_000_000;
+    const bot = createBot(SEED, 5, t0, { id: SEED.id, x: SOFA.x, z: SOFA.z, heading: 0 });
+    // 소파 윗면보다 위에서 떨어뜨린다 (사람이 점프로 올라서는 그 상황).
+    bot.x = SOFA.x;
+    bot.z = SOFA.z;
+    bot.y = SOFA_TOP + 0.4;
+    bot.vy = 0;
+    bot.grounded = false;
+    bot.waitUntil = Number.MAX_SAFE_INTEGER; // 걷지 않게 세워 둔다 — 수직만 본다
+
+    run(bot, t0, 20); // 2초 — 0.4m 낙하에는 충분하다
+
+    expect(bot.y).toBeCloseTo(SOFA_TOP, 5);
+    expect(bot.vy).toBe(0);
+    expect(bot.y).toBeCloseTo(groundHeightAt(bot.x, bot.z, bot.y), 5);
   });
 });
 
