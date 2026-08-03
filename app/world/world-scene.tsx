@@ -379,6 +379,16 @@ const FALL_ROLL = 0.2;
 /** 처형된 몸의 밝기 배수. 0이면 실루엣도 안 보여서 "누가 죽었는지"를 못 읽는다 */
 const CORPSE_DIM = 0.3;
 
+/**
+ * 잠긴 자리가 땅으로 내려앉는 감쇠 계수 (I1 — useFrame 의 상자).
+ *
+ * 봇은 haltBot 안에서 중력(GRAVITY 15)을 그대로 먹고 떨어진다. 여기는 물리를 다시
+ * 풀지 않고 감쇠로 흉내 내되 **비슷한 시간에 닿게** 맞춘다 — 점프 최고점(≈1.05m)에서
+ * 8 이면 0.4초 남짓이라 봇의 자유낙하(≈0.37초)와 눈으로 구분되지 않는다.
+ * 더 키우면 순간이동처럼 보이고, 그 "툭 떨어짐"이 다시 사람 표식이 된다.
+ */
+const SETTLE_K = 8;
+
 const RemoteAvatar = memo(function RemoteAvatar({
   player,
   bubbleTick,
@@ -440,6 +450,8 @@ const RemoteAvatar = memo(function RemoteAvatar({
   const frozen = useRoundtableStore((s) => !mayMove(s.phase, s.nomineeId === player.id));
   const frz = useRef(frozen);
   frz.current = frozen;
+  /** 실제로 그리는 발 높이. 잠긴 동안에는 pose.y 가 아니라 이 값이 내려앉는다 */
+  const shownY = useRef(player.pose.y);
 
   /*
    * ★ 아바타에게 anim · airborne 을 **값이 아니라 함수로** 준다.
@@ -520,7 +532,32 @@ const RemoteAvatar = memo(function RemoteAvatar({
       player.pose.heading = pose.current.heading;
     }
 
-    g.position.set(player.pose.x, player.pose.y, player.pose.z);
+    /*
+     * ★★ 잠긴 자리는 **땅에 내려놓는다** (I1 — anim 을 idle 로 누르는 것과 같은 이유).
+     *
+     * ┌─ 점프 도중에 잠기면 공중에 뜬 채로 남았다 ────────────────────────────┐
+     * │ 봇은 haltBot 안에서 stepJump 가 계속 돌아 **중력을 먹고 착지한다.**    │
+     * │ 사람은 그 순간 송신이 막혀(mayMove) 마지막으로 나간 y 가 그대로 얼어    │
+     * │ 붙는다. 그 20~30초 동안 공중에 뜬 자리가 있으면 그건 사람 확정이다 —   │
+     * │ 봇은 잠긴 단계에서 y>0 으로 멈추는 일이 **구조적으로 없다.**           │
+     * │                                                                      │
+     * │ 바닥으로 **순간이동시키지 않는다.** 봇은 중력으로 내려오므로 툭 떨어지는 │
+     * │ 자리가 있으면 그 자체가 다시 신호다. 봇의 낙하와 비슷한 속도로 내린다.  │
+     * │                                                                      │
+     * │ 목표 높이는 0 이 아니라 groundHeightAt 이다 — 가구 위에 선 채로 잠긴    │
+     * │ 자리를 바닥까지 끌어내리면 몸이 소파를 뚫는다(봇도 이제 가구에 올라간다).│
+     * └──────────────────────────────────────────────────────────────────────┘
+     */
+    const rawY = player.pose.y;
+    if (frz.current) {
+      const ground = groundHeightAt(player.pose.x, player.pose.z, shownY.current);
+      shownY.current += (ground - shownY.current) * Math.min(delta * SETTLE_K, 1);
+    } else {
+      shownY.current = rawY;
+    }
+    const y = shownY.current;
+
+    g.position.set(player.pose.x, y, player.pose.z);
     g.rotation.y = player.pose.heading;
 
     /*
@@ -547,9 +584,11 @@ const RemoteAvatar = memo(function RemoteAvatar({
 
     // 그림자는 아바타를 따라 올라가지 않는다 — 늘 바닥에 붙어 있고 멀어질수록 작아진다.
     // 이게 없으면 점프가 "위로 간 것"인지 "커진 것"인지 구분이 안 된다.
+    // ★ 몸이 내려앉는 값(y)을 같이 쓴다. 원본 pose.y 를 쓰면 몸은 착지했는데
+    //   그림자만 작은 채로 남아 "떠 있는 자리"가 그림자로 다시 새어 나온다.
     if (shadow.current) {
-      shadow.current.position.y = 0.02 - player.pose.y;
-      const s = Math.max(0.45, 1 - player.pose.y * 0.35);
+      shadow.current.position.y = 0.02 - y;
+      const s = Math.max(0.45, 1 - y * 0.35);
       shadow.current.scale.set(s, s, 1);
     }
   });

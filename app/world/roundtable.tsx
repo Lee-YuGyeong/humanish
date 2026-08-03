@@ -142,8 +142,13 @@ function screenContent(
   const lap = totalRounds > 1 ? ` (${round}/${totalRounds})` : '';
 
   switch (phase) {
+    /*
+     * ★ 주제 단계에는 **주제를 안 쓴다.** 여기는 뜸 들이는 6초고, 주제는 그 시간이
+     *   끝나야 나온다. 워커도 이 단계에는 topic 을 안 실어 보내므로(roundSnapshot)
+     *   여기서 topic 을 쓰면 늘 null 이다 — 규칙이 두 군데서 같은 말을 한다.
+     */
     case 'topic':
-      return { head: `주제 ${mark}${lap}`, body: topic ?? '…', accent: ACCENT_TOPIC, strong: true };
+      return { head: `주제 ${mark}${lap}`, body: '곧 주제가 나온다', accent: ACCENT_TOPIC, strong: false };
     case 'speak':
       return {
         head: `주제 ${mark} · 다같이 말한다`,

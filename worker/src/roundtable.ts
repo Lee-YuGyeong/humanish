@@ -500,10 +500,20 @@ export function abortRound(s: RoundState, now: number): void {
  * 브로드캐스트/저장용 스냅샷. `t:'round'` 메시지의 알맹이와 **같은 모양**이다.
  * 단계가 바뀔 때마다, 그리고 새로 들어온 사람에게 한 번 보낸다.
  *
- * ★ 여기서 세 가지를 막는다 (I1):
- *   · spotlightId 는 **defense 에서만** 나간다.
- *   · nomineeId 는 **defense 이후에만** 나간다 — vote 가 끝나기 전에 새면 결과가 미리 샌다.
- *   · 정체(is_bot)는 어떤 형태로도 없다. 그건 revealSnapshot 하나뿐이다.
+ * ★ 여기서 네 가지를 막는다:
+ *   · spotlightId 는 **defense 에서만** 나간다 (I1).
+ *   · nomineeId 는 **defense 이후에만** 나간다 — vote 가 끝나기 전에 새면 결과가 미리 샌다 (I1).
+ *   · 정체(is_bot)는 어떤 형태로도 없다. 그건 revealSnapshot 하나뿐이다 (I1).
+ *   · **topic 은 speak 에서만** 나간다 — 아래 상자.
+ *
+ * ┌─ 왜 topic 을 topic 단계에 안 주나 (공정성) ───────────────────────────────┐
+ * │ topic 단계는 "곧 주제가 나온다"를 띄우고 6초를 세는 뜸 들이는 구간이고,     │
+ * │ 주제는 그 시간이 **끝난 뒤에** 공개되는 게 규칙이다. 그런데 그 6초 동안에도 │
+ * │ round 메시지에 topic 을 실어 보내고 있었다 — 화면이 안 그려도 개발자 도구  │
+ * │ 로 소켓을 보면 6초 먼저 읽힌다. 답을 미리 지어 둘 수 있으면 즉흥성이 죽고,  │
+ * │ 그건 이 게임에서 사람과 봇을 가르는 축(GAMEPLAY-PLAN §3-③) 자체를 흐린다.   │
+ * │ **안 보내면 못 읽는다.** 화면에서 가리는 걸로 대신하지 않는다.             │
+ * └──────────────────────────────────────────────────────────────────────────┘
  */
 export function roundSnapshot(s: RoundState): {
   phase: RoundPhase;
@@ -518,7 +528,7 @@ export function roundSnapshot(s: RoundState): {
     s.phase === 'defense' || s.phase === 'verdict' || s.phase === 'reveal' || s.phase === 'ended';
   return {
     phase: s.phase,
-    topic: s.topic,
+    topic: s.phase === 'speak' ? s.topic : null,
     endsAt: s.phaseEndsAt,
     round: s.phase === 'topic' || s.phase === 'speak' ? s.round : 0,
     totalRounds: ROUND_TOPIC_ROUNDS,

@@ -382,6 +382,8 @@ function ScreenVideo({ onIntroEnd }: { onIntroEnd?: () => void }) {
   const [size, setSize] = useState<[number, number]>([SCREEN.h * (16 / 9), SCREEN.h]);
   /** null 이면 상영이 시작됐다는 뜻. 숫자면 남은 초 */
   const [remain, setRemain] = useState<number | null>(COUNTDOWN_SEC);
+  /** 상영이 끝났나(또는 재생 중 실패했나). 참이면 막을 끈다 */
+  const [finished, setFinished] = useState(false);
   const videoRef = useRef<HTMLVideoElement | null>(null);
 
   useEffect(() => {
@@ -431,12 +433,27 @@ function ScreenVideo({ onIntroEnd }: { onIntroEnd?: () => void }) {
     const onError = () => {
       console.warn('[world] 스크린 영상을 열지 못했다:', SCREEN_VIDEO, video.error?.message);
       // 재생 단계에 들어선 뒤의 실패만 "인트로 끝"으로 친다 (프리로드 오류는 제외).
-      if (started) fireIntroEnd();
+      // 그때는 끝난 것과 같이 취급해 막을 끈다 — 깨진 프레임이 남는 것보다 낫다.
+      if (started) {
+        fireIntroEnd();
+        setFinished(true);
+        setTexture(null);
+      }
     };
-    // 영상이 끝나면 음악이 이어받고, 워커에 "인트로 끝"을 알린다(판 시작).
+    /*
+     * 영상이 끝나면 음악이 이어받고, 워커에 "인트로 끝"을 알린다(판 시작).
+     *
+     * ★ 그리고 **막을 끈다.** 예전에는 텍스처를 그대로 뒀는데, 비디오는 끝나도
+     *   마지막 프레임이 남으므로 판이 도는 내내 배우 얼굴이 막에 붙어 있었다.
+     *   영사기를 끄듯 어두운 막으로 돌린다 — 주제는 그 위에 뜬다(TopicProjection).
+     *   재생도 멈춘다. 안 그러면 끝난 영상이 계속 디코딩 자원을 물고 있는다.
+     */
     const onEnded = () => {
       startMusic();
       fireIntroEnd();
+      setFinished(true);
+      setTexture(null);
+      video.pause();
     };
 
     video.addEventListener('loadedmetadata', onReady);
@@ -505,6 +522,21 @@ function ScreenVideo({ onIntroEnd }: { onIntroEnd?: () => void }) {
   }, []);
 
   if (remain !== null) return <ScreenCountdown remain={remain} size={size} />;
+
+  /*
+   * 상영이 끝났다 — 꺼진 막. 아무것도 안 그리면 Screen 의 흰 판이 그대로 드러나
+   * "끈 화면"이 아니라 **불 켜진 백색 스크린**이 된다. 판이 아직 안 열린 방
+   * (라운지 등 TopicProjection 이 비켜 있는 경우)에서는 그 상태로 계속 남는다.
+   */
+  if (finished) {
+    return (
+      <mesh position={[0, 0, 0.03]}>
+        <planeGeometry args={[SCREEN.w, SCREEN.h]} />
+        <meshBasicMaterial color="#0b0908" toneMapped={false} />
+      </mesh>
+    );
+  }
+
   if (!texture) return null;
 
   return (
