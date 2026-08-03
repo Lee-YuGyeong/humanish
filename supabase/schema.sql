@@ -33,12 +33,22 @@ create table if not exists rooms (
   --   서버가 먼저 400으로 막으므로 이 제약은 우회 경로를 위한 두 번째 겹이다.
   name          text check (name is null or char_length(name) between 1 and 20),
   phase         text not null default 'lobby'
-                check (phase in ('lobby','question','target','chat','vote','reveal','replay')),
+                check (phase in ('lobby','question','target','chat','vote','revote','reveal','replay')),
   -- 전환마다 +1. 중복 전환을 막는 낙관적 잠금 키다 (I6). 라운드 번호가 아니다.
   phase_seq     int  not null default 0,
   phase_ends_at timestamptz,
   round         int  not null default 0 check (round between 0 and 2),
   host_id       uuid,
+  -- SPEC §18.3, §18.4 — 투표로 지목된 한 자리. vote/revote를 벗어날 때 확정된다.
+  -- 그 전에는 null. reveal이 이 자리의 정체로 진영 승패를 정한다.
+  -- ★ player_id일 뿐이라 이 값만으로는 정체가 안 드러난다 (I1) — reveal이 열어야 안다.
+  -- ★ FK를 걸지 않는다 — 이 파일에서 rooms 가 players 보다 먼저 만들어져 forward
+  --   참조가 로드 시점에 깨진다. 방과 플레이어는 생명주기가 같아(방 삭제 시 cascade)
+  --   떠도는 id 는 실질적으로 안 생기고, 생겨도 reveal 이 role 없음으로 안전하게 읽는다.
+  nominated_player_id uuid,
+  -- SPEC §18.3 — 재투표 후보(사람 표 동점자). vote에서 동점이면 채워지고 revote가 끝나면
+  -- 다시 비운다. 동점이 아니면 null. player_id 배열이라 봇 여부를 담지 않는다 (I1).
+  revote_candidates   uuid[],
   -- SPEC §17.3 — 참가자 명단이 바뀌었다는 신호. 클라이언트는 이미 걸어둔 rooms 구독에서
   -- 이 값의 변화를 보고 public_players를 다시 읽는다.
   -- phase_seq와 헷갈리지 않는다. 이건 잠금 키가 아니라 그냥 신호다.
@@ -63,6 +73,14 @@ alter table rooms add column if not exists name text;
 alter table rooms drop constraint if exists rooms_name_check;
 alter table rooms add constraint rooms_name_check
   check (name is null or char_length(name) between 1 and 20);
+
+-- 재투표·지목도 나중에 들어왔다 (SPEC §18.3, §18.4). 이미 있는 rooms 를 위해
+-- 컬럼과 phase 제약을 따로 붙인다. inline check는 새로 만드는 테이블에만 걸린다.
+alter table rooms add column if not exists nominated_player_id uuid;
+alter table rooms add column if not exists revote_candidates uuid[];
+alter table rooms drop constraint if exists rooms_phase_check;
+alter table rooms add constraint rooms_phase_check
+  check (phase in ('lobby','question','target','chat','vote','revote','reveal','replay'));
 
 ------------------------------------------------------------------------------
 -- players

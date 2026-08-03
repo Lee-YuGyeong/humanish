@@ -38,7 +38,11 @@ begin
       end if;
     when 'target' then phase := 'chat';   round := p_round;
     when 'chat'   then phase := 'vote';   round := p_round;
+    -- vote 의 기본 다음은 reveal 이다. **사람 표가 동점이면** advance_phase 본체가
+    -- 이걸 revote 로 갈아탄다 (SPEC §18.3) — 표 집계는 DB를 봐야 하므로 순수 함수인
+    -- 여기서는 못 정한다. revote 는 언제나 reveal 로 끝난다(재투표는 한 번뿐).
     when 'vote'   then phase := 'reveal'; round := p_round;
+    when 'revote' then phase := 'reveal'; round := p_round;
     when 'reveal' then phase := 'replay'; round := p_round;
     else               phase := 'replay'; round := p_round;
   end case;
@@ -69,6 +73,8 @@ returns interval language sql immutable as $$
     when 'target'   then interval '30 seconds'
     when 'chat'     then interval '120 seconds'
     when 'vote'     then interval '30 seconds'
+    -- 재투표는 짧다. 후보가 좁혀졌고 생각도 이미 굳었다 (SPEC §18.3)
+    when 'revote'   then interval '20 seconds'
     else null
   end;
 $$;
@@ -108,7 +114,10 @@ begin
      where a.question_id = v_qid and not p.is_bot;
     return v_done >= v_humans;
 
-  elsif p_phase = 'vote' then
+  elsif p_phase = 'vote' or p_phase = 'revote' then
+    -- 사람 전원이 (재)투표를 냈으면 시간 만료를 안 기다린다. 봇은 제외한다 (I5).
+    -- revote 도 사람 전원이 다시 내면 넘어간다 — 진입 훅이 vote 표를 지우므로
+    -- 여기 세는 건 이번 재투표 표뿐이다.
     select count(*) into v_done
       from votes v join players p on p.id = v.voter_id
      where v.room_id = p_room_id and not p.is_bot;
@@ -132,6 +141,73 @@ begin
   -- │ lib/server/phase.ts의 EARLY_EXIT.target도 'none'이다. 한쪽만 고치지 않는다.│
   -- └───────────────────────────────────────────────────────────────────────┘
   return false;
+end;
+$$;
+
+------------------------------------------------------------------------------
+-- 투표 집계 · 지목 확정 — SPEC §18.3, §18.4
+------------------------------------------------------------------------------
+-- **승패를 정하는 표는 사람 표뿐이다** (§18.3, §8.1). 봇도 던지고 reveal에 보이지만
+-- 집계에서 뺀다 — 봇은 아무나 찍으므로 세면 판정이 주사위가 된다.
+--
+-- 반환 두 갈래:
+--   candidates 가 non-null  →  사람 표 최다가 **동점**이다. 이 동점자들로 좁혀 revote 로 간다
+--                              (vote 페이즈에서만 나온다).
+--   nominated 가 non-null    →  지목이 확정됐다. reveal 로 간다.
+--
+-- p_candidates 를 주면(revote) 그 안에서만 센다. 거기서도 동점이면 **무작위 한 명**을
+-- 지목한다 — 재투표는 한 번뿐이라 판은 최대 2라운드에 끝난다 (§18.3).
+--
+-- 사람 표가 하나도 없는 판(전원 미투표·이탈)도 멈추면 안 되므로 무작위로 지목한다.
+create or replace function resolve_vote(
+  p_room_id   uuid,
+  p_phase     text,
+  p_candidates uuid[],
+  out nominated  uuid,
+  out candidates uuid[]
+) language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+declare
+  v_top uuid[];
+  v_n   int;
+begin
+  -- 사람 표만, (revote면) 후보 안에서만 센다. 최다 득표 자리들을 v_top 에 모은다.
+  with tally as (
+    select v.target_id, count(*) as c
+      from votes v join players p on p.id = v.voter_id
+     where v.room_id = p_room_id and not p.is_bot
+       and (p_candidates is null or v.target_id = any(p_candidates))
+     group by v.target_id
+  )
+  select array_agg(target_id) into v_top
+    from tally
+   where c = (select max(c) from tally);
+
+  -- 세는 표가 하나도 없다. 판을 끝내야 하므로 무작위 지목으로 떨어진다.
+  if v_top is null then
+    if p_phase = 'revote' then
+      select array_agg(id) into v_top
+        from players where room_id = p_room_id and id = any(p_candidates);
+    else
+      select array_agg(id) into v_top
+        from players where room_id = p_room_id;
+    end if;
+  end if;
+
+  v_n := coalesce(array_length(v_top, 1), 0);
+
+  -- vote 에서 동점이면 후보를 좁혀 재투표로 넘긴다 (지목은 아직 없다).
+  if p_phase = 'vote' and v_n > 1 then
+    nominated  := null;
+    candidates := v_top;
+    return;
+  end if;
+
+  -- 단독이면 그 자리, revote 동점이면 그중 무작위 하나. (배열은 1-기반)
+  nominated  := v_top[1 + floor(random() * v_n)::int];
+  candidates := null;
 end;
 $$;
 
@@ -179,6 +255,7 @@ declare
   v_line   text;
   v_bots   int;
   v_lines  int;
+  v_cands  uuid[];
 begin
   -- 이 방의 봇 수. 문구가 봇 수보다 적으면 답이 빈 봇이 생기므로 미리 센다.
   select count(*) into v_bots
@@ -325,6 +402,43 @@ begin
       on conflict (room_id, voter_id) do nothing;
     end if;
 
+  elsif p_phase = 'revote' then
+    -- 재투표는 **처음부터 다시 센다** (SPEC §18.3). vote 페이즈의 표(사람·봇)를 지운다.
+    -- 안 지우면 사람은 upsert 로 덮어써도 봇 표가 남아 두 라운드가 섞인다.
+    delete from votes where room_id = p_room_id;
+
+    -- 후보는 advance_phase 가 rooms.revote_candidates 에 이미 박아뒀다(이 훅보다 먼저).
+    select revote_candidates into v_cands from rooms where id = p_room_id;
+
+    -- 봇도 후보 중 자기 아닌 하나를 찍는다. 이유 문구는 vote 풀을 그대로 쓰고,
+    -- 봇끼리 겹치지 않게 1:1로 배정한다 (vote 훅과 같은 이유 — I1).
+    if v_bots > 0 and v_cands is not null then
+      select count(*) into v_lines
+        from bot_line_pool where phase = 'vote' and question_text is null;
+
+      if v_lines < v_bots then
+        raise exception '봇 투표 이유가 모자란다 (재투표, 문구 % < 봇 %) — supabase/seed.sql을 채울 것',
+          v_lines, v_bots;
+      end if;
+
+      with bots as materialized (
+        select p.id, row_number() over (order by random()) as rn
+          from players p
+         where p.room_id = p_room_id and p.is_bot
+      ), lines as materialized (
+        select text, row_number() over (order by random()) as rn
+          from bot_line_pool
+         where phase = 'vote' and question_text is null
+      )
+      insert into votes (room_id, voter_id, target_id, reason)
+      select p_room_id, b.id,
+             -- 후보 중 자기 아닌 하나. 동점이라 후보는 늘 둘 이상이니 반드시 있다.
+             (select c from unnest(v_cands) c where c <> b.id order by random() limit 1),
+             l.text
+        from bots b join lines l on l.rn = b.rn
+      on conflict (room_id, voter_id) do nothing;
+    end if;
+
   -- chat   : 봇 쿨다운 초기화는 자유 채팅을 붙일 때 (SPEC §5.4, §13-6). 지금은 할 일 없음
   -- reveal : 점수는 /api/reveal이 calcScores로 계산한다 (SPEC §17.2)
   end if;
@@ -350,9 +464,15 @@ security definer
 set search_path = public, pg_temp
 as $$
 declare
-  v_room    rooms%rowtype;
-  v_next    record;
-  v_ends_at timestamptz;
+  v_room      rooms%rowtype;
+  v_next      record;
+  v_phase     text;
+  v_round     int;
+  v_ends_at   timestamptz;
+  v_nom       uuid;
+  v_cands     uuid[];
+  v_set_nom   uuid;
+  v_set_cands uuid[];
 begin
   -- 1. 행 잠금
   select * into v_room from rooms where id = p_room_id for update;
@@ -412,18 +532,51 @@ begin
     end if;
   end if;
 
-  -- 4. 다음 페이즈 계산
+  -- 4. 다음 페이즈 계산. record 필드에 직접 대입하지 않고 지역 변수로 옮겨 다룬다
+  --    (동점이면 아래에서 v_phase 를 revote 로 갈아탄다).
   select * into v_next from next_phase(v_room.phase, v_room.round);
+  v_phase := v_next.phase;
+  v_round := v_next.round;
+
+  -- 4.1 투표 결과 확정 (SPEC §18.3, §18.4).
+  --   vote  : 사람 표 최다가 동점이면 revote 로 갈아타고, 아니면 지목을 확정한다.
+  --   revote: 후보 안에서 다시 세고, 또 동점이면 무작위로 한 명을 지목한다.
+  --   그 밖의 전환은 지목·후보 컬럼을 그대로 둔다.
+  v_set_nom   := v_room.nominated_player_id;
+  v_set_cands := v_room.revote_candidates;
+
+  if v_room.phase = 'vote' then
+    select nominated, candidates into v_nom, v_cands
+      from resolve_vote(p_room_id, 'vote', null);
+    if v_cands is not null then
+      v_phase     := 'revote';   -- next_phase 는 reveal 을 줬지만 동점이라 갈아탄다
+      v_set_nom   := null;
+      v_set_cands := v_cands;
+    else
+      v_set_nom   := v_nom;
+      v_set_cands := null;
+    end if;
+  elsif v_room.phase = 'revote' then
+    select nominated, candidates into v_nom, v_cands
+      from resolve_vote(p_room_id, 'revote', v_room.revote_candidates);
+    v_set_nom   := v_nom;   -- 재투표는 무조건 지목으로 끝난다
+    v_set_cands := null;
+  end if;
+
+  -- ★ v_ends_at 은 v_phase 가 바뀐 **뒤에** 계산한다. 위에서 revote 로 갈아탔으면
+  --   20초가 붙어야 하는데, 먼저 계산하면 reveal(무기한)의 null 로 굳는다.
   v_ends_at := case
-    when phase_duration(v_next.phase) is null then null
-    else now() + phase_duration(v_next.phase)
+    when phase_duration(v_phase) is null then null
+    else now() + phase_duration(v_phase)
   end;
 
   update rooms
-     set phase         = v_next.phase,
-         round         = v_next.round,
-         phase_seq     = phase_seq + 1,
-         phase_ends_at = v_ends_at
+     set phase               = v_phase,
+         round               = v_round,
+         phase_seq           = phase_seq + 1,
+         phase_ends_at       = v_ends_at,
+         nominated_player_id = v_set_nom,
+         revote_candidates   = v_set_cands
    where id = p_room_id;
 
   -- 4.5 지나간 페이즈의 답변을 공개한다 (SPEC §13-4).
@@ -443,7 +596,9 @@ begin
      and visible_at > now();
 
   -- 5. 진입 훅 (SPEC §5.3). 같은 트랜잭션이라 훅이 실패하면 전환도 통째로 롤백된다.
-  perform on_enter_phase(p_room_id, v_next.phase, v_next.round, v_ends_at);
+  --    ★ v_next.phase 가 아니라 v_phase 를 넘긴다 — 동점으로 revote 로 갈아탔으면
+  --    훅도 revote 로 들어가 vote 표를 지우고 봇 재투표를 넣어야 한다.
+  perform on_enter_phase(p_room_id, v_phase, v_round, v_ends_at);
 
   -- 6. Realtime이 rooms 변경을 자동 브로드캐스트한다 (SPEC §6)
   return true;
@@ -535,6 +690,10 @@ revoke all on function server_now()                             from public, ano
 revoke all on function next_phase(text, int)                    from public, anon, authenticated;
 revoke all on function phase_duration(text)                     from public, anon, authenticated;
 revoke all on function early_exit_met(uuid, text, int)          from public, anon, authenticated;
+-- ★ resolve_vote 는 사람 표 집계를 RLS 우회로 읽는다. anon 이 부르면 reveal 전에
+--   판세가 샌다. internal 전용이라 service_role 에도 명시 grant 를 주지 않는다
+--   (advance_phase 가 definer 로 부른다).
+revoke all on function resolve_vote(uuid, text, uuid[])         from public, anon, authenticated;
 revoke all on function pick_bot_line(text)                      from public, anon, authenticated;
 revoke all on function on_enter_phase(uuid, text, int, timestamptz) from public, anon, authenticated;
 revoke all on function advance_phase(uuid, int, uuid)           from public, anon, authenticated;
