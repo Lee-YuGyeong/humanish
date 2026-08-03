@@ -318,6 +318,8 @@ blocked "messages 테이블 직접 조회"          "select count(*) from messag
 blocked "미공개 답변"                        "select count(*) from answers where visible_at > now();"
 blocked "reveal 이전 votes"                  "select count(*) from votes;"
 blocked "select * from agent_logs"          "select count(*) from agent_logs;"
+# 월드 AI가 실제로 한 말 + 방 + 시각. 읽히면 채팅과 대조해 봇이 특정된다 (I1).
+blocked "월드 AI 발화 기록 (I1)"             "select count(*) from world_agent_logs;"
 blocked "봇 문구 풀 (I1)"                    "select count(*) from bot_line_pool;"
 blocked "질문 풀"                            "select count(*) from question_pool;"
 blocked "public_players.created_at (I1)"    "select created_at from public_players limit 1;"

@@ -29,6 +29,7 @@ npm test               # 순수 함수 · 화면 조각 (vitest, tests/ 아래)
 ## 절대 어기면 안 되는 것
 
 번호는 SPEC 「불변 규칙」의 I1~I10과 같다. 근거와 위반 시 증상은 거기 있다.
+**I7(폴더 소유권)은 뺐다.** 나머지 번호는 SPEC과 맞추려고 그대로 둔다.
 
 - **I1. 어느 자리가 봇인지 내보내지 않는다.** 클라이언트는 `players`가 아니라 `public_players` 뷰를 읽는다. 이게 새면 게임이 즉시 끝난다. **뷰에 컬럼을 더할 때마다 "이걸로 봇을 골라낼 수 있나"를 먼저 묻는다** (SPEC §7.2).
   **봇이 몇인지(총 수)는 공개해도 된다** — §15-3에서 그렇게 정했다. 금지되는 건 **자리와 묶이는 것**이다: `is_bot` 행, `created_at`처럼 역산되는 값, 자리 단위로 드러나는 봇 타이밍, 그리고 **`user_id`**(§15-2-결정 — 봇에게는 계정이 없어서 `null`인 자리가 곧 봇 명단이다).
@@ -37,27 +38,28 @@ npm test               # 순수 함수 · 화면 조각 (vitest, tests/ 아래)
 - **I4. LLM API 키는 서버에서만 읽는다.** 호출 경로는 `app/api/agent/` 하나뿐이다.
 - **I5. 조기 종료 인원은 `is_bot = false`만 센다.** 봇을 포함해 세면 모든 페이즈가 시작 즉시 끝난다. **조기 종료가 있는 페이즈는 question·vote·revote뿐이다** — target은 대상이 사람이든 봇이든 30초를 채운다. 봇일 때만 늦추면 그게 다시 신호가 되기 때문이다 (SPEC §5.3).
 - **I6. `advance_phase`는 항상 `expected_seq`와 함께 부른다.** 낙관적 잠금 키다.
-- **I7. 자기 소유 폴더 밖의 파일은 수정하지 않는다.** 예외는 `lib/game/types.ts`. 아래 「폴더 소유권」 참고.
 - **I8. 도메인 타입은 `lib/game/types.ts`에서만 정의한다.**
 - **I9. 쓰기는 전부 service role 서버 경유.** 클라이언트 anon 키는 읽기 전용이다. 서버는 `player_id`를 그대로 믿지 말고 **쿠키의 `player_token`으로 되찾는다** (SPEC §17.4).
 - **I10. 모든 구독·채널·쿼리를 방으로 스코프한다.** 필터 없는 구독은 다른 방의 전환 이벤트를 받아서 엉뚱한 타이밍에 화면이 넘어간다. 구독 코드를 **처음 쓸 때** 지킨다 (SPEC §6.3, §16).
 
-## 폴더 소유권
+## 코드 지도
 
-**자기 폴더 밖의 파일은 수정하지 않는다.** 필요하면 소유자에게 요청한다.
+어디에 뭐가 있는지. **경계는 사람이 아니라 계층으로 나눈다.**
 
-| 경로 | 소유 |
+| 경로 | 무엇 |
 |---|---|
-| `lib/server/`, `supabase/`, `app/api/` | **A** — 방 · 페이즈 상태머신 · DB |
-| `lib/game/`, `lib/agent/` | **B** — 규칙(순수 함수) · 에이전트 |
-| `app/`(api 제외), `components/`, `mock/` | **C** — 화면 |
-| `lib/mp/`, `worker/`, `tools/verify-world.mjs` | **A** — 3D 월드 멀티플레이 (프로토콜 · Durable Object) |
-| `wrangler.jsonc`, `open-next.config.ts`, `tools/deploy-*.mjs` | **A** — 배포 (Cloudflare Workers) |
-| `lib/api/`, `lib/queries/`, `lib/store/` | **A** — 상태 계층 (아래 「상태는 어디에 두는가」) |
-| `lib/auth/`, `app/api/auth/` | **A** — 계정 (익명 인증 · 구글 연결, SPEC §15-2-결정) |
-| `lib/game/types.ts` | 공동. 고치면 팀 채널에 공지 |
+| `lib/server/`, `supabase/`, `app/api/` | 방 · 페이즈 상태머신 · DB |
+| `lib/game/`, `lib/agent/` | 규칙(순수 함수) · 에이전트 |
+| `app/`(api 제외), `components/`, `mock/` | 화면 |
+| `lib/mp/`, `worker/`, `tools/verify-world.mjs` | 3D 월드 멀티플레이 (프로토콜 · Durable Object) |
+| `wrangler.jsonc`, `open-next.config.ts`, `tools/deploy-*.mjs` | 배포 (Cloudflare Workers) |
+| `lib/api/`, `lib/queries/`, `lib/store/` | 상태 계층 (아래 「상태는 어디에 두는가」) |
+| `lib/auth/`, `app/api/auth/` | 계정 (익명 인증 · 구글 연결, SPEC §15-2-결정) |
+| `lib/game/types.ts` | 도메인 타입 (I8) |
 
-이 저장소에서 작업하는 세션은 **A 영역**을 맡는다. B·C 영역 파일이 필요하면 스텁만 두고 사용자에게 알린다.
+폴더가 갈려 있는 이유는 **한쪽만 고치면 티가 나게** 하려는 것이다. 특히
+`lib/mp/`(클라이언트와 워커가 같이 읽는다)와 `lib/game/types.ts`는 한쪽에 복붙하는
+순간 갈린다.
 
 ## 상태는 어디에 두는가
 
@@ -77,21 +79,21 @@ npm test               # 순수 함수 · 화면 조각 (vitest, tests/ 아래)
 
 ## 작업 보드 (`/`)
 
-여러 명이 동시에 작업하므로 **한 사람이 한 라우트 폴더를 소유한다.** `/`는 게임 화면이 아니라 진입 버튼 목록이다.
+`/`는 게임 화면이 아니라 진입 버튼 목록이다.
 
-| 라우트 | 폴더 | 소유 |
+| 라우트 | 폴더 | 무엇 |
 |---|---|---|
-| `/intro` | `app/intro/` | 원상 — 제목 · 역할 소개 |
-| `/main` | `app/main/` | C — 방 만들기 · 입장 |
-| `/room/[code]` | `app/room/` | C — 게임 화면 |
-| `/lab` | `app/lab/` | B — 규칙 · 봇 응답 확인 |
-| `/world` | `app/world/` | 원상 — 3D 멀티플레이 (`docs/MULTIPLAYER.md`) |
-| `/admin` | `app/admin/` | A — 방 · 페이즈 점검 |
-| `/login` | `app/login/` | A — 구글 로그인 (SPEC §15-2-결정) |
-| `/account` | `app/account/` | A — 이름 짓기 · 바꾸기 |
-| 목록 자체 | `app/workspaces.ts` | 공동. **한 줄씩만** 고친다 |
+| `/intro` | `app/intro/` | 제목 · 역할 소개 |
+| `/main` | `app/main/` | 방 만들기 · 입장 |
+| `/room/[code]` | `app/room/` | 게임 화면 |
+| `/lab` | `app/lab/` | 규칙 · 봇 응답 확인 · 모델 비교 |
+| `/world` | `app/world/` | 3D 멀티플레이 (`docs/MULTIPLAYER.md`) |
+| `/admin` | `app/admin/` | 방 · 페이즈 점검 |
+| `/login` | `app/login/` | 구글 로그인 (SPEC §15-2-결정) |
+| `/account` | `app/account/` | 이름 짓기 · 바꾸기 |
+| 목록 자체 | `app/workspaces.ts` | 진입 버튼 목록 |
 
-새 작업 공간은 `app/workspaces.ts`에 한 줄 추가 + `app/<경로>/page.tsx` 생성. 남의 폴더는 열지 않는다.
+새 작업 공간은 `app/workspaces.ts`에 한 줄 추가 + `app/<경로>/page.tsx` 생성.
 
 **게임 화면(`/main` · `/room`)은 로그인해야 열린다** (`components/require-login.tsx`). 실제 진입은 `/intro` 의 「게임 접속하기」이고 그 버튼이 로그인을 건다. `/` · `/intro` · `/lab` · `/world` · `/admin` 은 감싸지 않는다 — 게임 계정과 무관하게 돌아야 한다.
 

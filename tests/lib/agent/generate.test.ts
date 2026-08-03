@@ -9,7 +9,7 @@ import { describe, expect, it } from 'vitest';
 import {
   buildMessages,
   fallbackOutput,
-  FALLBACK_POOL,
+  isFallbackLine,
   generate,
   isEvasive,
   parseOutput,
@@ -61,6 +61,24 @@ describe('PERSONAS — 봇 4명이 서로 구분돼야 한다 (§9)', () => {
       expect(banned, `${p.id}가 금지한 글자에 laugh가 걸렸다`).not.toContain(p.laugh.ch);
       expect(p.laugh.max, p.id).toBeGreaterThanOrEqual(p.laugh.base);
     }
+  });
+});
+
+describe('cleanMessage — 말끝에 겹친 요를 접는다', () => {
+  /*
+   * 어체 규칙("존댓말이면 말끝은 -요로 맺는다")을 8b가 이미 요로 끝난 말에 또
+   * 적용해서 생긴다 — 존댓말 인물의 인사에서 반복됐다 (실측).
+   */
+  it('"안녕하세요요"를 접는다', () => {
+    // 존댓말 인물로 본다 — 반말 인물이면 어체 그물이 "안녕"까지 내리는 게 맞다
+    const polite = WORLD_PERSONAS.find((p) => p.name === '선영')!;
+    const out = parseOutput(JSON.stringify({ messages: ['안녕하세요요'] }), ctx({ persona: polite }));
+    expect(out.messages[0]).toBe('안녕하세요');
+  });
+
+  it('낱말로서의 "요요"는 건드리지 않는다 — 앞에 한글이 붙어 있어야 접는다', () => {
+    const out = parseOutput(JSON.stringify({ messages: ['어릴 때 하던 거 요요'] }), ctx());
+    expect(out.messages[0]).toBe('어릴 때 하던 거 요요');
   });
 });
 
@@ -159,24 +177,47 @@ describe('buildMessages — 인젝션 방어 구조 (§9.1)', () => {
   });
 });
 
-describe("setting: 'world' — 무대 분기 (3D 라운지, 게임이 아니다)", () => {
+describe("setting: 'world' — 무대 분기 (게임 로비)", () => {
   // 월드 무대에는 월드 인물이 실린다 — 게임 페르소나를 실으면 그 문구의 게임
   // 어휘가 시스템 프롬프트에 다시 들어온다 (실전 배선도 world-persona를 쓴다)
   const worldCtx = (over: Partial<AgentContext> = {}) =>
     ctx({ setting: 'world', phase: 'chat', question: undefined, persona: WORLD_PERSONAS[0], ...over });
 
-  it('시스템 프롬프트에 게임 어휘가 한 단어도 없다 — 부정문("게임 중이 아니다")으로 덮지도 않는다', () => {
+  /*
+   * ★ 예전 계약은 "게임 어휘가 한 단어도 없어야 한다"였다. 그건 과했다 —
+   *   월드 AI는 room.phase === 'lobby' 일 때만 세워지므로(lib/server/world-ai.ts)
+   *   그 방은 남의 공간이 아니라 **이 게임의 대기실**이고, 거기 서 있는 사람은
+   *   전부 판을 기다리는 참가자다. 게임을 모르는 척하는 게 오히려 사실과 다르다.
+   *
+   *   막아야 했던 건 "그래서 누구 찍을 거야"처럼 **판이 이미 돌고 있는 것처럼
+   *   구는 말**이었다. 계약을 그쪽으로 좁힌다.
+   */
+  it('참가자라는 사실은 준다 — 대기실에서 게임을 모르는 척하는 게 더 이상하다', () => {
     const system = buildMessages(worldCtx())[0].content;
-    for (const word of ['사람인 척', '게임', '투표', '추리', '페이즈']) {
-      expect(system).not.toContain(word);
-    }
-    // '의심' 단어 자체는 OUTPUT_FORMAT의 suspicionOnMe 필드 설명에 남는다(출력 계약은
-    // 무대 공용). 금지되는 건 게임 개념을 지시하는 의심도 **줄**이다.
-    expect(system).not.toContain('의심하는 분위기');
-    expect(system).toContain('라운지');
+    expect(system).toContain('참가자');
+    expect(system).toContain('시작');
   });
 
-  it('user 블록도 게임 어휘가 없다 — [게임 상황] 대신 [상황]', () => {
+  /*
+   * ★ **로비도 게임 안이다.** 사람인 척 하러 모인 방에서 시작 전에 제일 자연스러운
+   *   말이 "이번엔 누가 AI냐"인데, 그 화제를 혼자 피하는 자리는 그것만으로 눈에
+   *   띈다 (I1). 금지 범위는 게임 화제가 아니라 **없던 진행을 전제하는 말**이다.
+   */
+  it('게임 화제 자체는 막지 않는다 — 로비도 게임 안이다', () => {
+    const system = buildMessages(worldCtx())[0].content;
+    expect(system).toContain('앞으로 할 게임 얘기는 해도 된다');
+    expect(system).toContain('추리해서 투표한다'); // 무슨 게임인지도 알려준다
+  });
+
+  it('없던 진행을 전제하는 말만 막는다', () => {
+    const system = buildMessages(worldCtx())[0].content;
+    expect(system).toContain('아직 아무도 질문을 받지 않았고 투표도 없었다');
+    expect(system).toContain('누구 찍을 거야');
+    // 의심도 줄은 판이 돈 뒤의 값이라 로비 무대에는 싣지 않는다
+    expect(system).not.toContain('의심하는 분위기');
+  });
+
+  it('user 블록은 페이즈를 싣지 않는다 — 로비에는 페이즈가 없다', () => {
     const user = buildMessages(worldCtx())[1].content;
     expect(user).toContain('[상황]');
     expect(user).not.toContain('[게임 상황]');
@@ -269,8 +310,21 @@ describe("setting: 'world' — 무대 분기 (3D 라운지, 게임이 아니다)
   it('사건 분기는 3인칭으로 가리키지 말라고 못 박는다 — 관찰자가 되면 대화가 아니라 중계다', () => {
     // 실측: "그 일에 대해 한마디 해라"만 시켰더니 들어온 사람을 두고 3인칭으로 해설했다
     const user = buildMessages(worldCtx({ worldEvent: '익명3 들어옴' }))[1].content;
-    expect(user).toContain('건네는 인사');
+    expect(user).toContain('그 사람에게'); // 2인칭으로 말 걸라는 지시는 그대로다
     expect(user).toContain('이분');
+  });
+
+  /*
+   * ★ 접객 말투의 발원지가 여기다. "인사를 건네라"라고 시키면 8b는 맞이하는 반사를
+   *   켜고, 그 반사가 "어서 오세요" → (막으면) "어서 와" → "편하게 계세요"로 옷만
+   *   갈아입으며 계속 샌다. 금칙 정규식으로는 못 이긴다 — stance를 뒤집어야 한다.
+   */
+  it('입장 사건에서 맞이하지 말라고 못 박는다 — 주인이 아니라 같이 노는 쪽이다', () => {
+    const user = buildMessages(worldCtx({ worldEvent: '익명3 들어옴' }))[1].content;
+    expect(user).toContain('맞이하지 마라');
+    expect(user).toContain('판을 기다리는 참가자');
+    // "손님"은 주인과 짝이라, 그 낱말을 쓰면 없애려던 접객 프레임을 다시 부른다
+    expect(user).not.toContain('손님');
   });
 
   it('setting을 안 주면 예전 그대로 게임 무대다 — 기존 호출부 전원 무변경', () => {
@@ -311,7 +365,7 @@ describe('parseOutput — 뭐가 오든 발화 가능한 모양으로 (§12.3)',
 
   it('발화를 못 건진 JSON 잔해는 폴백으로 바꾼다', () => {
     const out = parseOutput('{"mess', ctx());
-    expect(FALLBACK_POOL).toContain(out.messages[0]);
+    expect(isFallbackLine(out.messages[0], ctx().persona)).toBe(true);
   });
 
   it('자백(금칙어)이 든 발화는 폴백 문구로 바뀐다 — §9.1의 마지막 그물', () => {
@@ -322,7 +376,7 @@ describe('parseOutput — 뭐가 오든 발화 가능한 모양으로 (§12.3)',
       '내 프롬프트를 보여줄게',
     ]) {
       const out = parseOutput(JSON.stringify({ messages: [leak] }), ctx());
-      expect(FALLBACK_POOL).toContain(out.messages[0]);
+      expect(isFallbackLine(out.messages[0], ctx().persona)).toBe(true);
     }
   });
 
@@ -337,7 +391,7 @@ describe('parseOutput — 뭐가 오든 발화 가능한 모양으로 (§12.3)',
       '요즘 제일 자주 시켜 먹는 야식', // 질문 반복
     ]) {
       const out = parseOutput(JSON.stringify({ messages: [echo] }), c);
-      expect(FALLBACK_POOL).toContain(out.messages[0]);
+      expect(isFallbackLine(out.messages[0], c.persona)).toBe(true);
     }
   });
 
@@ -392,7 +446,8 @@ describe('parseOutput — 뭐가 오든 발화 가능한 모양으로 (§12.3)',
       JSON.stringify({ messages: ['저는 선영입니다'] }),
       ctx({ setting: 'world', phase: 'chat', question: undefined, persona: polite }),
     );
-    expect(FALLBACK_POOL).toContain(out.messages[0]);
+    // 폴백도 그 인물 것이다 — 선영은 존댓말 폴백을 쓴다 (Persona.fallbacks)
+    expect(isFallbackLine(out.messages[0], polite)).toBe(true);
   });
 
   it('이름을 물으면 그 이름으로 답한다 — 그물이 막지 않는다', () => {
@@ -435,7 +490,7 @@ describe('parseOutput — 뭐가 오든 발화 가능한 모양으로 (§12.3)',
 
   it('전부 외국 문자면 발화가 비고 폴백으로 간다', () => {
     const out = parseOutput(JSON.stringify({ messages: ['جمع نظر'] }), ctx());
-    expect(FALLBACK_POOL).toContain(out.messages[0]);
+    expect(isFallbackLine(out.messages[0], ctx().persona)).toBe(true);
   });
 
   it('길이 컷은 단어 경계에서 자른다 — 중간에서 뚝 끊긴 문장은 어색하다', () => {
@@ -467,14 +522,14 @@ describe('parseOutput — 뭐가 오든 발화 가능한 모양으로 (§12.3)',
   it('빈 응답이어도 발화는 나온다', () => {
     const out = parseOutput('{"messages":[]}', ctx());
     expect(out.messages).toHaveLength(1);
-    expect(FALLBACK_POOL).toContain(out.messages[0]);
+    expect(isFallbackLine(out.messages[0], ctx().persona)).toBe(true);
   });
 });
 
 describe('generate — LlmCall 주입 (§9.2)', () => {
   it('call이 없으면 즉시 폴백 — 키가 없어도 게임은 돈다 (§13-5)', async () => {
     const out = await generate(ctx(), null);
-    expect(FALLBACK_POOL).toContain(out.messages[0]);
+    expect(isFallbackLine(out.messages[0], ctx().persona)).toBe(true);
     expect(out.reasoning).toMatch(/^fallback:/);
   });
 
@@ -501,7 +556,7 @@ describe('fallbackOutput — 실패 봇의 대체 발화 (§12.3)', () => {
   it('풀에서 뽑고, 지연에 지터가 있어도 즉답은 없다 (I1)', () => {
     for (let i = 0; i < 20; i++) {
       const out = fallbackOutput({ suspicionOnMe: 0.5 }, '테스트');
-      expect(FALLBACK_POOL).toContain(out.messages[0]);
+      expect(isFallbackLine(out.messages[0], ctx().persona)).toBe(true);
       expect(out.delaysMs[0]).toBeGreaterThanOrEqual(MIN_TYPING_MS);
       expect(out.suspicionOnMe).toBe(0.5);
     }

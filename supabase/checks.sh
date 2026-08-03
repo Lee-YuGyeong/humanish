@@ -293,6 +293,26 @@ schema_checks() {
     "$(q "select count(*) from pg_constraint where conname = 'bot_line_pool_phase_text_key';")"
 
   echo ""
+  echo "── 월드 AI 발화 기록 ──"
+  check "world_agent_logs 테이블이 있다" "1" \
+    "$(q "select count(*) from information_schema.tables where table_name='world_agent_logs';")"
+
+  # ★ 이 검사가 이 테이블의 존재 이유다. player_id가 players를 참조하면 월드 AI는
+  #   행이 없어서 **모든 insert가 외래키로 죽는다** — 그런데 기록 실패는 발화를
+  #   막지 않게 해놨으므로(route.ts) 화면에는 아무 일도 안 일어난 것처럼 보이고
+  #   로그만 조용히 비어 있다. 그 상태를 여기서 잡는다.
+  check "world_agent_logs.player_id에 외래키가 없다" "0" \
+    "$(q "select count(*) from information_schema.key_column_usage k
+            join information_schema.table_constraints c using (constraint_name)
+           where k.table_name='world_agent_logs' and k.column_name='player_id'
+             and c.constraint_type='FOREIGN KEY';")"
+
+  # 발화 텍스트가 없으면 사람다움을 판단할 수 없다. agent_logs를 못 쓴 이유 중 하나다.
+  check "world_agent_logs에 text·raw·dropped 컬럼이 있다" "3" \
+    "$(q "select count(*) from information_schema.columns
+           where table_name='world_agent_logs' and column_name in ('text','raw','dropped');")"
+
+  echo ""
   echo "── 함수 시그니처 (SPEC §17.6) ──"
   # ★ 이름이 아니라 **시그니처**로 본다. 이름만 세면 옛 create_room(text)가 남아 있어도
   #   통과한다. 정원이 방마다 달라지면서 create_room(text) → create_room(text,int)로

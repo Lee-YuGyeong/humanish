@@ -386,6 +386,56 @@ create table if not exists agent_logs (
 -- 지금은 AI를 쓰지 않으므로 남길 게 없다.
 
 ------------------------------------------------------------------------------
+-- 월드 AI 발화 기록 — 사람다움을 사후에 읽어보기 위한 것
+------------------------------------------------------------------------------
+-- ★ 이 테이블도 클라이언트에게 절대 보이면 안 된다 (I1).
+--   봇이 실제로 뭘 말했는지가 방·시각과 함께 들어 있어서, 읽을 수 있으면 채팅과
+--   대조해 봇을 즉시 특정할 수 있다. policies.sql에서 RLS만 켜고 정책을 안 만든다.
+--
+-- ┌─ 왜 agent_logs를 못 쓰나 ─────────────────────────────────────────────────┐
+-- │ 두 가지다.                                                                │
+-- │  1. agent_logs.player_id가 players(id)를 참조하는데 **월드 AI는 players    │
+-- │     행이 없다** (lib/server/world-ai.ts). 그래서 지금까지 no_log로 통째로  │
+-- │     껐고, 월드 AI가 한 말은 어디에도 남지 않았다.                          │
+-- │  2. agent_logs에는 발화 텍스트가 아예 없다 — reasoning·suspicion·action만  │
+-- │     남긴다. 사람다움은 실제로 나간 문장을 봐야 판단할 수 있다.             │
+-- │ 그래서 players FK가 없는 별도 테이블로 둔다. 게임 방 봇의 agent_logs는     │
+-- │ 그대로 두고 건드리지 않는다.                                              │
+-- └──────────────────────────────────────────────────────────────────────────┘
+--
+-- ★ 버려진 발화도 남긴다 (dropped). 월드에서 봇이 조용한 이유의 대부분이 여기 있고
+--   — 길이 초과·폴백 — 그건 "무슨 말을 했나"만큼이나 봐야 하는 값이다.
+create table if not exists world_agent_logs (
+  id          uuid primary key default gen_random_uuid(),
+  created_at  timestamptz not null default now(),
+  room_id     uuid not null references rooms(id) on delete cascade,
+  -- ★ players를 참조하지 않는다. 월드 AI의 id는 stableUuid(roomId, index)라
+  --   진짜 플레이어 uuid와 모양이 같을 뿐 행은 없다.
+  player_id   uuid not null,
+  -- 어떤 인물을 연기했나 (lib/agent/world-persona.ts의 id). 인물별로 말투가
+  -- 갈리는지 보려면 이게 있어야 한다.
+  persona     text not null default '',
+  -- 무엇에 반응했나. 둘은 같이 오지 않는다 — 사람 말이 먼저다.
+  trigger_text text,             -- 반응을 부른 사람 발화
+  event_text   text,             -- 입·퇴장 같은 사건
+  -- 그 시점의 대화 [{nickname, text, human}]. 답이 맥락에 맞았는지는 이것 없이 못 본다.
+  history     jsonb not null default '[]'::jsonb,
+  -- LLM 원문. 아래 text와 나란히 둬야 후처리(오타·웃음)가 한 일이 보인다.
+  raw         text not null default '',
+  raw_tail    text,
+  -- 실제로 나간 말. 버려졌으면 null이다.
+  text        text,
+  tail        text,
+  -- null이면 나갔다. 'fallback' | 'too_long' | 'fallback_line'
+  dropped     text,
+  reasoning   text not null default '',
+  suspicion   real not null default 0,
+  action      text not null default '',
+  model       text,
+  took_ms     integer
+);
+
+------------------------------------------------------------------------------
 -- 문구 풀 — SPEC §17.2. AI 없이 봇이 말하게 하는 재료다.
 ------------------------------------------------------------------------------
 -- ★ 이 두 테이블은 클라이언트에게 절대 보이면 안 된다.
@@ -433,6 +483,8 @@ create index if not exists answers_room_q_idx       on answers      (room_id, qu
 create index if not exists questions_room_round_idx on questions    (room_id, round);
 create index if not exists agent_logs_room_idx      on agent_logs   (room_id);
 create index if not exists player_roles_room_idx    on player_roles (room_id);
+-- 읽는 쪽은 늘 "최근 것부터"다 (app/api/internal/world-log). 시각 내림차순으로 둔다.
+create index if not exists world_agent_logs_time_idx on world_agent_logs (created_at desc);
 
 -- pg_cron 워치독이 15초마다 훑는다. 없으면 방이 쌓일수록 전체 스캔이 된다 (SPEC §16.3)
 create index if not exists rooms_expiry_idx on rooms (phase_ends_at)

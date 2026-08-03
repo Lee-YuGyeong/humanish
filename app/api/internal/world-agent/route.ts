@@ -32,14 +32,17 @@ import { applyTypo, observeStyle, stretchLaugh, stripAvoidedPunct } from '@/lib/
 import {
   ASK_BACK_CHANCE,
   ASK_BACK_CHANCE_INITIATE,
-  FALLBACK_POOL,
+  isFallbackLine,
   type AgentContext,
   type AgentOutput,
 } from '@/lib/agent/generate';
+import { describeNow } from '@/lib/agent/clock';
+import { mergeFacts, pinFact } from '@/lib/agent/facts';
 import { personaForSeat } from '@/lib/agent/persona';
 import { AGENT_SELF_URL, agentHeaders } from '@/lib/agent/prefill';
 import { WORLD_PERSONAS } from '@/lib/agent/world-persona';
 import { apiError, readJson } from '@/lib/server/auth';
+import { getServiceClient } from '@/lib/server/supabase';
 import { buildWorldRoster } from '@/lib/server/world-ai';
 
 export const dynamic = 'force-dynamic';
@@ -73,6 +76,13 @@ interface Body {
    * 워커가 입·퇴장에서 싣는다 (worker/src/room-do.ts). trigger와 같이 오지 않는다.
    */
   event?: string | null;
+  /**
+   * 봇이 그 판에서 지금까지 지어낸 사실 (lib/agent/facts.ts). `{ player_id: [...] }`.
+   *
+   * ★ 병합은 **여기서만** 한다. 워커는 돌려준 배열을 그대로 보관했다가 다음에
+   *   그대로 실어 보낸다 — 규칙이 두 벌이 되면 그 순간 갈린다 (lib/mp/가 겪는 문제).
+   */
+  facts?: Record<string, unknown>;
 }
 
 interface ChatLine {
@@ -82,27 +92,33 @@ interface ChatLine {
 }
 
 /**
- * 이 방의 이 자리가 연기할 월드 인물 — **방마다 다르고, 한 방 안에서는 늘 같다.**
+ * 이 AI 가 연기할 월드 인물 — **방마다 다르고, 한 방 안에서는 늘 같다.**
  *
- * ┌─ 왜 seat 만으로 고르면 안 되는가 ─────────────────────────────────────────┐
- * │ 월드 AI 는 늘 **비어 있는 첫 자리**에 들어간다 (lib/server/world-ai.ts).     │
- * │ 혼자 들어온 방이면 사람이 1번, AI 가 2번 — 그래서 어느 방에 몇 번을 들어가도  │
- * │ 늘 같은 번호가 나오고, 늘 같은 인물이 나온다. 인물을 넷 만들어 둔 의미가 없다. │
- * │ roomId 를 섞으면 방마다 갈린다.                                            │
+ * ┌─ 왜 랜덤이 아니라 해시인가 ───────────────────────────────────────────────┐
+ * │ 이 함수는 봇이 한마디 할 때마다 불린다. 말할 때마다 인물이 바뀌면 말투가      │
+ * │ 문장마다 갈리고, 그건 사람이 절대 안 하는 짓이라 그 자체로 봇 표식이다 (I1).  │
+ * │ 해시면 언제 불려도 같은 인물이고, DO 가 재시작해도 이어진다.                 │
+ * └──────────────────────────────────────────────────────────────────────────┘
+ *
+ * ┌─ 왜 seat 를 넣으면 안 되는가 (신고: "말투가 계속 바뀐다") ──────────────────┐
+ * │ 한때 `roomId:seat` 를 해시했다. seat 가 방 안에서 고정이라고 봤는데 **아니다** │
+ * │ — 월드 AI 는 늘 **비어 있는 첫 자리**를 받는다 (lib/server/world-ai.ts 의     │
+ * │ buildWorldRoster). 사람이 1번에 있으면 AI 는 2번, 그 사람이 나가면 AI 가      │
+ * │ 1번으로 당겨진다. 라운지는 사람이 쉼없이 드나드는 곳이라 **입·퇴장 한 번마다   │
+ * │ 인물이 통째로 갈렸다.** 워커도 좌석 id 목록이 바뀌면 봇을 다시 세우므로        │
+ * │ (room-do.ts 의 `if (before !== after) this.bots = null`) 그대로 새 인물이 된다.│
  * │                                                                          │
- * │ 그렇다고 매번 새로 뽑으면 안 된다 — 이 함수는 봇이 한마디 할 때마다 불린다.   │
- * │ 말할 때마다 인물이 바뀌면 말투가 문장마다 갈리고, 그건 사람이 절대 안 하는     │
- * │ 짓이라 그 자체로 봇 표식이다 (I1). 그래서 **랜덤이 아니라 해시**다 —          │
- * │ 방·자리가 같으면 언제 불려도 같은 인물이고, DO 가 재시작해도 이어진다.        │
+ * │ 그래서 **id 를 해시한다.** 월드 AI 의 id 는 stableUuid(roomId, index) 라      │
+ * │ 자리가 밀려도 그대로고, roomId 가 이미 섞여 있어 방마다도 갈린다.             │
+ * │ ★ 자리에서 파생되는 값은 무엇이든 이 자리에 쓰지 않는다 — 자리는 움직인다.    │
  * └──────────────────────────────────────────────────────────────────────────┘
  */
-function worldPersonaFor(roomId: string, seat: number): (typeof WORLD_PERSONAS)[number] {
-  // FNV-1a. 암호용이 아니라 고르게 흩뿌리기만 하면 된다 — roomId 앞자리만 봐서는
-  // uuid 가 서로 비슷해 같은 인물로 몰린다.
+function worldPersonaFor(stableId: string): (typeof WORLD_PERSONAS)[number] {
+  // FNV-1a. 암호용이 아니라 고르게 흩뿌리기만 하면 된다 — uuid 앞자리만 봐서는
+  // 서로 비슷해 같은 인물로 몰린다.
   let h = 2166136261;
-  const key = `${roomId}:${seat}`;
-  for (let i = 0; i < key.length; i += 1) {
-    h ^= key.charCodeAt(i);
+  for (let i = 0; i < stableId.length; i += 1) {
+    h ^= stableId.charCodeAt(i);
     h = Math.imul(h, 16777619);
   }
   return WORLD_PERSONAS[Math.abs(h) % WORLD_PERSONAS.length];
@@ -190,17 +206,36 @@ export async function POST(req: Request): Promise<Response> {
      */
     const event = typeof body.event === 'string' ? body.event.slice(0, MAX_TEXT_LEN) : null;
 
+    /*
+     * ★ 지금 몇 시인가 (lib/agent/clock.ts). **한 요청 안에서 한 번만 읽는다** —
+     *   봇마다 따로 읽으면 자정을 넘기는 순간 같은 방의 두 봇이 다른 날짜를 말한다.
+     */
+    const now = describeNow(new Date().toISOString()) ?? undefined;
+
+    // 워커가 보낸 사실도 그대로 믿지 않는다 — 한 번 걸러서 넣는다 (facts.ts).
+    // DO 스토리지는 워커만 쓰지만, 여기 들어온 값은 다음 턴 시스템 프롬프트가 된다.
+    const rawFacts = (body.facts ?? {}) as Record<string, unknown>;
+    const factsOf = (playerId: string): string[] => {
+      const v = rawFacts[playerId];
+      return Array.isArray(v) ? mergeFacts([], v) : [];
+    };
+
     const plan = bots.map((b) => {
-      const persona = b.synthetic ? worldPersonaFor(roomId, b.seat) : personaForSeat(b.seat);
+      // 월드 AI 는 id 로 고른다 — 자리는 사람이 드나들 때마다 밀린다 (worldPersonaFor 의 상자).
+      // 게임 방의 진짜 봇은 좌석이 고정이라 seat 그대로다.
+      const persona = b.synthetic ? worldPersonaFor(b.id) : personaForSeat(b.seat);
       return {
         player_id: b.id,
         persona,
+        priorFacts: factsOf(b.id),
         context: {
           persona,
+          facts: factsOf(b.id),
           // 월드 AI는 무대도 라운지다 — 시스템 프롬프트에서 게임 문장이 전부 빠진다
           // (generate.ts WORLD_RULES). 페르소나가 "게임 중이 아니다"로 게임 프레임을
           // 되받아치던 구조를 대체한다. 게임이 시작된 방의 진짜 봇은 게임 무대 그대로.
           setting: b.synthetic ? ('world' as const) : ('game' as const),
+          now,
           phase: 'chat' as const,
           question: trigger ?? undefined,
           worldEvent: trigger ? undefined : (event ?? undefined),
@@ -226,6 +261,7 @@ export async function POST(req: Request): Promise<Response> {
     const jobs = plan.map(({ player_id, context }) => ({ player_id, context }));
     // 후처리(오타·웃음 길이)가 인물마다 다르다 — 응답을 받은 뒤에도 인물을 알아야 한다.
     const personaOf = new Map(plan.map((p) => [p.player_id, p.persona]));
+    const priorFactsOf = new Map(plan.map((p) => [p.player_id, p.priorFacts]));
 
     const res = await fetch(`${AGENT_SELF_URL}/api/agent`, {
       method: 'POST',
@@ -243,19 +279,72 @@ export async function POST(req: Request): Promise<Response> {
     }
 
     const data = (await res.json()) as {
-      results?: { player_id: string; output: AgentOutput; fallback: boolean }[];
+      model?: string | null;
+      results?: {
+        player_id: string;
+        output: AgentOutput;
+        fallback: boolean;
+        took_ms?: number;
+      }[];
     };
 
-    const results: { player_id: string; text: string; tail: string | null }[] = [];
+    const results: {
+      player_id: string;
+      text: string;
+      tail: string | null;
+      facts: string[];
+    }[] = [];
+    /*
+     * 사후에 읽어보려고 남기는 기록 (world_agent_logs). **버려진 발화도 남긴다** —
+     * 월드에서 봇이 조용한 이유의 대부분이 여기 있고(길이 초과·폴백), 그건
+     * "무슨 말을 했나"만큼 봐야 하는 값이다. 아래 continue 자리마다 기록부터 한다.
+     */
+    const logRows: Record<string, unknown>[] = [];
+    const logRow = (
+      r: { player_id: string; output: AgentOutput; took_ms?: number },
+      dropped: string | null,
+      finalText: string | null,
+      finalTail: string | null,
+    ): void => {
+      logRows.push({
+        room_id: roomId,
+        player_id: r.player_id,
+        persona: personaOf.get(r.player_id)?.id ?? '',
+        trigger_text: trigger,
+        event_text: event,
+        history: visibleHistory,
+        raw: r.output.messages[0] ?? '',
+        raw_tail: r.output.messages[1] ?? null,
+        text: finalText,
+        tail: finalTail,
+        dropped,
+        reasoning: r.output.reasoning,
+        suspicion: r.output.suspicionOnMe,
+        action: r.output.action,
+        model: data.model ?? null,
+        took_ms: r.took_ms ?? null,
+      });
+    };
+
     for (const r of data.results ?? []) {
       // LLM 실패분·구제 문구("ㅇㅇ")는 버린다. 월드에는 대신 쓸 풀이 없으니 그 자리는
       // 그냥 조용히 지나간다 — 맥락 없는 한 글자보다 침묵이 사람에 가깝다.
-      if (r.fallback) continue;
+      if (r.fallback) {
+        logRow(r, 'fallback', null, null);
+        continue;
+      }
 
       // 상한을 넘으면 자르지 않고 버린다(fitChatReply → null) — 잘린 말끝은
       // 폴백 문구보다 봇 티가 난다 (실측).
       const text = fitChatReply(r.output.messages[0] ?? '', MAX_REPLY_LEN);
-      if (!text || FALLBACK_POOL.includes(text)) continue;
+      if (!text) {
+        logRow(r, 'too_long', null, null);
+        continue;
+      }
+      if (isFallbackLine(text, personaOf.get(r.player_id))) {
+        logRow(r, 'fallback_line', null, null);
+        continue;
+      }
 
       /*
        * ★ 두 번째 발화는 **이어서 한 줄 더** 친다 (tail).
@@ -302,11 +391,52 @@ export async function POST(req: Request): Promise<Response> {
           persona?.laugh,
           Math.random,
         );
+      /*
+       * ★ 사실은 **여기까지 온 발화에만** 따라붙는다. 위에서 걸러진 것들 —
+       *   폴백(r.fallback)·상한 초과·구제 문구 — 은 이 줄에 닿지 못한다.
+       *   그게 맞다: 나가지 않은 말의 설정을 기억하면 봇이 한 적 없는 말을 했다고
+       *   믿는다 (AgentOutput.facts 주석).
+       *
+       *   돌려주는 건 **합쳐진 전체 명단**이다. 워커는 병합을 모른 채 받은 걸
+       *   그대로 보관하면 된다 (Body.facts 주석).
+       */
+      /*
+       * ★ 코드가 못 박은 것(pinFact)이 모델이 낸 것보다 **앞**이다. 같은 주제면
+       *   앞의 것이 이기므로(mergeFacts), 8b 가 대충 낸 값보다 실제로 나간 답이
+       *   남는다. 8b 는 facts 칸을 7턴에 1번밖에 안 채운다 (facts.ts 실측).
+       *
+       *   못 박는 건 **앞 줄(text)뿐이다.** tail 은 이어 치는 덧말이라 질문에 대한
+       *   답이 아니다 — 그걸 값으로 박으면 "사는 곳: 근데 여기 좋네"가 된다.
+       */
+      const pinned = pinFact(trigger, text);
+      /*
+       * ★ human()은 Math.random을 쓴다 — 한 번만 부르고 그 값을 기록과 응답에
+       *   같이 쓴다. 두 번 부르면 로그의 문장과 실제로 나간 문장이 오타 하나만큼
+       *   달라지고, 그러면 이 기록으로는 오타가 얼마나 났는지 셀 수 없다.
+       */
+      const finalText = human(text);
+      const finalTail = tail && !isFallbackLine(tail, persona) ? human(tail) : null;
+      logRow(r, null, finalText, finalTail);
       results.push({
         player_id: r.player_id,
-        text: human(text),
-        tail: tail && !FALLBACK_POOL.includes(tail) ? human(tail) : null,
+        text: finalText,
+        tail: finalTail,
+        facts: mergeFacts(priorFactsOf.get(r.player_id) ?? [], [
+          ...(pinned ? [pinned] : []),
+          ...(r.output.facts ?? []),
+        ]),
       });
+    }
+
+    /*
+     * 기록은 **응답을 막지 않는다.** 실패해도 봇은 말한다 — agent_logs와 같은 규약
+     * (app/api/agent/route.ts). 다만 여기서는 await 한다: 워커 예산이 12초
+     * (COMPANION_AGENT_TIMEOUT_MS)라 insert 한 번은 부담이 아니고, 떠 있는 프라미스는
+     * Workers에서 응답과 함께 잘려나가 기록이 조용히 비는 쪽이 더 나쁘다.
+     */
+    if (logRows.length > 0) {
+      const { error: logErr } = await getServiceClient().from('world_agent_logs').insert(logRows);
+      if (logErr) console.error('[world-agent] 발화 기록 실패:', logErr.message);
     }
 
     return Response.json({ ok: true, results }, { headers: { 'cache-control': 'no-store' } });

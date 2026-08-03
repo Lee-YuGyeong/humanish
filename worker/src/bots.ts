@@ -188,6 +188,21 @@ export interface BotState {
   /** 이 시각 전에는 사람 말에 반응하지 않는다 (epoch ms). 한 자리가 대화를 독점하지 않게 한다. */
   nextReactAt: number;
 
+  /**
+   * 이 인물이 이 방에서 **지어낸 사실**의 명단 ("사는 곳: 인천 서구").
+   *
+   * ┌─ 왜 좌표와 달리 저장하는가 ───────────────────────────────────────────────┐
+   * │ BotPose 머리말은 "나머지는 다시 뽑아도 티가 안 난다"고 했다. 여기는 정반대다  │
+   * │ — 다시 뽑으면 **사는 곳이 바뀐다.** 대화 기록이 밀려나서가 아니라 매 턴이     │
+   * │ 독립이라, 같은 걸 두 번만 물어도 다른 답이 나온다 (lib/agent/facts.ts 실측).  │
+   * │ 심문자가 노리는 게 정확히 그 지점이라 이건 DO가 자도 살아남아야 한다.        │
+   * └──────────────────────────────────────────────────────────────────────────┘
+   *
+   * ★ 워커는 이 내용을 **읽지도 합치지도 않는다.** 오리진에 그대로 보내고,
+   *   돌려받은 전체 명단으로 갈아 끼운다 (world-agent.ts의 AgentLine.facts).
+   */
+  facts: string[];
+
   /** 목적지까지 남은 거리의 최근 최소값. 안 줄면 가구에 막힌 것이다 */
   bestDist: number;
   /** bestDist 가 마지막으로 갱신된 시각 (epoch ms) */
@@ -196,12 +211,17 @@ export interface BotState {
   blockedAt: number;
 }
 
-/** 저장·복원용. 좌표만 남기면 충분하다 — 나머지는 다시 뽑아도 티가 안 난다. */
+/**
+ * 저장·복원용. 좌표는 다시 뽑아도 티가 안 나지만 **facts는 아니다** —
+ * 다시 뽑으면 사는 곳이 바뀌고, 그게 곧 봇 표식이다 (BotState.facts).
+ */
 export interface BotPose {
   id: string;
   x: number;
   z: number;
   heading: number;
+  /** 없을 수 있다 — 이 필드가 생기기 전에 저장된 방이 그렇다. */
+  facts?: string[];
 }
 
 function rand(min: number, max: number): number {
@@ -271,6 +291,8 @@ export function createBot(
     speakAt: 0,
     speechSeq: 0,
     nextReactAt: 0,
+    // 저장된 방이면 이어받는다. 새 방이면 아직 아무것도 안 지어냈다.
+    facts: pose?.facts ?? [],
     bestDist: Infinity,
     progressAt: now,
     blockedAt: now,
@@ -586,6 +608,29 @@ export function readDelayMs(): number {
 }
 
 /**
+ * 이 발화에 대꾸할 **알맹이가 있는가.**
+ *
+ * ┌─ 왜 필요한가 (신고: "ㅋㅋ 했는데 저도요. 라고 답한다") ────────────────────┐
+ * │ "ㅋㅋ"·"ㅇㅇ"·"ㅠㅠ"·"!!"에는 답할 내용이 없다. 그런데 대꾸 경로는 사람이     │
+ * │ 말하기만 하면 그 문장을 그대로 [지금 답할 질문]으로 실어 보냈고, 모델은      │
+ * │ 무에서 문장을 지어내야 하니 엉뚱한 말이 나왔다. 실측 4/4: "ㅋㅋ" → "안녕하세요."│
+ * │                                                                          │
+ * │ ★ 웃음에 웃음으로 받게 하지 않는다. **항상 받는 것 자체가 표식이다** (I1) —  │
+ * │   BOT_REACT_CHANCE 가 확률을 거는 것과 같은 이유다. 사람도 "ㅋㅋ"에는 그냥   │
+ * │   아무 말 안 하는 쪽이 흔하다. 그래서 여기서는 **대꾸 자리를 아예 안 잡는다.**│
+ * │                                                                          │
+ * │ 판정 기준은 **완성형 음절이 하나라도 있는가**다. 자모("ㅋ")·기호·이모지만    │
+ * │ 남으면 알맹이가 없다. "ㅋㅋ 왜"는 '왜'가 있어 통과한다 — 웃음이 섞였다고      │
+ * │ 막으면 진짜 질문을 씹는다.                                                 │
+ * └──────────────────────────────────────────────────────────────────────────┘
+ */
+export function hasContent(text: string): boolean {
+  // 한글 완성형 · 영문 · 숫자 중 하나라도 있으면 답할 거리가 있다고 본다.
+  // 자모 단독(ㄱ-ㆎ)은 일부러 뺐다 — 그게 "ㅋㅋ"·"ㅇㅇ"이다.
+  return /[가-힣a-zA-Z0-9]/.test(text);
+}
+
+/**
  * 사람이 한마디 했다. 대꾸할 봇을 **하나만** 고른다. 아무도 안 고를 수도 있다.
  *
  * ★ I1이 두 번 걸리는 자리다 (BOT_REACT_CHANCE 주석 참고).
@@ -657,7 +702,8 @@ export function botSnapshot(bot: BotState): PlayerSnapshot {
 }
 
 export function toPose(bot: BotState): BotPose {
-  return { id: bot.id, x: bot.x, z: bot.z, heading: bot.heading };
+  // facts를 빼먹으면 DO가 잘 때마다 인물의 설정이 리셋된다 — 좌표와 달리 티가 난다.
+  return { id: bot.id, x: bot.x, z: bot.z, heading: bot.heading, facts: bot.facts };
 }
 
 /*

@@ -33,6 +33,7 @@ import {
   AGENT_TIMEOUT_MS,
   type AgentContext,
 } from '@/lib/agent/generate';
+import { describeNow } from '@/lib/agent/clock';
 import { PERSONAS, type Persona } from '@/lib/agent/persona';
 import { observeStyle } from '@/lib/agent/disguise';
 import type { LlmChatMessage, Phase } from '@/lib/game/types';
@@ -67,8 +68,37 @@ function nimConfig(): NimConfig | null {
   return {
     apiKey,
     baseUrl: (process.env.NVIDIA_NIM_BASE_URL ?? 'https://integrate.api.nvidia.com/v1').replace(/\/$/, ''),
-    // 카탈로그에서 고르면 .env.local의 NVIDIA_NIM_MODEL만 바꾼다. 한국어 품질은 /lab에서 비교.
-    model: process.env.NVIDIA_NIM_MODEL || 'meta/llama-3.1-8b-instruct',
+    /*
+     * 기본값은 **코드에 둔다** — .env.local 은 로컬만 읽는다. 여기에 안 박으면
+     * 배포본이 조용히 다른 모델로 돈다. NVIDIA_NIM_MODEL 은 /lab 실험용 덮어쓰기다.
+     *
+     * 2026-08-03 실측(무료 티어, 카탈로그 102개 전수). 인물 4명 × 질문 3개 = 12발화 기준.
+     *
+     * ★ 고르는 기준은 **한국어 문장이 아니라 JSON 스키마 준수율**이다. 이걸로 두 번 속았다:
+     *   겉보기 답이 멀쩡해도 parseOutput 이 잔해에서 한 줄 건져낸 것일 수 있고, 그때는
+     *   fallback 플래그가 안 켜져서 성공으로 집계된다. 반드시 reasoning 을 읽어야 갈린다.
+     *
+     *              모델                        정상   JSON깨짐  폴백  8초초과
+     *   google/gemma-4-31b-it                  92%      0       1      4   ← 채택
+     *   meta/llama-3.1-8b-instruct             92%      1       0      0
+     *   nvidia/nemotron-3-ultra-550b-a55b      50%      2       4      6
+     *   minimaxai/minimax-m3                   50%      0       6     12
+     *   deepseek-ai/deepseek-v4-pro            17%      0      10      4
+     *
+     * 8b(직전 기본값)는 지연만 보면 무결점인데 번역체다 — "우산 벗겨서 산책해!" 처럼
+     * 뜻이 안 통하고 질문을 그대로 되풀이한다. gemma 는 8초를 1/3쯤 넘겨 그만큼 폴백이
+     * 되지만, **폴백은 "아 잠만!" 한마디라 사람으로 읽히고 번역체는 항상 티가 난다.**
+     * 가끔 티나는 쪽을 골랐다.
+     *
+     * 추론 모델은 전부 탈락이다. nemotron-3-ultra 는 발화 자리에 영어 사고 과정을 실었다
+     * ("The user is asking what I usually do on weekends. As a 25"). 한 줄로 판이 끝난다.
+     * 같은 계열이라도 nano·super 는 한국어에 중국어가 섞였다 — 계열로 묶으면 놓친다.
+     *
+     * gemma 의 약점은 내용 붕괴다(같은 질문 10회에 전부 "마라탕 어때?"). 실시간 생성만으로
+     * 봇을 굴리면 봇들이 같은 답을 한다 — SPEC §17 의 문구 풀 우선이 이걸 막는다.
+     * 미리 만드는 문구 풀은 다양성이 유일하게 살아 있는 minimaxai/minimax-m3 로 뽑는다.
+     */
+    model: process.env.NVIDIA_NIM_MODEL || 'google/gemma-4-31b-it',
   };
 }
 
@@ -193,6 +223,8 @@ function labJobs(body: Body): BotJob[] {
   const styleProfile = observeStyle(history.map((h) => h.text));
   const phase: Phase = body.phase ?? 'question';
   const question = body.question?.slice(0, MAX_LAB_TEXT_LEN) || undefined;
+  // 인물 전원이 **같은 시각**을 본다 — /lab 은 나란히 비교하는 화면이라 특히 그렇다
+  const now = describeNow(new Date().toISOString()) ?? undefined;
 
   return PERSONAS.map((persona) => ({
     player_id: `lab-${persona.id}`,
@@ -204,6 +236,7 @@ function labJobs(body: Body): BotJob[] {
       visibleHistory: history,
       styleProfile,
       suspicionOnMe: 0.2,
+      now,
     },
   }));
 }

@@ -16,9 +16,10 @@
  * 여기서 나는 모든 에러는 삼킨다 — 봇 입이 채팅을 막아서는 안 된다.
  */
 
+import { describeNow } from '@/lib/agent/clock';
 import { personaForSeat } from '@/lib/agent/persona';
 import { observeStyle, stretchLaugh, stripAvoidedPunct } from '@/lib/agent/disguise';
-import { FALLBACK_POOL, type AgentContext, type AgentOutput } from '@/lib/agent/generate';
+import { isFallbackLine, type AgentContext, type AgentOutput } from '@/lib/agent/generate';
 import { AGENT_SELF_URL, agentHeaders, type BotSeat } from '@/lib/agent/prefill';
 import { getServiceClient } from '@/lib/server/supabase';
 
@@ -40,12 +41,14 @@ export function buildChatReplyJobs(
   humanTexts: string[],
 ): { player_id: string; context: AgentContext }[] {
   const styleProfile = observeStyle(humanTexts);
+  const now = describeNow(new Date().toISOString()) ?? undefined;
   const seatOf = new Map(bots.map((b) => [b.id, b.seat]));
   return pending
     .filter((m) => seatOf.has(m.player_id))
     .map((m) => ({
       player_id: m.player_id,
       context: {
+        now,
         persona: personaForSeat(seatOf.get(m.player_id) as number),
         phase: 'chat' as const,
         visibleHistory,
@@ -172,7 +175,11 @@ export async function regenerateBotChatReply(roomId: string): Promise<void> {
       // LLM 실패분·구제 문구("ㅇㅇ")보다 풀 문구가 낫다 — 덮지 않는다
       if (r.fallback) continue;
       const capped = capChatReply(r.output.messages.join(' '));
-      if (!capped || FALLBACK_POOL.includes(capped)) continue;
+      // ★ 인물별 폴백이 생긴 뒤로 공용 풀만 보면 그물이 샌다 — 인물을 같이 넘긴다
+      //   (generate.ts의 isFallbackLine).
+      const seatForCheck = seatOf.get(r.player_id);
+      const personaForCheck = seatForCheck === undefined ? undefined : personaForSeat(seatForCheck);
+      if (!capped || isFallbackLine(capped, personaForCheck)) continue;
       // 인물이 안 쓰는 부호를 걷어내고 웃음 길이를 인물대로 흔든다 (disguise.ts).
       // 8b는 "ㅋㅋ만 쓴다"를 글자 수까지 지켜서 매번 두 글자로 웃고, 금지한 느낌표는
       // 인사 자리에서 흘린다. 길이대 판정(capChatReply) 뒤에 얹는 건 world-agent와

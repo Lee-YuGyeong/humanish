@@ -45,6 +45,7 @@ import { isC2SMessage, parseMove } from '../../lib/mp/validate';
 import {
   botSnapshot,
   createBot,
+  hasContent,
   pickLine,
   pickResponder,
   readDelayMs,
@@ -503,6 +504,11 @@ export class RoomDO {
     const bots = this.bots;
     if (!bots || bots.length === 0) return;
 
+    // 답할 거리가 없는 말("ㅋㅋ", "ㅇㅇ")에는 자리를 잡지 않는다 (bots.ts의 hasContent).
+    // 여기서 안 막으면 풀 문구든 LLM 답이든 동문서답으로 나간다 — 잡은 자리는 반드시 채워지므로
+    // 걸러야 할 곳은 말을 만드는 쪽이 아니라 **자리를 잡는 이 지점**이다.
+    if (!hasContent(trigger)) return;
+
     const bot = pickResponder(bots, now, this.meta?.companionMode === true);
     if (!bot) return;
 
@@ -585,6 +591,8 @@ export class RoomDO {
     if (!bots || bots.length < 2) return;
     if (speaker.speechHeld) return;
     if (this.botChainHops >= BOT_CHAIN_MAX) return;
+    // 사람 발화와 같은 규칙이다 — 봇이 "ㅋㅋ"만 했으면 거기 붙일 대꾸도 없다.
+    if (!hasContent(text)) return;
 
     const bot = pickResponder(
       bots.filter((b) => b !== speaker),
@@ -636,19 +644,37 @@ export class RoomDO {
       this.chatContext(),
       trigger,
       event,
+      { [bot.id]: bot.facts },
       companion ? Math.max(budget, COMPANION_AGENT_TIMEOUT_MS) : budget,
     );
     const line = lines.find((l) => l.player_id === bot.id);
     if (!line?.text) return;
 
+    /*
+     * ★ 지어낸 설정은 **그 말이 실제로 나갈 때만** 기억한다 (lib/agent/facts.ts).
+     *   아래 두 갈래는 둘 다 발화가 나가는 길이다. 그 어느 쪽도 못 타고 함수가
+     *   끝나면(자리를 놓친 게임 방) 이 사실은 버려진다 — 봇이 한 적 없는 말을
+     *   했다고 기억하면 다음 턴에 앞뒤가 안 맞는다.
+     *
+     *   돌려받은 건 합쳐진 전체 명단이라 그대로 갈아 끼운다. undefined 는
+     *   "구 오리진이라 안 왔다"는 뜻이므로 기존 명단을 지우지 않는다.
+     */
+    const remember = (): void => {
+      if (line.facts) bot.facts = line.facts;
+    };
+
     // tail 은 LLM 이 두 줄을 냈을 때의 뒷줄이다 — 앞 줄이 실제로 나간 뒤에
     // takeSpeech 가 이어 예약한다.
-    if (replaceSpeech(bot, seq, line.text, Date.now(), line.tail ?? null)) return;
+    if (replaceSpeech(bot, seq, line.text, Date.now(), line.tail ?? null)) {
+      remember();
+      return;
+    }
 
     // 자리를 놓친 답. 게임 방이면 버린다 (위 머리말). 월드 AI 방은 **seq가 그대로일
     // 때만** 지금 바로 말한다 — 다음 예약이 이미 걸렸으면(seq 불일치) 그 예약의 LLM이
     // 이 맥락을 대신 안다. 아직 서 있는 중이면 자리도 걷는다 — 침묵과 답이 겹치지 않게.
     if (companion && bot.speechSeq === seq) {
+      remember();
       bot.speechHeld = false;
       bot.pendingText = null;
       // ★ 뒷줄은 여기서도 살린다(botSpoke가 이어 예약한다). 늦게라도 앞 줄을 말했으면

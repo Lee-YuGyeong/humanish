@@ -13,7 +13,10 @@ import {
   observeStyle,
   stretchLaugh,
   stripAvoidedPunct,
+  toCasual,
+  toPolite,
   typingDelayMs,
+  enforceSpeech,
   type LaughStyle,
 } from '@/lib/agent/disguise';
 
@@ -218,4 +221,111 @@ describe('stripAvoidedPunct — 인물이 안 쓰는 부호는 걷어낸다', ()
   it('한글은 한 글자도 안 건드린다 — 자모(ㅋㅋ)는 여기서 지우지 않는다', () => {
     expect(stripAvoidedPunct('내일 봐요 ㅋㅋ', ['!', '~', '.'])).toBe('내일 봐요 ㅋㅋ');
   });
+});
+
+/*
+ * 어체 그물 — 프롬프트 두 겹으로 막다 뚫린 자리다 (disguise.ts의 상자).
+ * 실측 문장을 그대로 검사에 옮긴다. 여기 있는 예는 전부 8b가 실제로 낸 것이다.
+ */
+describe('toCasual — 반말 인물이 존댓말로 답한 걸 되돌린다', () => {
+  it('실측: 질문을 받자 반말 인물들이 한꺼번에 존댓말로 답했다', () => {
+    expect(toCasual('창고에서 살고 있어요')).toBe('창고에서 살고 있어');
+    expect(toCasual('평일은 대학교에 다니고 주말에 집에 있어요')).toBe(
+      '평일은 대학교에 다니고 주말에 집에 있어',
+    );
+    expect(toCasual('아주 멀리서 살고 있어요. 서울입니다')).toBe('아주 멀리서 살고 있어. 서울이야');
+  });
+
+  it('1인칭만 존대로 남는 게 제일 흔하다 — 사용자가 처음 신고한 문장', () => {
+    expect(toCasual('뭐야? 저한테 뭘 묻고 있어?')).toBe('뭐야? 나한테 뭘 묻고 있어?');
+    expect(toCasual('제가 전북 익산에 살고 있어요.')).toBe('내가 전북 익산에 살고 있어.');
+  });
+
+  it('지정사는 "요"를 떼기 전에 본다 — 안 그러면 "이에요"가 "이에"로 남는다', () => {
+    expect(toCasual('사람이에요')).toBe('사람이야');
+    expect(toCasual('저는 여기 처음이에요')).toBe('나는 여기 처음이야');
+  });
+
+  it('어미가 아닌 "요"는 건드리지 않는다 — "필요"가 "필"이 되면 안 된다', () => {
+    expect(toCasual('그거 필요')).toBe('그거 필요');
+    expect(toCasual('별로 안 중요')).toBe('별로 안 중요');
+  });
+
+  it('이미 반말인 문장은 그대로 둔다', () => {
+    expect(toCasual('뭔 소리야 나 사람인데')).toBe('뭔 소리야 나 사람인데');
+    expect(toCasual('ㅇㅇ 아까 먹음')).toBe('ㅇㅇ 아까 먹음');
+  });
+});
+
+describe('toPolite — 존댓말 인물이 반말로 답한 걸 올린다', () => {
+  it('실측: 유일한 존댓말 인물이 반말로 답했다', () => {
+    expect(toPolite('나는 사람이야')).toBe('저는 사람이에요');
+    expect(toPolite('서울 강북에 살고 있어')).toBe('서울 강북에 살고 있어요');
+  });
+
+  it('어미가 아닌 자리는 건드리지 않는다 — 틀리면 없는 말이 된다', () => {
+    expect(toPolite('누가 그랬는지 몰라')).toBe('누가 그랬는지 몰라요');
+    expect(toPolite('사람 많다')).toBe('사람 많다'); // '다'는 손대지 않는다
+  });
+});
+
+describe('enforceSpeech — 인물의 어체 쪽으로만 민다', () => {
+  it('speech가 없으면 반말이다 — 인물 대부분이 반말이라 존댓말만 적는다', () => {
+    expect(enforceSpeech('살고 있어요', undefined)).toBe('살고 있어');
+    expect(enforceSpeech('살고 있어요', 'casual')).toBe('살고 있어');
+  });
+
+  it('존댓말 인물은 반대로 민다', () => {
+    expect(enforceSpeech('살고 있어', 'polite')).toBe('살고 있어요');
+  });
+});
+
+describe('toCasual — 인사말은 하세요체라 어미 규칙으로 안 잡힌다', () => {
+  /*
+   * 종결 '요' 떼기는 '세'를 건드리지 않는다 ("하세요"→"하세"가 되니까).
+   * 그런데 인사말은 거의 전부 하세요체라, 그물에 인사 크기의 구멍이 있었다.
+   * 아래는 전부 반말 인물이 인사 자리에서 실제로 낸 문장이다.
+   */
+  it('실측: 반말 인물이 인사에서만 존댓말로 튀었다', () => {
+    expect(toCasual('안녕하세요 쫀쫀해')).toBe('안녕 쫀쫀해');
+    expect(toCasual('안녕하셨어?')).toBe('안녕?');
+  });
+
+  /*
+   * ★ "어서 오세요"는 여기서 안 바꾼다. 한때 "어서 와"로 내렸는데, 그건 고친 게
+   *   아니라 **옮긴 것**이었다 — 반말 옷을 입었을 뿐 맞이하는 입장은 그대로다.
+   *   맞이하는 말은 generate.ts 의 SERVICE_TALK 가 통째로 걷어낸다.
+   */
+  it('맞이하는 말은 어체만 바꿔 통과시키지 않는다', () => {
+    expect(toCasual('어서 오세요')).toBe('어서 오세요');
+  });
+
+  it('8b가 내는 인사 변형을 전부 "안녕"으로 모은다 (실측된 모양들)', () => {
+    for (const s of ['안녕하세요', '안녕하세용', '안녕하세여', '안녕하세', '안녕해요', '안녕해']) {
+      expect(toCasual(s), s).toBe('안녕');
+    }
+  });
+
+  it('긴 것부터 본다 — "하세"가 앞이면 "하세요"가 "안녕요"가 된다', () => {
+    expect(toCasual('안녕하세요')).not.toBe('안녕요');
+  });
+
+  it('반갑습니다·고맙습니다도 내린다', () => {
+    expect(toCasual('반갑습니다')).toBe('반가워');
+    expect(toCasual('고맙습니다')).toBe('고마워');
+  });
+
+  it('이미 반말인 인사는 그대로 둔다', () => {
+    expect(toCasual('안녕')).toBe('안녕');
+    expect(toCasual('어서 와')).toBe('어서 와');
+    expect(toCasual('반가워')).toBe('반가워');
+  });
+});
+
+describe('toPolite — 존댓말 인물이 만든 없는 말', () => {
+  it('"안녕요"는 없는 말이다 — 반말 인사에 요만 붙인 것', () => {
+    expect(toPolite('안녕요')).toBe('안녕하세요');
+    expect(toPolite('저도 안녕요')).toBe('저도 안녕하세요');
+  });
+
 });

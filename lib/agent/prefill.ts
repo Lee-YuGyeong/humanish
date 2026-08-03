@@ -11,9 +11,10 @@
  * 여기서 나는 모든 에러는 삼킨다 — 봇 입이 게임 진행을 막아서는 안 된다.
  */
 
+import { describeNow } from '@/lib/agent/clock';
 import { personaForSeat } from '@/lib/agent/persona';
 import { observeStyle } from '@/lib/agent/disguise';
-import { FALLBACK_POOL, type AgentContext, type AgentOutput } from '@/lib/agent/generate';
+import { isFallbackLine, type AgentContext, type AgentOutput } from '@/lib/agent/generate';
 import { getServiceClient } from '@/lib/server/supabase';
 import type { Phase } from '@/lib/game/types';
 
@@ -59,9 +60,12 @@ export function buildPrefillJobs(
   humanTexts: string[],
 ): { player_id: string; context: AgentContext }[] {
   const styleProfile = observeStyle(humanTexts);
+  // 한 번만 읽어 전원에게 같은 값을 준다 — 봇마다 읽으면 자정 근처에서 날짜가 갈린다
+  const now = describeNow(new Date().toISOString()) ?? undefined;
   return bots.map((b) => ({
     player_id: b.id,
     context: {
+      now,
       persona: personaForSeat(b.seat),
       phase,
       question,
@@ -90,9 +94,11 @@ export function buildVoteReasonJobs(
   humanTexts: string[],
 ): { player_id: string; context: AgentContext }[] {
   const styleProfile = observeStyle(humanTexts);
+  const now = describeNow(new Date().toISOString()) ?? undefined;
   return votes.map((v) => ({
     player_id: v.voter_id,
     context: {
+      now,
       persona: personaForSeat(v.seat),
       phase: 'vote' as const,
       voteTarget: v.targetNickname,
@@ -306,12 +312,18 @@ async function regenerateBotVoteReasons(
     const { data: recheck } = await db.from('rooms').select('phase').eq('id', roomId).maybeSingle();
     if (!recheck || recheck.phase !== 'vote') return;
 
+    // 폴백 판정에 인물이 필요하다 — 인물별 폴백이 생겼다 (generate.ts의 isFallbackLine).
+    const seatOfVoter = new Map(botVotes.map((v) => [v.voter_id, v.seat]));
+
     let replaced = 0;
     for (const r of data.results ?? []) {
       if (r.fallback) continue;
       const reason = r.output.messages.join(' ').trim().slice(0, MAX_REASON_LEN);
-      // 금칙 필터가 바꿔치운 구제 문구("ㅇㅇ")는 투표 이유로 부자연 — 풀 이유가 낫다
-      if (!reason || FALLBACK_POOL.includes(reason)) continue;
+      // 금칙 필터가 바꿔치운 구제 문구("ㅇㅇ")는 투표 이유로 부자연 — 풀 이유가 낫다.
+      // 인물별 폴백까지 봐야 한다 (generate.ts의 isFallbackLine).
+      const seatForCheck = seatOfVoter.get(r.player_id);
+      const personaForCheck = seatForCheck === undefined ? undefined : personaForSeat(seatForCheck);
+      if (!reason || isFallbackLine(reason, personaForCheck)) continue;
 
       const { error } = await db
         .from('votes')

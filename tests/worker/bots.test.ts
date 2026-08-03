@@ -13,6 +13,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   createBot,
+  hasContent,
   pickLine,
   pickResponder,
   readDelayMs,
@@ -719,5 +720,34 @@ describe('딴짓 지연 — 가끔 늦게 답한다 (I1)', () => {
 
     expect(bot.anim).toBe('walk');
     expect(bot.x).toBeGreaterThan(x0);
+  });
+});
+
+describe('hasContent — 알맹이 없는 말에는 대꾸하지 않는다', () => {
+  /*
+   * 신고: 사람이 "ㅋㅋ"만 쳤는데 봇이 "저도요."라고 답했다.
+   * 답할 내용이 없는 자리에 자리를 잡으니 모델이 무에서 문장을 지어낸다
+   * (실측 4/4: "ㅋㅋ" → "안녕하세요."). room-do.ts의 reactToHuman이 이걸로 돌아선다.
+   */
+  it('웃음·초성체·기호만 있으면 알맹이가 없다', () => {
+    for (const text of ['ㅋㅋ', 'ㅋㅋㅋㅋㅋ', 'ㅎㅎ', 'ㅠㅠ', 'ㅇㅇ', 'ㄴㄴ', 'ㄹㅇ', '!!', '???', '...', '~', '👍', '  ', '']) {
+      expect(hasContent(text), text).toBe(false);
+    }
+  });
+
+  it('완성형 음절이 하나라도 있으면 답할 거리가 있다', () => {
+    for (const text of ['왜', '밥', '어제 뭐먹음', '나도', '헐 진짜?']) {
+      expect(hasContent(text), text).toBe(true);
+    }
+  });
+
+  it('웃음이 섞였다고 막지 않는다 — 진짜 질문을 씹으면 그게 더 이상하다', () => {
+    expect(hasContent('ㅋㅋ 왜')).toBe(true);
+    expect(hasContent('ㅇㅇ 아까 먹음')).toBe(true);
+  });
+
+  it('영문·숫자도 알맹이로 센다', () => {
+    expect(hasContent('ok')).toBe(true);
+    expect(hasContent('3')).toBe(true);
   });
 });
