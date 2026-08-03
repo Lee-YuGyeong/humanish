@@ -39,6 +39,10 @@ const PHASE_LABEL: Record<AdminRoom["phase"], string> = {
   target: "지목 질문",
   chat: "자유 채팅",
   vote: "투표",
+  // 사람 표가 동점일 때만 들어오는 20초짜리 페이즈다 (SPEC §18.3).
+  // 문구는 components/room-view.tsx 와 같은 말을 쓴다 — 같은 페이즈를 두 화면이
+  // 다르게 부르면 장애 보고를 맞춰 읽을 수가 없다.
+  revote: "재투표",
   reveal: "공개",
   replay: "재시작",
 };
@@ -53,6 +57,9 @@ const PHASE_STYLE: Record<AdminRoom["phase"], string> = {
   target: "text-bounce",
   chat: "text-tung",
   vote: "lit-signal",
+  // 투표와 같은 비상등. 재투표는 투표의 연장이지 다른 국면이 아니다 —
+  // 색을 새로 주면 점검 화면에서 둘이 다른 일처럼 읽힌다.
+  revote: "lit-signal",
   reveal: "lit-tung",
   replay: "text-grime",
 };

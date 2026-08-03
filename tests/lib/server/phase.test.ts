@@ -130,14 +130,18 @@ describe('EARLY_EXIT — 조기 종료 조건 (I5, SPEC §5.3)', () => {
     expect(Object.keys(EARLY_EXIT).sort()).toEqual([...ALL_PHASES].sort());
   });
 
-  it('조기 종료가 있는 페이즈는 question·vote 둘뿐이다', () => {
+  it('조기 종료가 있는 페이즈는 question·vote·revote 셋뿐이다', () => {
     // 새 페이즈에 조기 종료를 붙일 때는 "봇만 만족시킬 수 있는 조건인가"를 먼저 묻는다.
     // 봇은 진입 즉시 답변·투표가 생기므로, 그런 조건은 전부 봇을 드러낸다 (I1, I5).
+    //
+    // ★ revote 가 여기 있는 건 "사람 전원이 **다시** 내면 넘어간다"는 뜻이다 (SPEC §18.3).
+    //   진입 훅이 vote 표를 지우므로 이번 표만 세고, 봇 표는 애초에 안 센다 —
+    //   그래서 "봇만으로 만족되는 조건"이 되지 않는다.
     const withExit = Object.entries(EARLY_EXIT)
       .filter(([, v]) => v !== 'none')
       .map(([p]) => p)
       .sort();
-    expect(withExit).toEqual(['question', 'vote']);
+    expect(withExit).toEqual(['question', 'revote', 'vote']);
   });
 
   it('시간이 없는 페이즈는 조기 종료도 없다', () => {

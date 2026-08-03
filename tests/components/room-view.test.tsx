@@ -79,6 +79,11 @@ function room(patch: Partial<Room> = {}): Room {
     phase_ends_at: null,
     round: 0,
     host_id: 'p1',
+    // 지목·재투표 후보는 **아직 없다**가 기본이다 (SPEC §18.3).
+    // vote/revote 를 벗어날 때 서버가 채우므로, lobby 로 시작하는 이 기본값은 null 이다.
+    // 빼 두면 Partial<Room> 스프레드가 undefined 를 허용해 타입이 어긋난다.
+    nominated_player_id: null,
+    revote_candidates: null,
     roster_seq: 1,
     ...patch,
   };
