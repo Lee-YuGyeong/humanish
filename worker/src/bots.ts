@@ -30,6 +30,9 @@
 import {
   BOT_CHAT_MAX_MS,
   BOT_CHAT_MIN_MS,
+  BOT_DISTRACTED_CHANCE,
+  BOT_DISTRACTED_MAX_MS,
+  BOT_DISTRACTED_MIN_MS,
   BOT_IDLE_MAX_MS,
   BOT_IDLE_MIN_MS,
   BOT_JUMP_MAX_MS,
@@ -157,6 +160,16 @@ export interface BotState {
    */
   pendingText: string | null;
   /**
+   * 앞 발화를 내보낸 **직후에 이어 칠 한 줄**. 보통 null이다.
+   *
+   * LLM이 두 줄을 냈을 때 뒷줄이 여기 온다 (app/api/internal/world-agent).
+   * 사람은 한 생각을 두 번에 나눠 친다 — 늘 한 줄로 딱 끝나는 자리가 봇이다 (I1).
+   *
+   * ★ 자리를 따로 잡지 않는다 — takeSpeech가 앞 줄을 내보내면서 그 자리에서
+   *   바로 이어 예약한다. 사람도 두 번째 줄은 곧바로 치지, 몇십 초 뒤에 치지 않는다.
+   */
+  pendingTail: string | null;
+  /**
    * 이 시각부터 "친다" — 발이 묶인다.
    * 사람 말에 대한 반응이면 읽는 시간만큼 뒤고, 스스로 말을 꺼내는 거면 예약 즉시다.
    */
@@ -253,6 +266,7 @@ export function createBot(
     nextJumpAt: now + rand(BOT_JUMP_MIN_MS, BOT_JUMP_MAX_MS),
     speechHeld: false,
     pendingText: null,
+    pendingTail: null,
     typeAt: 0,
     speakAt: 0,
     speechSeq: 0,
@@ -418,16 +432,30 @@ function stepJump(bot: BotState, now: number, dt: number, allowNew: boolean): vo
 }
 
 /**
- * 지금 한마디 할 때인가. true면 다음 시각을 다시 잡아 준다.
+ * 지금 한마디 할 때인가. 시각이 됐으면 **막히든 말든** 다음 시각을 다시 잡아 준다.
  * **사람이 아무도 없으면 부르지 않는다** — 빈 방에서 봇끼리 떠들 이유가 없다.
  *
  * 이미 예약이 걸려 있으면(= 타이핑 중) false다. 사람도 한 번에 한 줄만 친다.
+ *
+ * ┌─ mayInitiate — 왜 "마지막 발화가 내 것이면" 막는가 ────────────────────────┐
+ * │ 이 자리는 25~75초마다 한 번씩 무조건 말을 꺼냈다. 사람이 조용하면 그 사이       │
+ * │ 대화 기록은 **제 발화로만 채워지고**, 그러면 LLM 은 trigger 없는 chat 분기      │
+ * │ ("대화 흐름에 자연스럽게 끼어들어라")를 타면서 **자기가 방금 한 말에 대꾸한다.**  │
+ * │ 사용자가 본 게 정확히 그거다 — 혼자 떠들고 혼자 대답하는 아바타.               │
+ * │                                                                            │
+ * │ 그래서 규칙을 하나 건다: **누가 말을 받아 주기 전에는 두 번 연달아 말하지 않는다.** │
+ * │ 사람도 그렇게 한다. 첫 한마디(기록이 빈 방)는 허용한다 — 말을 걸어 보는 건       │
+ * │ 자연스럽고, 그 뒤로는 상대가 답해야 이어진다.                                 │
+ * │                                                                            │
+ * │ 막힐 때도 nextChatAt 은 앞으로 민다. 안 그러면 몇 분 밀린 타이머가 사람이 입을   │
+ * │ 여는 순간 터져서, 대꾸(reactToHuman)와 혼잣말이 겹쳐 두 줄이 한꺼번에 나간다.   │
+ * └──────────────────────────────────────────────────────────────────────────┘
  */
-export function shouldChat(bot: BotState, now: number): boolean {
+export function shouldChat(bot: BotState, now: number, mayInitiate: boolean): boolean {
   if (bot.speechHeld) return false;
   if (now < bot.nextChatAt) return false;
   bot.nextChatAt = now + rand(BOT_CHAT_MIN_MS, BOT_CHAT_MAX_MS);
-  return true;
+  return mayInitiate;
 }
 
 /**
@@ -458,6 +486,7 @@ export function scheduleSpeech(
 ): void {
   bot.speechHeld = true;
   bot.pendingText = text;
+  bot.pendingTail = null;
   bot.typeAt = now + readDelayMs;
   // ★ 지연은 **text 길이와 무관하다** (BOT_TYPE_CHARS_* 주석 참고). 그 문구는 LLM 이
   //   제때 오면 통째로 갈아치워지므로, 그 길이로 타이밍을 정하면 아무도 못 볼 문장이
@@ -466,6 +495,24 @@ export function scheduleSpeech(
   const chars = Math.round(rand(BOT_TYPE_CHARS_MIN, BOT_TYPE_CHARS_MAX));
   bot.speakAt =
     bot.typeAt + typingDelayMs('x'.repeat(chars)) + Math.floor(Math.random() * SPEAK_JITTER_MS);
+  bot.speechSeq += 1;
+}
+
+/**
+ * 뒷줄을 **앞 줄 바로 뒤에** 잇는다. takeSpeech가 내부에서만 부른다.
+ *
+ * ★ 여기서는 typingDelayMs에 **진짜 문구**를 넘긴다. 위(scheduleSpeech)가 더미를
+ *   넘기는 건 그 문구가 나중에 LLM으로 갈아치워지기 때문인데, 뒷줄은 이미 정해졌고
+ *   바뀌지 않는다 — 길이가 새어 나갈 데가 없다. 짧으면 1초 남짓이라 앞 줄을 치고
+ *   곧바로 한 줄 더 치는 모양이 된다.
+ */
+function scheduleTail(bot: BotState, text: string, now: number): void {
+  bot.speechHeld = true;
+  bot.pendingText = text;
+  bot.pendingTail = null;
+  bot.typeAt = now;
+  bot.speakAt = now + typingDelayMs(text) + Math.floor(Math.random() * SPEAK_JITTER_MS);
+  // ★ seq를 올린다 — 이 자리를 노리던 LLM 응답이 정정 줄을 덮어쓰면 안 된다.
   bot.speechSeq += 1;
 }
 
@@ -484,11 +531,14 @@ export function replaceSpeech(
   seq: number,
   text: string,
   now: number,
+  /** 이 발화 뒤에 이어 칠 한 줄. 없으면 null (보통 null이다). */
+  tail: string | null = null,
 ): boolean {
   if (bot.speechSeq !== seq) return false;
   if (!bot.speechHeld) return false;
   if (now >= bot.speakAt) return false;
   bot.pendingText = text;
+  bot.pendingTail = tail;
   return true;
 }
 
@@ -501,14 +551,38 @@ export function replaceSpeech(
 export function takeSpeech(bot: BotState, now: number): string | null {
   if (!bot.speechHeld || now < bot.speakAt) return null;
   const text = bot.pendingText;
+  const tail = bot.pendingTail;
   bot.speechHeld = false;
   bot.pendingText = null;
+  bot.pendingTail = null;
+
+  // 뒷줄이 걸려 있으면 그 자리에서 바로 이어 예약한다.
+  // ★ 앞 줄이 실제로 나갔을 때만이다 — 자리가 빈 채 지나갔는데(text가 null) 뒷줄만
+  //   나가면 앞뒤 없는 한마디가 뜬금없이 떠 있게 된다.
+  if (text !== null && tail !== null) scheduleTail(bot, tail, now);
+
   return text;
 }
 
-/** 사람 말을 읽는 데 걸리는 시간. scheduleSpeech의 readDelay로 넘긴다. */
+/**
+ * 사람 말을 읽고 답을 치기 시작할 때까지. scheduleSpeech의 readDelay로 넘긴다.
+ *
+ * ┌─ 가끔은 한참 뒤에 답한다 (I1 — BOT_DISTRACTED_* 주석) ────────────────────┐
+ * │ 읽는 시간이 늘 1.2~4초면 **분포가 너무 좁다.** 사람은 폰을 보다 말고, 딴 데   │
+ * │ 보다가, 한참 뒤에 "ㅇㅇ" 한 줄을 던진다. 늦는 판이 아예 없는 자리는 세어 보면 │
+ * │ 드러난다.                                                                  │
+ * │                                                                            │
+ * │ ★ 왜 여기지 scheduleSpeech가 아닌가: 이 값은 **치기 시작하기 전** 시간이라   │
+ * │   그동안 봇이 평소처럼 걷는다. 치는 시간(typeAt→speakAt) 쪽에 더하면 그만큼   │
+ * │   얼어붙은 채 서 있게 되고, 그건 정반대로 눈에 띈다.                         │
+ * │   스스로 꺼내는 말(readDelay=0)에는 안 붙는다 — 말하기로 정하고 딴짓하다      │
+ * │   치는 건 "늦게 답하는" 것과 다르고, 그쪽은 애초에 25~75초 간격이 넓다.       │
+ * └──────────────────────────────────────────────────────────────────────────┘
+ */
 export function readDelayMs(): number {
-  return rand(BOT_READ_MIN_MS, BOT_READ_MAX_MS);
+  const base = rand(BOT_READ_MIN_MS, BOT_READ_MAX_MS);
+  if (Math.random() >= BOT_DISTRACTED_CHANCE) return base;
+  return base + rand(BOT_DISTRACTED_MIN_MS, BOT_DISTRACTED_MAX_MS);
 }
 
 /**

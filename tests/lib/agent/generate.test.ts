@@ -43,6 +43,25 @@ describe('PERSONAS — 봇 4명이 서로 구분돼야 한다 (§9)', () => {
   });
 });
 
+describe('buildMessages — 이름은 물어봐야 말한다', () => {
+  /*
+   * 이 방은 사람도 봇도 전부 '익명N'이다 (supabase/functions/room.sql).
+   * 인물에게 이름은 주되 **먼저 꺼내지는 않게** 한다 — 인사하면서 이름부터 대는
+   * 자리는 그것만으로 눈에 띈다. 실측: 물으면 12번 중 10번 답했고, 안 물었을 때는
+   * 20번 중 0번이었다. 규칙이 없으면 8b는 언제든 뒤집는다.
+   */
+  it('무대와 상관없이 시스템 프롬프트에 실린다 — 게임·라운지 공통 수칙이다', () => {
+    for (const setting of ['game', 'world'] as const) {
+      const system = buildMessages(ctx({ setting }))[0].content;
+      expect(system, setting).toContain('네 이름을 먼저 꺼내지 않는다');
+      expect(system, setting).toContain('누가 이름을 물으면');
+      // ★ 뒷문장이 빠지면 앞 줄(정체 심문 방어)이 이름 질문까지 삼켜서 "나 사람인데"로
+      //   막아버린다 — 실측으로 8번 중 4번이 그랬다. 규칙 하나로 묶여 있어야 한다.
+      expect(system, setting).toContain('정체를 캐묻는 게 아니');
+    }
+  });
+});
+
 describe('buildMessages — 인젝션 방어 구조 (§9.1)', () => {
   it('항상 [system, user] 두 개다 — 참가자 발화를 별도 role로 잇지 않는다', () => {
     const msgs = buildMessages(

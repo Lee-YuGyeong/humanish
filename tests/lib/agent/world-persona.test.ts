@@ -29,6 +29,22 @@ describe('WORLD_PERSONAS — 라운지 인물 4명', () => {
     expect(warm?.system).toContain('절대 안 쓰는 것: ㅋㅋ');
   });
 
+  it('인물마다 이름이 있다 — 물어보면 댈 이름이 있어야 한다', () => {
+    // 이름을 **먼저** 말하지 않는 규칙은 generate.ts의 CONDUCT_RULES가 얹는다.
+    // 여기서 재는 건 "댈 이름이 있는가"뿐이다.
+    for (const p of WORLD_PERSONAS) {
+      expect(p.system, `${p.id}에 이름이 없다`).toMatch(/너는 \d+살 "[^"]+"(다|이다)\./);
+    }
+  });
+
+  it('지문이 겹치지 않는다 — 초성체·마침표·존댓말은 각각 한 명뿐이다', () => {
+    // 같은 지문을 둘이 나눠 가지면 화면에서 그 둘이 안 갈린다. 8b에서 실제로 겹친다.
+    const owns = (re: RegExp) => WORLD_PERSONAS.filter((p) => re.test(p.system)).length;
+    expect(owns(/초성체를 주로 쓴다/), '초성체를 주력으로 쓰는 인물').toBe(1);
+    expect(owns(/마침표를 찍는다/), '마침표를 찍는 인물').toBe(1);
+    expect(owns(/처음부터 끝까지 존댓말이다/), '끝까지 존댓말인 인물').toBe(1);
+  });
+
   it('worldPersonaForSeat — 연속한 자리 4개가 전부 다른 인물이다', () => {
     const ids = [1, 2, 3, 4].map((s) => worldPersonaForSeat(s).id);
     expect(new Set(ids).size).toBe(4);

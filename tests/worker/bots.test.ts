@@ -24,6 +24,7 @@ import {
   type BotState,
 } from '../../worker/src/bots';
 import {
+  BOT_DISTRACTED_MAX_MS,
   BOT_READ_MAX_MS,
   BOT_READ_MIN_MS,
   BOT_REACT_COOLDOWN_MS,
@@ -310,12 +311,21 @@ describe('읽는 시간', () => {
     expect(later.speakAt).toBeGreaterThan(later.typeAt);
   });
 
-  it('읽는 시간은 상수 범위 안이다', () => {
-    for (let i = 0; i < 50; i += 1) {
+  it('읽는 시간은 상수 범위 안이다 — 가끔 딴짓한 판만 뒤로 늘어난다', () => {
+    let distracted = 0;
+    for (let i = 0; i < 600; i += 1) {
       const d = readDelayMs();
       expect(d).toBeGreaterThanOrEqual(BOT_READ_MIN_MS);
-      expect(d).toBeLessThanOrEqual(BOT_READ_MAX_MS);
+      expect(d).toBeLessThanOrEqual(BOT_READ_MAX_MS + BOT_DISTRACTED_MAX_MS);
+      if (d > BOT_READ_MAX_MS) distracted += 1;
     }
+    /*
+     * ★ 늦는 판이 **아예 없으면** 그게 문제다 (I1). 읽는 시간이 늘 1.2~4초면 분포가
+     *   너무 좁아서, 사람과 견주면 "항상 몇 초 안에 답하는 자리"로 드러난다.
+     *   반대로 매번 늦어도 안 된다 — 그것도 그 자리만의 규칙이 된다.
+     */
+    expect(distracted, '늦게 답하는 판이 하나도 없다').toBeGreaterThan(0);
+    expect(distracted, '늘 늦게 답한다').toBeLessThan(600 / 2);
   });
 });
 
@@ -349,8 +359,9 @@ describe('문구 없는 예약 — 월드의 기본 경로', () => {
     expect(takeSpeech(bot, bot.speakAt)).toBeNull(); // 시각이 됐지만 할 말이 없다
 
     // 자리는 놓였다 — 다시 걷고 다음 발화도 예약할 수 있어야 한다.
+    // mayInitiate=true = "마지막 발화가 사람 것" — 여기서 보려는 건 자리 해제뿐이다.
     bot.nextChatAt = 0;
-    expect(shouldChat(bot, bot.speakAt)).toBe(true);
+    expect(shouldChat(bot, bot.speakAt, true)).toBe(true);
   });
 
   it('LLM 이 제때 오면 그 자리가 채워진다', () => {
@@ -368,7 +379,8 @@ describe('문구 없는 예약 — 월드의 기본 경로', () => {
     bot.nextChatAt = 0;
 
     scheduleSpeech(bot, null, t0);
-    expect(shouldChat(bot, t0 + 60_000)).toBe(false);
+    // 사람이 마지막으로 말했더라도(mayInitiate=true) 자리가 잡혀 있으면 막힌다.
+    expect(shouldChat(bot, t0 + 60_000, true)).toBe(false);
   });
 });
 
@@ -554,8 +566,8 @@ describe('shouldChat', () => {
     const bot = walkingBot(t0);
     bot.nextChatAt = t0;
 
-    expect(shouldChat(bot, t0)).toBe(true);
-    expect(shouldChat(bot, t0)).toBe(false);
+    expect(shouldChat(bot, t0, true)).toBe(true);
+    expect(shouldChat(bot, t0, true)).toBe(false);
     expect(bot.nextChatAt).toBeGreaterThan(t0);
   });
 
@@ -565,9 +577,120 @@ describe('shouldChat', () => {
     bot.nextChatAt = 0;
 
     scheduleSpeech(bot, '방금 뭐라고 했어?', t0);
-    expect(shouldChat(bot, t0 + 60_000)).toBe(false);
+    expect(shouldChat(bot, t0 + 60_000, true)).toBe(false);
 
     takeSpeech(bot, bot.speakAt);
-    expect(shouldChat(bot, t0 + 60_000)).toBe(true);
+    expect(shouldChat(bot, t0 + 60_000, true)).toBe(true);
+  });
+
+  it('마지막 발화가 봇 것이면 또 꺼내지 않는다 — 혼자 떠들고 혼자 대답하는 걸 막는다', () => {
+    const t0 = 1_000_000;
+    const bot = walkingBot(t0);
+    bot.nextChatAt = t0;
+
+    expect(shouldChat(bot, t0, false)).toBe(false);
+  });
+
+  it('막혀도 다음 시각은 앞으로 민다 — 밀린 타이머가 사람 말에 겹쳐 터지지 않게', () => {
+    const t0 = 1_000_000;
+    const bot = walkingBot(t0);
+    bot.nextChatAt = t0;
+
+    // 사람이 조용한 동안 몇 번을 지나가도, 그때마다 다음 시각이 새로 잡힌다.
+    expect(shouldChat(bot, t0, false)).toBe(false);
+    const pushed = bot.nextChatAt;
+    expect(pushed).toBeGreaterThan(t0);
+
+    // 사람이 입을 연 그 순간(= 아직 다음 시각 전)에 혼잣말이 터지지 않는다.
+    expect(shouldChat(bot, t0 + 1_000, true)).toBe(false);
+    expect(bot.nextChatAt).toBe(pushed);
+  });
+});
+
+describe('뒷줄 — 두 줄로 나눠 친다', () => {
+  it('앞 줄이 나간 **직후** 뒷줄이 이어 예약된다', () => {
+    const t0 = 1_000_000;
+    const bot = walkingBot(t0);
+    scheduleSpeech(bot, null, t0);
+    replaceSpeech(bot, bot.speechSeq, '안녕 반가워', t0 + 100, '아 그리고 스크린도 꺼져 있더라');
+
+    const first = takeSpeech(bot, bot.speakAt);
+    expect(first).toBe('안녕 반가워');
+
+    // 자리가 곧바로 다시 잡혔다 — 사람은 한 생각을 두 번에 나눠 치지,
+    // 두 번째 줄을 몇십 초 뒤에 치지 않는다
+    expect(bot.speechHeld).toBe(true);
+    expect(bot.pendingText).toBe('아 그리고 스크린도 꺼져 있더라');
+    expect(bot.speakAt).toBeGreaterThan(t0);
+
+    expect(takeSpeech(bot, bot.speakAt)).toBe('아 그리고 스크린도 꺼져 있더라');
+    expect(bot.speechHeld).toBe(false);
+  });
+
+  it('뒷줄은 오래 안 끈다 — 앞 줄 나가고 몇 초 안이다', () => {
+    const t0 = 1_000_000;
+    const bot = walkingBot(t0);
+    scheduleSpeech(bot, null, t0);
+    replaceSpeech(bot, bot.speechSeq, '안녕 반가워', t0 + 100, '아 그리고 스크린도 꺼져 있더라');
+
+    const saidAt = bot.speakAt;
+    takeSpeech(bot, saidAt);
+    // 진짜 문구 길이로 잰다 — 이 줄은 LLM이 갈아치우지 않으므로 길이가 샐 데가 없다
+    expect(bot.speakAt - saidAt).toBeGreaterThanOrEqual(typingDelayMs('아 그리고 스크린도 꺼져 있더라'));
+    expect(bot.speakAt - saidAt).toBeLessThan(typingDelayMs('아 그리고 스크린도 꺼져 있더라') + SPEAK_JITTER_MS);
+  });
+
+  it('앞 줄이 빈 채 지나갔으면 뒷줄도 안 나간다 — 앞뒤 없는 한마디가 뜨면 안 된다', () => {
+    const t0 = 1_000_000;
+    const bot = walkingBot(t0);
+    scheduleSpeech(bot, null, t0); // LLM이 끝내 안 왔다 → pendingText는 null
+
+    expect(takeSpeech(bot, bot.speakAt)).toBeNull();
+    expect(bot.speechHeld).toBe(false);
+    expect(bot.pendingText).toBeNull();
+  });
+
+  it('뒷줄이 걸리면 seq가 올라간다 — 늦게 온 LLM 답이 뒷줄을 덮으면 안 된다', () => {
+    const t0 = 1_000_000;
+    const bot = walkingBot(t0);
+    scheduleSpeech(bot, null, t0);
+    const seq = bot.speechSeq;
+    replaceSpeech(bot, seq, '안녕 반가워', t0 + 100, '아 그리고 스크린도 꺼져 있더라');
+    takeSpeech(bot, bot.speakAt);
+
+    expect(bot.speechSeq).not.toBe(seq);
+    expect(replaceSpeech(bot, seq, '늦게 온 답', bot.speakAt - 1)).toBe(false);
+    expect(bot.pendingText).toBe('아 그리고 스크린도 꺼져 있더라');
+  });
+});
+
+describe('딴짓 지연 — 가끔 늦게 답한다 (I1)', () => {
+  it('치는 시간에는 안 섞인다 — 딴짓은 읽는 시간 쪽이라 그동안 계속 걷는다', () => {
+    /*
+     * 딴짓이 typeAt→speakAt(서서 치는 구간)에 섞이면 그만큼 **얼어붙은 채** 서 있게
+     * 되고, 그건 늦게 답하는 것보다 훨씬 눈에 띈다. readDelayMs 쪽에 둔 이유다.
+     */
+    const t0 = 1_000_000;
+    const lo = typingDelayMs('x'.repeat(BOT_TYPE_CHARS_MIN));
+    const hi = typingDelayMs('x'.repeat(BOT_TYPE_CHARS_MAX)) + SPEAK_JITTER_MS;
+
+    for (let i = 0; i < 200; i += 1) {
+      const bot = walkingBot(t0);
+      scheduleSpeech(bot, null, t0, readDelayMs());
+      expect(bot.speakAt - bot.typeAt).toBeGreaterThanOrEqual(lo);
+      expect(bot.speakAt - bot.typeAt).toBeLessThan(hi);
+    }
+  });
+
+  it('읽는 동안에는 걷는다 — 딴짓 12초를 서서 보내면 정반대다', () => {
+    const t0 = 1_000_000;
+    const bot = walkingBot(t0);
+    const x0 = bot.x;
+
+    scheduleSpeech(bot, '아 미안 딴거 보고 있었어', t0, 10_000); // 딴짓한 판
+    run(bot, t0, 50); // 5초 — 아직 읽는(딴짓하는) 중이다
+
+    expect(bot.anim).toBe('walk');
+    expect(bot.x).toBeGreaterThan(x0);
   });
 });

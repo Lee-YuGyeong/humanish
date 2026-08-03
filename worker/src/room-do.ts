@@ -419,7 +419,9 @@ export class RoomDO {
       //    말풍선이 뜬다 — 사람은 타이핑 중 발이 묶이므로 그게 곧 봇 표식이다 (I1).
       //    stepBot보다 먼저 걸어야 같은 틱에 발이 묶인다.
       //    스스로 꺼내는 말이라 읽는 시간은 없다 — 읽을 게 없으니 바로 친다.
-      if (shouldChat(bot, now)) {
+      //    ★ 마지막 발화가 봇 것이면 꺼내지 않는다 (shouldChat 의 mayInitiate 상자).
+      //      루프 안에서 매번 다시 본다 — 앞 봇이 이 틱에 말했으면(③) 뒤 봇은 막힌다.
+      if (shouldChat(bot, now, this.humanSpokeLast())) {
         // 로비 방은 풀이 비어 있어 null이 온다 — 자리만 잡히고 문구는 LLM이 채운다.
         scheduleSpeech(bot, pickLine(this.botLines(), this.recentTexts()), now);
         // ★ 스스로 꺼내는 말도 LLM 을 태운다. 안 태우면 이 자리는 아무 말도 못 한다
@@ -509,10 +511,12 @@ export class RoomDO {
       trigger,
       budget,
     );
-    const text = lines.find((l) => l.player_id === bot.id)?.text;
-    if (!text) return;
+    const line = lines.find((l) => l.player_id === bot.id);
+    if (!line?.text) return;
 
-    replaceSpeech(bot, seq, text, Date.now());
+    // tail 은 LLM 이 두 줄을 냈을 때의 뒷줄이다 — 앞 줄이 실제로 나간 뒤에
+    // takeSpeech 가 이어 예약한다.
+    replaceSpeech(bot, seq, line.text, Date.now(), line.tail ?? null);
   }
 
   /**
@@ -550,6 +554,21 @@ export class RoomDO {
 
   private recentTexts(): string[] {
     return this.chatLog.map((c) => c.text);
+  }
+
+  /**
+   * 마지막으로 말한 게 사람인가. 봇이 스스로 말을 꺼내도 되는지의 판정이다
+   * (shouldChat 의 mayInitiate — 혼자 떠들고 혼자 대답하는 걸 막는다).
+   *
+   * 기록이 비었으면 true — 아무도 말한 적 없는 방에서 첫 한마디는 걸어도 된다.
+   * **어느 봇이든** 봇이 마지막이면 false다. 자기 자신만 보면 봇 둘이 서로의
+   * 발화를 핑퐁으로 받아 영원히 주고받는다 (bot_reply 가 봇 발화에서 안 불리는
+   * 것과 같은 이유 — webSocketMessage 의 'chat' 주석).
+   */
+  private humanSpokeLast(): boolean {
+    const last = this.chatLog[this.chatLog.length - 1];
+    if (!last) return true;
+    return !(this.meta?.seats ?? []).some((s) => s.is_bot && s.id === last.id);
   }
 
   private async ensureBots(meta: CachedMeta): Promise<BotState[]> {

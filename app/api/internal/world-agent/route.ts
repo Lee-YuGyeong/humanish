@@ -28,11 +28,11 @@
 
 import { timingSafeEqual } from '@/lib/mp/ticket';
 import { fitChatReply } from '@/lib/agent/chat-reply';
-import { observeStyle } from '@/lib/agent/disguise';
+import { applyTypo, observeStyle } from '@/lib/agent/disguise';
 import { FALLBACK_POOL, type AgentContext, type AgentOutput } from '@/lib/agent/generate';
 import { personaForSeat } from '@/lib/agent/persona';
 import { AGENT_SELF_URL, agentHeaders } from '@/lib/agent/prefill';
-import { worldPersonaForSeat } from '@/lib/agent/world-persona';
+import { WORLD_PERSONAS } from '@/lib/agent/world-persona';
 import { apiError, readJson } from '@/lib/server/auth';
 import { buildWorldRoster } from '@/lib/server/world-ai';
 
@@ -68,6 +68,33 @@ interface ChatLine {
   nickname: string;
   text: string;
   human: boolean;
+}
+
+/**
+ * 이 방의 이 자리가 연기할 월드 인물 — **방마다 다르고, 한 방 안에서는 늘 같다.**
+ *
+ * ┌─ 왜 seat 만으로 고르면 안 되는가 ─────────────────────────────────────────┐
+ * │ 월드 AI 는 늘 **비어 있는 첫 자리**에 들어간다 (lib/server/world-ai.ts).     │
+ * │ 혼자 들어온 방이면 사람이 1번, AI 가 2번 — 그래서 어느 방에 몇 번을 들어가도  │
+ * │ 늘 같은 번호가 나오고, 늘 같은 인물이 나온다. 인물을 넷 만들어 둔 의미가 없다. │
+ * │ roomId 를 섞으면 방마다 갈린다.                                            │
+ * │                                                                          │
+ * │ 그렇다고 매번 새로 뽑으면 안 된다 — 이 함수는 봇이 한마디 할 때마다 불린다.   │
+ * │ 말할 때마다 인물이 바뀌면 말투가 문장마다 갈리고, 그건 사람이 절대 안 하는     │
+ * │ 짓이라 그 자체로 봇 표식이다 (I1). 그래서 **랜덤이 아니라 해시**다 —          │
+ * │ 방·자리가 같으면 언제 불려도 같은 인물이고, DO 가 재시작해도 이어진다.        │
+ * └──────────────────────────────────────────────────────────────────────────┘
+ */
+function worldPersonaFor(roomId: string, seat: number): (typeof WORLD_PERSONAS)[number] {
+  // FNV-1a. 암호용이 아니라 고르게 흩뿌리기만 하면 된다 — roomId 앞자리만 봐서는
+  // uuid 가 서로 비슷해 같은 인물로 몰린다.
+  let h = 2166136261;
+  const key = `${roomId}:${seat}`;
+  for (let i = 0; i < key.length; i += 1) {
+    h ^= key.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return WORLD_PERSONAS[Math.abs(h) % WORLD_PERSONAS.length];
 }
 
 /** 비밀이 틀리거나 방이 없거나 — 밖에서는 구분되지 않는다. */
@@ -148,7 +175,7 @@ export async function POST(req: Request): Promise<Response> {
     const jobs = bots.map((b) => ({
       player_id: b.id,
       context: {
-        persona: b.synthetic ? worldPersonaForSeat(b.seat) : personaForSeat(b.seat),
+        persona: b.synthetic ? worldPersonaFor(roomId, b.seat) : personaForSeat(b.seat),
         // 월드 AI는 무대도 라운지다 — 시스템 프롬프트에서 게임 문장이 전부 빠진다
         // (generate.ts WORLD_RULES). 페르소나가 "게임 중이 아니다"로 게임 프레임을
         // 되받아치던 구조를 대체한다. 게임이 시작된 방의 진짜 봇은 게임 무대 그대로.
@@ -180,20 +207,46 @@ export async function POST(req: Request): Promise<Response> {
       results?: { player_id: string; output: AgentOutput; fallback: boolean }[];
     };
 
-    const results: { player_id: string; text: string }[] = [];
+    const results: { player_id: string; text: string; tail: string | null }[] = [];
     for (const r of data.results ?? []) {
       // LLM 실패분·구제 문구("ㅇㅇ")는 버린다. 월드에는 대신 쓸 풀이 없으니 그 자리는
       // 그냥 조용히 지나간다 — 맥락 없는 한 글자보다 침묵이 사람에 가깝다.
       if (r.fallback) continue;
 
-      // **첫 발화만** 쓴다. 2D는 두 줄을 각자의 지연으로 따로 보내지만(§5.4) 월드의
-      // 말풍선은 하나다. 이어붙이면 길이만 두 배가 되고 그만큼 잘려 나간다.
-      // 상한을 넘으면 자르지 않고 버린다(fitChatReply → null) — 잘린 말끝은 폴백
-      // 문구보다 봇 티가 난다 (실측).
+      // 상한을 넘으면 자르지 않고 버린다(fitChatReply → null) — 잘린 말끝은
+      // 폴백 문구보다 봇 티가 난다 (실측).
       const text = fitChatReply(r.output.messages[0] ?? '', MAX_REPLY_LEN);
       if (!text || FALLBACK_POOL.includes(text)) continue;
 
-      results.push({ player_id: r.player_id, text });
+      /*
+       * ★ 두 번째 발화는 **이어서 한 줄 더** 친다 (tail).
+       *
+       *   예전에는 첫 줄만 쓰고 버렸다. 월드 말풍선이 하나라 두 줄을 동시에 못 띄웠기
+       *   때문인데, 지금은 워커가 앞 줄을 내보낸 **뒤에** 뒷줄을 이어 예약할 수 있다
+       *   (worker/src/bots.ts의 pendingTail). 사람은 한 생각을 두 번에 나눠 친다 —
+       *   그게 한 줄로 딱 끝나는 자리보다 사람 같다.
+       *
+       *   이어붙이지 않는 이유는 그대로다. 한 줄로 합치면 길이가 두 배가 되고
+       *   그만큼 상한에 걸려 통째로 버려진다. 각자 따로 상한을 본다.
+       */
+      const second = r.output.messages[1] ?? '';
+      const tail = second ? fitChatReply(second, MAX_REPLY_LEN) : null;
+
+      /*
+       * ★ 오타는 **여기서** 얹는다 — 상한 검사(fitChatReply)를 통과한 뒤다.
+       *   순서를 뒤집어 오타를 먼저 얹으면, 띄어쓰기를 붙인 만큼 짧아진 글이
+       *   상한에 걸릴지 말지가 오타 유무로 갈린다. 상한 판정은 LLM 이 낸 원문으로만
+       *   해야 한다.
+       *
+       *   비율은 방 사람들의 오타 빈도(styleProfile.typoRate)를 따른다 — 봇만 유난히
+       *   많이/적게 틀리면 그게 거꾸로 봇 지문이다 (I1, disguise.ts의 상자).
+       */
+      const typo = (s: string) => applyTypo(s, styleProfile, Math.random);
+      results.push({
+        player_id: r.player_id,
+        text: typo(text),
+        tail: tail && !FALLBACK_POOL.includes(tail) ? typo(tail) : null,
+      });
     }
 
     return Response.json({ ok: true, results }, { headers: { 'cache-control': 'no-store' } });

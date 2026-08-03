@@ -31,6 +31,11 @@ export interface ChatLine {
 export interface AgentLine {
   player_id: string;
   text: string;
+  /**
+   * 이 발화 **직후에 이어 칠 한 줄**. LLM이 두 줄을 냈을 때의 뒷줄이다.
+   * 오리진이 상한 검사까지 마쳐서 넘겨 준다. 보통 null이다.
+   */
+  tail?: string | null;
 }
 
 export async function fetchAgentLines(
@@ -62,9 +67,11 @@ export async function fetchAgentLines(
 
     const body = (await res.json()) as { results?: AgentLine[] };
     if (!Array.isArray(body.results)) return [];
-    return body.results.filter(
-      (r): r is AgentLine => typeof r?.player_id === 'string' && typeof r?.text === 'string',
-    );
+    return body.results
+      .filter((r): r is AgentLine => typeof r?.player_id === 'string' && typeof r?.text === 'string')
+      // tail 은 나중에 붙은 필드다. 문자열이 아니면 없는 것으로 본다 — 구 오리진과
+      // 새 워커가 섞여 돌아도 발화 자체는 그대로 나간다.
+      .map((r) => ({ ...r, tail: typeof r.tail === 'string' ? r.tail : null }));
   } catch (e) {
     // 시간 초과가 대부분이다. 정상 경로이므로 조용히 물러난다.
     console.warn(`[world-agent] 실패 ${roomId}: ${e instanceof Error ? e.message : String(e)}`);
