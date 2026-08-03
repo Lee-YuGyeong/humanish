@@ -35,6 +35,24 @@ export async function POST(req: Request): Promise<Response> {
     if (!wsUrl) {
       throw new ApiError(503, 'NEXT_PUBLIC_WORLD_WS_URL이 없다. .env.local.example 참고');
     }
+    // 주소 모양부터 본다. 여기서 안 걸러내면 티켓은 정상 발급되고 소켓만 조용히
+    // 실패해서, 화면에는 원인을 못 담은 connection_failed 만 남는다.
+    // 실제로 `wss://http://127.0.0.1:3000` 처럼 워커 주소 자리에 Next 오리진이
+    // 붙어 있던 적이 있다 — 그때 증상이 정확히 "티켓은 오는데 못 붙는다" 였다.
+    let wsHost: URL;
+    try {
+      wsHost = new URL(wsUrl);
+    } catch {
+      throw new ApiError(503, `NEXT_PUBLIC_WORLD_WS_URL을 주소로 읽을 수 없다 (${wsUrl})`);
+    }
+    if (wsHost.protocol !== 'ws:' && wsHost.protocol !== 'wss:') {
+      throw new ApiError(
+        503,
+        `NEXT_PUBLIC_WORLD_WS_URL이 ws:// 나 wss:// 로 시작하지 않는다 (${wsUrl}). ` +
+          '로컬은 ws://127.0.0.1:8787, 배포는 wss://<워커>.workers.dev',
+      );
+    }
+
     // https로 열린 화면에서 ws://는 브라우저가 mixed content로 막는다. 그대로 내려보내면
     // 소켓이 조용히 죽고 화면엔 "월드 서버에 붙지 못했다"만 남아 원인이 안 보인다.
     // 터널·프록시 뒤에서는 req.url이 http로 재구성되므로 x-forwarded-proto를 먼저 본다.

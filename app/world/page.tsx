@@ -19,15 +19,18 @@ import dynamic from 'next/dynamic';
 import Link from 'next/link';
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 
+import { isMovementLocked, mayChat } from '@/lib/mp/constants';
 import { spawnFor } from '@/lib/mp/spawn';
 import type { Role } from '@/lib/game/types';
 import { WorldConnection, type WorldEvents } from './net/connection';
+import GameHud from './game-hud';
 import {
   getVolume as getMusicVolume,
   setVolume as setMusicVolume,
   subscribe as musicSubscribe,
 } from './music';
 import { useWorldStore } from './store';
+import { useRoundtableStore } from './roundtable-store';
 
 const WorldScene = dynamic(() => import('./world-scene'), {
   ssr: false,
@@ -165,6 +168,10 @@ export default function WorldPage() {
         useWorldStore.getState().applyMove(id, x, z, y, heading, anim, performance.now()),
       onChat: (id, nickname, text, ts) =>
         useWorldStore.getState().applyChat(id, nickname, text, ts, performance.now()),
+      onRound: (round) => useRoundtableStore.getState().applyRound(round),
+      onVoteProgress: (voted, total) => useRoundtableStore.getState().applyProgress(voted, total),
+      onEliminated: (id) => useRoundtableStore.getState().applyEliminated(id),
+      onReveal: (reveal) => useRoundtableStore.getState().applyReveal(reveal),
       onError: (codeText) =>
         useWorldStore.getState().setStatus('error', errorMessage(codeText)),
       onClose: () => useWorldStore.getState().setStatus('error', '연결이 끊겼다'),
@@ -181,6 +188,7 @@ export default function WorldPage() {
         setSceneReady(false);
         setComposing(false);
         useWorldStore.getState().reset();
+        useRoundtableStore.getState().reset();
         useWorldStore.getState().setStatus('connecting');
 
         const room = roomCode
@@ -209,6 +217,60 @@ export default function WorldPage() {
 
   /** 세계가 실제로 떠 있는가. 아래 효과들이 전부 이 값을 본다 (선언이 먼저여야 한다) */
   const live = status === 'live' && ticket !== null;
+
+  /*
+   * ┌─ 패널이 뜨면 커서를 돌려준다 ──────────────────────────────────────────┐
+   * │                                                                        │
+   * │ 위 「판은 없다」 상자가 적어 둔 성질을 **판이 도는 동안에만** 깬다:      │
+   * │ 만질 것이 화면에 있으면 잠금을 풀어야 하고, 잠금을 풀면 게임이 멈춘다.  │
+   * │                                                                        │
+   * │ ★ 잠금을 안 풀면 **게임이 통째로 안 돌아간다.** 잠긴 동안에는 커서가    │
+   * │   없어서 좌석 카드를 누를 수가 없다(채팅이 잠금을 유지한 채 되는 건     │
+   * │   포인터 잠금이 키보드를 잡지 않기 때문이고, 클릭에는 그 면제가 없다).  │
+   * │                                                                        │
+   * │ 그래서 아래 네 군데가 전부 이 값을 봐야 한다. 하나라도 빠지면 커서가    │
+   * │ 눌리자마자 다시 사라진다:                                              │
+   * │   ① 이 효과        — 열릴 때 exitPointerLock, 닫힐 때 되잡기            │
+   * │   ② 캔버스 클릭    — 세계를 한 번 누르면 다시 잠기던 경로               │
+   * │   ③ 자동 잠금      — live && sceneReady 로 한 번 거는 경로              │
+   * │   ④ 말하기 취소    — composing 이 풀릴 때 되잡던 두 경로                │
+   * └────────────────────────────────────────────────────────────────────────┘
+   *
+   * ┌─ ★★ 단계 목록을 여기 손으로 적지 않는다 (I1) ──────────────────────────┐
+   * │ 예전 이 줄은 `phase === 'vote' || phase === 'verdict' || reveal !== null`│
+   * │ 이었다. 그때 목록에서 빠진 단계 하나 때문에 워커는 봇을 세우는데 사람만  │
+   * │ 걸어다니는 구간이 생겼고, player_moved 가 한 번이라도 나온 자리는 사람   │
+   * │ 확정이었다 — 총 자리·AI 수가 공개라 소거법으로 전 좌석이 갈린다.        │
+   * │                                                                        │
+   * │ 그래서 목록은 lib/mp/constants.ts 의 MOVEMENT_LOCKED_PHASES 하나뿐이고   │
+   * │ 워커와 여기가 **같이 읽는다.** 이 파일에 단계 이름을 다시 적지 마라.     │
+   * │                                                                        │
+   * │ ★ **defense 는 이 목록에 없다** — 커서를 되잡아 카메라·이동을 연다.      │
+   * │   변론을 듣는 20초가 정지 화면이 되지 않게 한 것이고, 사람과 봇이 **같이**│
+   * │   걸으므로 비대칭도 안 생긴다. 다만 **지목된 본인은 못 걷는다** — 그건   │
+   * │   단계가 아니라 좌석 단위 판정이라 여기(화면 전체 잠금)가 아니라         │
+   * │   world-scene.tsx 의 mayMove 가 맡는다. 지목자도 커서는 잠긴 채라        │
+   * │   둘러보며 변론을 칠 수 있다.                                           │
+   * │                                                                        │
+   * │ ★ reveal 결과가 도착한 뒤(`revealResult`)에도 연다 — 오버레이가 화면을   │
+   * │   덮는 동안 커서가 없으면 아무것도 못 만진다. 그때는 이미 전 좌석의      │
+   * │   정체가 공개된 뒤라 사람만 멈춰 있어도 숨길 것이 남아 있지 않다.        │
+   * │   반대로 abortRound 로 끝난 판(reveal 이 안 온다)은 여기가 false 가 되고 │
+   * │   워커의 봇 루프도 'ended' 를 빼 두었으므로 양쪽 다 걷는다 — 대칭.       │
+   * └────────────────────────────────────────────────────────────────────────┘
+   */
+  const phase = useRoundtableStore((s) => s.phase);
+  const nomineeId = useRoundtableStore((s) => s.nomineeId);
+  const revealResult = useRoundtableStore((s) => s.reveal);
+  const uiOpen = live && (isMovementLocked(phase) || revealResult !== null);
+
+  /**
+   * 지금 내가 말할 수 있는가. 워커의 채팅 게이트와 **같은 함수**로 판정한다 (I1) —
+   * 여기서만 막으면 소켓으로 우회되고, 워커에서만 막으면 입력줄이 열렸는데 말이
+   * 안 나가는 게 된다. defense 의 지목된 본인은 예외다 (mayChat 의 상자).
+   */
+  const selfId = useWorldStore((s) => s.selfId);
+  const canSpeak = live && mayChat(phase, selfId !== null && selfId === nomineeId);
 
   /*
    * ★ 걷는 중에는 입력창에 포커스를 **준다.** 예전에는 "포커스를 강제하면 카메라를
@@ -245,8 +307,10 @@ export default function WorldPage() {
     if (!justUnlocked || !composing) return;
     setComposing(false);
     setDraft('');
-    requestLock();
-  }, [locked, composing]);
+    // ④ 패널이 떠 있으면 되잡지 않는다. 여기서 되잡으면 우리가 방금 푼 잠금을
+    //    스스로 다시 걸어 커서가 사라진다 — 투표 패널이 눌리지 않는 그 증상이다.
+    if (!uiOpen) requestLock();
+  }, [locked, composing, uiOpen]);
 
   const send = useCallback(() => {
     const text = draft.trim();
@@ -271,6 +335,28 @@ export default function WorldPage() {
     requestLock();
   }, []);
 
+  /*
+   * 표를 던진다.
+   *
+   * ★ **소켓에 실제로 나갔을 때만** 화면에 확정한다. 서버는 "네 표를 받았다"를
+   *   좌석 단위로 되돌려 주지 않는다 — 그런 메시지를 만드는 순간 그게 I1 누출이다
+   *   (안 낸 자리가 드러난다). 그래서 sendVote 의 반환값이 내 선택 표시의
+   *   유일한 근거다. 연결이 끊겨 있으면 아무 표시도 하지 않는 게 맞다.
+   */
+  const castVote = useCallback(
+    (targetId: string) => {
+      if (conn.sendVote(targetId)) useRoundtableStore.getState().setMyVote(targetId);
+    },
+    [conn],
+  );
+
+  const castVerdict = useCallback(
+    (guilty: boolean) => {
+      if (conn.sendVerdict(guilty)) useRoundtableStore.getState().setMyVerdict(guilty);
+    },
+    [conn],
+  );
+
   const spawn = useMemo(
     () => (ticket ? spawnFor(ticket.self.seat, ticket.room.capacity) : { x: 0, z: 0 }),
     [ticket],
@@ -288,10 +374,32 @@ export default function WorldPage() {
    *   한 프레임 뒤에 요청했는데, 그때 잠글 대상이 없어 요청이 통째로 사라졌다.
    */
   useEffect(() => {
-    if (!live || !sceneReady) return;
+    // ③ 판이 도는 중에 들어왔다면(재접속) 패널이 이미 떠 있을 수 있다. 그때는 잠그지 않는다
+    if (!live || !sceneReady || uiOpen) return;
     const id = requestAnimationFrame(() => resumeWalking());
     return () => cancelAnimationFrame(id);
-  }, [live, sceneReady, resumeWalking]);
+  }, [live, sceneReady, uiOpen, resumeWalking]);
+
+  /*
+   * ① 패널이 열리면 커서를 돌려주고, 닫히면 걷기로 되돌린다.
+   *
+   * ★ **바뀌는 순간에만** 손댄다. `uiOpen` 이 false 인 동안 매번 requestLock 을
+   *   부르면, 사용자가 ESC 로 잠깐 멈춘 상태를 이 효과가 계속 되돌려 버린다.
+   *   그래서 직전 값을 들고 비교한다(위 잠금 해제 효과와 같은 이유).
+   */
+  const wasUiOpen = useRef(false);
+  useEffect(() => {
+    if (!live) {
+      wasUiOpen.current = uiOpen;
+      return;
+    }
+    if (uiOpen) {
+      if (document.pointerLockElement) document.exitPointerLock();
+    } else if (wasUiOpen.current) {
+      requestLock();
+    }
+    wasUiOpen.current = uiOpen;
+  }, [live, uiOpen]);
 
   /*
    * 화면(캔버스)을 클릭하면 걷기로 돌아간다.
@@ -308,14 +416,16 @@ export default function WorldPage() {
    *   "캔버스를 직접 누른 것만 잠금"이라는 선이 그 사고를 다시 막는다.
    */
   useEffect(() => {
-    if (!live) return;
+    // ② 패널이 떠 있는 동안에는 이 경로를 아예 끈다. 안 끄면 판 바깥(세계)을
+    //    한 번 누른 순간 다시 잠겨서 커서가 사라지고, 좌석 카드를 못 누른다
+    if (!live || uiOpen) return;
     const onClick = (e: MouseEvent) => {
       if (e.target !== document.querySelector('canvas')) return;
       requestLock();
     };
     window.addEventListener('click', onClick);
     return () => window.removeEventListener('click', onClick);
-  }, [live]);
+  }, [live, uiOpen]);
 
   /*
    * Enter(또는 T) 로 한 마디 한다. 걷는 중에만 받는다.
@@ -325,7 +435,9 @@ export default function WorldPage() {
    * ★ 포커스는 여기서 준다. 잠금은 건드리지 않는다 — 이 모드의 핵심이다.
    */
   useEffect(() => {
-    if (!live || composing) return;
+    // ★ 말이 잠긴 단계에서는 열지 않는다 (I1 — mayChat). 열어 봐야 워커가 거절하고,
+    //   무엇보다 이 구간에 사람만 말할 수 있으면 그 한 줄이 곧 명단이다.
+    if (!live || composing || !canSpeak) return;
     const onKey = (e: KeyboardEvent) => {
       const el = e.target as HTMLElement | null;
       if (el?.tagName === 'INPUT' || el?.tagName === 'TEXTAREA' || el?.isContentEditable) return;
@@ -335,7 +447,21 @@ export default function WorldPage() {
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [live, composing]);
+  }, [live, composing, canSpeak]);
+
+  /*
+   * 치던 중에 단계가 넘어갔다 — 입력줄을 닫는다.
+   *
+   * ★ 안 닫으면 freechat 끝에 열어 둔 줄이 vote 로 넘어가서도 살아 있고, 거기서
+   *   Enter 를 치면 워커가 조용히 버린다("보냈는데 안 보인다"). 그리고 그 사이
+   *   투표 패널이 뜨는데 입력줄이 포커스를 쥐고 있어 클릭 흐름도 어긋난다.
+   */
+  useEffect(() => {
+    if (composing && !canSpeak) {
+      setComposing(false);
+      setDraft('');
+    }
+  }, [composing, canSpeak]);
 
   /** 입력줄이 뜨면 바로 칠 수 있어야 한다. focus 는 잠금을 풀지 않는다(실측) */
   useEffect(() => {
@@ -524,7 +650,7 @@ export default function WorldPage() {
             **pointer-events-none 이라 이 글자를 뚫고 캔버스가 클릭된다** — 그래서
             "클릭하면 계속"이 말 그대로 아무 데나 눌러도 동작한다.
           */}
-          {!locked && !composing ? (
+          {!locked && !composing && !uiOpen ? (
             <div className="pointer-events-none absolute inset-0 z-20 flex flex-col items-center justify-center gap-2">
               <p className="text-lg font-bold text-neutral-100 drop-shadow-[0_2px_12px_rgba(0,0,0,0.9)]">
                 화면을 클릭하면 계속
@@ -538,6 +664,9 @@ export default function WorldPage() {
           {/* 소리를 만질 때만 잠깐 뜬다 */}
           <VolumeHud visible={volumeHud} />
 
+          {/* 판 진행 — 단계 HUD(z-30) · 투표/찬반(z-40) · 결과(z-50) */}
+          <GameHud onVote={castVote} onVerdict={castVerdict} />
+
           {/* 아래 가운데 — 말하기와 안내가 같은 자리를 쓴다 */}
           <div className="absolute inset-x-0 bottom-6 z-30 flex justify-center px-6">
             {composing ? (
@@ -549,10 +678,26 @@ export default function WorldPage() {
                 onCancel={() => {
                   setComposing(false);
                   setDraft('');
-                  // 잠금이 살아 있으면 그대로 걷는다. 거절당한 상태였다면 다시 두드린다
-                  if (!document.pointerLockElement) requestLock();
+                  // 잠금이 살아 있으면 그대로 걷는다. 거절당한 상태였다면 다시 두드린다.
+                  // ④ 단, 패널이 떠 있으면 되잡지 않는다 — 커서가 사라진다
+                  if (!uiOpen && !document.pointerLockElement) requestLock();
                 }}
               />
+            ) : uiOpen ? (
+              /*
+                패널이 떠 있는 동안에는 조작 안내를 감춘다. 지금은 커서가 있고 다리가
+                묶인 상태라 "WASD 이동"이 그대로 거짓말이 된다 (world-scene 의 LocalRig
+                가 잠금이 풀린 동안 이동키를 무시한다).
+
+                ★ 단 하나 예외가 최후변론이다 — 지목된 본인은 이 구간에도 말할 수 있고
+                  (mayChat), 말할 수 있다는 걸 모르면 침묵한다. **침묵한 지목자 = 사람**
+                  이 되면 이 단계가 통째로 정체 판별기가 된다 (I1).
+              */
+              canSpeak ? (
+                <p className="rounded-full border border-amber-500/40 bg-black/70 px-5 py-2.5 text-[12px] text-amber-200 backdrop-blur">
+                  <span className="font-bold">Enter</span> 로 최후변론
+                </p>
+              ) : null
             ) : (
               /* 조작은 이제 전부 키다. 한 줄에 다 적어 둔다 — 열어 볼 판이 없으므로 */
               <p className="rounded-full border border-white/10 bg-black/60 px-5 py-2.5 text-[12px] text-neutral-300 backdrop-blur">

@@ -63,7 +63,10 @@ export async function fetchAgentLines(
       },
       body: JSON.stringify({ room_id: roomId, player_ids: playerIds, history, trigger, event }),
       // speakAt을 넘겨 오는 답은 쓸 데가 없다. 호출부가 남은 시간을 그대로 넘긴다.
-      signal: AbortSignal.timeout(timeoutMs),
+      // ★ 반드시 정수로 자른다. speakAt 은 읽는 시간(rand)이 섞여 **소수**라, 그대로
+      //   넘기면 `AbortSignal.timeout` 이 "delay must be an integer" 로 **던진다** —
+      //   그러면 아래 catch 가 삼켜서 그 봇은 조용히 LLM 없이 지나간다. 실측으로 잡았다.
+      signal: AbortSignal.timeout(Math.max(0, Math.round(timeoutMs))),
     });
     if (!res.ok) {
       console.warn(`[world-agent] ${res.status} ${roomId} — 이번 발화는 거른다`);

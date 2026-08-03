@@ -69,6 +69,60 @@ export function parseMove(msg: unknown): MoveInput | null {
   return { x: m.x, z: m.z, y, heading: m.heading, anim: m.anim as AnimState };
 }
 
+/**
+ * players.id 모양인가. **모양만 본다** — 그 좌석이 이 방에 있는지, 자기 자신은 아닌지는
+ * 워커가 본다 (여기는 순수 함수라 방 명단을 모른다).
+ *
+ * ★ 모양 검사를 여기서 하는 이유: 워커가 좌석 명단을 조회하기 **전에** 쓰레기를 거른다.
+ *   길이 제한이 없으면 64KB짜리 문자열이 투표 Map 의 키로 들어앉고, 그건 그대로
+ *   reveal 의 votes[] 에 실려 방 전원에게 증폭돼 나간다.
+ */
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+export function isPlayerId(v: unknown): v is string {
+  return typeof v === 'string' && UUID_RE.test(v);
+}
+
+export interface VoteInput {
+  targetId: string;
+}
+
+/**
+ * vote 메시지가 쓸 만한가. 아니면 null.
+ *
+ * ★ **voter 를 여기서 받지 않는다.** 규칙 4 — "내가 누구인지"는 C2S 에 넣지 않고
+ *   서버가 소켓에서 되찾는다. 넣는 순간 남의 이름으로 투표할 수 있다.
+ * ★ **자기 자신 투표 거부는 여기가 아니라 워커다** (SPEC §18.3). 이 함수는 voter 를
+ *   모르므로 판정할 수 없다. 워커가 반드시 하드 거부해야 한다 — reveal 의 votes[] 에
+ *   자기 자신 투표가 한 건이라도 보이면 그 자리가 봇으로 확정된다 (I1: 봇에게도
+ *   같은 규칙을 걸어야 하는데, 사람 쪽만 UI 로 막고 봇은 서버에서 통과시키면 갈린다).
+ */
+export function parseVote(msg: unknown): VoteInput | null {
+  if (typeof msg !== 'object' || msg === null) return null;
+  const m = msg as Record<string, unknown>;
+  if (!isPlayerId(m.targetId)) return null;
+  return { targetId: m.targetId };
+}
+
+export interface VerdictInput {
+  guilty: boolean;
+}
+
+/**
+ * verdict 메시지가 쓸 만한가. 아니면 null.
+ *
+ * ★ boolean 만 받는다. `'true'`·1·0 을 너그럽게 받아 주면 `!!value` 로 읽는 순간
+ *   `'false'` 가 찬성표가 된다 — 사람 목숨이 걸린 표라 관대할 이유가 없다.
+ * ★ 기권은 **메시지를 안 보내는 것**이지 별도 값이 아니다. 지목된 본인의 표는
+ *   워커가 무시한다(§18.3).
+ */
+export function parseVerdict(msg: unknown): VerdictInput | null {
+  if (typeof msg !== 'object' || msg === null) return null;
+  const m = msg as Record<string, unknown>;
+  if (typeof m.guilty !== 'boolean') return null;
+  return { guilty: m.guilty };
+}
+
 /** JSON.parse 결과가 우리가 아는 메시지 모양인가. 타입 좁히기용. */
 export function isC2SMessage(msg: unknown): msg is C2SMessage {
   return typeof msg === 'object' && msg !== null && typeof (msg as { t?: unknown }).t === 'string';

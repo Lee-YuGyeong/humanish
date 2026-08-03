@@ -23,7 +23,7 @@
  */
 
 const NEXT = process.env.NEXT_URL ?? 'http://127.0.0.1:3000';
-const PROTOCOL_VERSION = 1;
+const PROTOCOL_VERSION = 3;
 
 let failures = 0;
 

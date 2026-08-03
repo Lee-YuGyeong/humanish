@@ -65,6 +65,12 @@ export const COLLIDERS: readonly Collider[] = [
   { x: HALF_W - 1.2, z: 3.2, hw: 0.55, hd: 0.45, rot: 0, top: 0.9 },
   { x: HALF_W - 2.6, z: 2.4, hw: 0.5, hd: 0.45, rot: 0, top: 1.05 },
   { x: -HALF_W + 1.3, z: 2.2, hw: 0.65, hd: 0.45, rot: 0, top: 1.15 },
+  // 중앙 라운드테이블 — 좌석 스폰 원(spawnFor: 중심 (0,-2.5), 반지름 3.4)의 한가운데다.
+  // 원형이지만 콜라이더는 박스라 내접 정사각형으로 근사한다. 반지름 1.35 → hw≈0.95.
+  // 사람·봇 몸통 반지름(0.35)이 더해져 실제로는 반지름 1.3쯤에서 막히므로 시각 테두리와 맞는다.
+  // ★ 이 테이블의 **메시는 app/world/roundtable.tsx** 에 있다 (warehouse.tsx 가 아니다).
+  //   좌표를 옮기면 그 파일의 CENTER/TABLE_R 도 같이 고친다.
+  { x: 0, z: -2.5, hw: 0.95, hd: 0.95, rot: 0, top: 0.74 },
 ];
 
 /** 월드 좌표를 가구 로컬(rotation-y 역회전)로 옮긴다. lx = 폭 방향, lz = 깊이 방향 */

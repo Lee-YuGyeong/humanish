@@ -8,12 +8,27 @@
 
 import { WORLD } from './constants';
 
+/**
+ * 좌석 원의 중심 = **라운드테이블이 서는 자리**.
+ *
+ * ★ 이 값을 베껴 쓰지 마라. app/world/roundtable.tsx 의 테이블 메시,
+ *   lib/mp/collide.ts 의 테이블 콜라이더, 워커의 봇 목적지(BOT_GATHER_RADIUS)가
+ *   전부 여기를 본다 — 한 군데만 어긋나면 아바타가 테이블을 등지고 둘러선다.
+ */
+export const SPAWN_CENTER = {
+  x: (WORLD.minX + WORLD.maxX) / 2,
+  z: (WORLD.minZ + WORLD.maxZ) / 2 + 1.5,
+} as const;
+
+/** 좌석 원의 반지름 (m). */
+export const SPAWN_RADIUS = 3.4;
+
 /** 좌석을 방 가운데 원 위에 고르게 배치한다. 정원이 달라도 겹치지 않는다. */
 export function spawnFor(seat: number, capacity: number): { x: number; z: number } {
   const n = Math.max(capacity, 1);
   const angle = ((seat - 1) / n) * Math.PI * 2;
-  const radius = 3.4;
-  const cx = (WORLD.minX + WORLD.maxX) / 2;
-  const cz = (WORLD.minZ + WORLD.maxZ) / 2 + 1.5;
-  return { x: cx + Math.cos(angle) * radius, z: cz + Math.sin(angle) * radius };
+  return {
+    x: SPAWN_CENTER.x + Math.cos(angle) * SPAWN_RADIUS,
+    z: SPAWN_CENTER.z + Math.sin(angle) * SPAWN_RADIUS,
+  };
 }

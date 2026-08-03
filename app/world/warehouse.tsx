@@ -77,7 +77,7 @@ function useTiled(map: THREE.Texture, repeatX: number, repeatY: number) {
 const STEEL = "#1e1b17";
 
 /** 건물 골조 · 스크린 · 선반. /world 가 같은 좌표계로 이걸 그대로 세운다 */
-export function Warehouse() {
+export function Warehouse({ onIntroEnd }: { onIntroEnd?: () => void }) {
   const [wall, floor, box] = useTexture([TEX.wall, TEX.floor, TEX.box]);
 
   // 텍스처 한 장이 덮는 실제 크기: 골강판 3.2m, 바닥 슬래브 4장 = 7m
@@ -129,7 +129,7 @@ export function Warehouse() {
       <Trusses />
       <WallBraces />
 
-      <Screen />
+      <Screen onIntroEnd={onIntroEnd} />
       <Stage />
 
       {/* 스크린 양옆 + 좌우 벽의 박스 선반 */}
@@ -300,11 +300,30 @@ const SCREEN = { w: 10, h: 10 * (9 / 16), y: 4.2, z: ROOM.back + 0.22 };
 export const SCREEN_FOCUS = { x: 0, y: SCREEN.y, z: SCREEN.z } as const;
 
 /**
+ * 영사막의 크기(m). **주제도 이 막에 뜬다** — roundtable.tsx 의 TopicProjection 이
+ * 이 값으로 같은 자리에 판을 겹친다.
+ *
+ * 내보내는 이유는 SCREEN_FOCUS 와 같다: 스크린을 키우거나 옮겼는데 주제 판이 옛
+ * 크기로 남으면 액자 밖으로 글자가 삐져나간다. 숫자를 복사해 가지 말고 이 값을 쓴다.
+ */
+export const SCREEN_SIZE = { w: SCREEN.w, h: SCREEN.h } as const;
+
+/**
+ * 막 위에 **무언가를 겹칠 때** 쓰는 z (월드 좌표).
+ *
+ * ★ 이 파일 안에 겹겹이 쌓인 면이 있다 — 액자 -0.05, 흰 막 0.015, 영상·카운트다운
+ *   0.03. 밖에서 "막 앞"이라고 짐작해 0.02 쯤에 두면 **영상 뒤에 가려 안 보인다**
+ *   (실제로 그렇게 만들었다가 주제가 통째로 안 보였다). 쌓인 순서를 아는 건 이
+ *   파일뿐이므로 제일 앞자리를 여기서 정해 내보낸다.
+ */
+export const SCREEN_FRONT_Z = SCREEN.z + 0.05;
+
+/**
  * 안쪽 벽의 대형 빈 스크린.
  * 흰 판 자체는 살짝만 발광하고, 위에서 쏘는 스포트 3개(§Lights)가
  * 레퍼런스처럼 세 갈래 빛 웅덩이를 만든다.
  */
-function Screen() {
+function Screen({ onIntroEnd }: { onIntroEnd?: () => void }) {
   return (
     <group position={[0, SCREEN.y, SCREEN.z]}>
       {/* 액자와 화면이 같은 z 에 있으면 z-파이팅이 난다. 액자는 뒤, 화면은 앞 */}
@@ -321,7 +340,7 @@ function Screen() {
           roughness={0.95}
         />
       </mesh>
-      <ScreenVideo />
+      <ScreenVideo onIntroEnd={onIntroEnd} />
       {/* 스크린이 방을 향해 뿜는 미광 */}
       <pointLight position={[0, 0, 4]} intensity={30} distance={22} decay={1.6} color="#e6c9a3" />
     </group>
@@ -353,7 +372,12 @@ const COUNTDOWN_SEC = 20;
  * ★ 비율은 **가로세로를 지킨 채 안쪽에 맞춘다**(contain). 스크린이 16:9 라
  *   지금 영상은 꼭 맞지만, 다른 비율로 갈아끼워도 얼굴이 옆으로 퍼지지 않는다.
  */
-function ScreenVideo() {
+function ScreenVideo({ onIntroEnd }: { onIntroEnd?: () => void }) {
+  // 최신 콜백을 ref 로 들고 있는다 — 아래 효과는 []로 한 번만 도므로 prop 을 직접
+  // 참조하면 첫 값에 굳는다. conn 은 안정적이라 실무상 같지만, ref 로 두면 안전하다.
+  const introEndRef = useRef(onIntroEnd);
+  introEndRef.current = onIntroEnd;
+
   const [texture, setTexture] = useState<THREE.VideoTexture | null>(null);
   const [size, setSize] = useState<[number, number]>([SCREEN.h * (16 / 9), SCREEN.h]);
   /** null 이면 상영이 시작됐다는 뜻. 숫자면 남은 초 */
@@ -365,6 +389,20 @@ function ScreenVideo() {
     let startVideo = () => {};
     /** 소리가 막혔을 때만 걸리는 클릭 리스너를 걷어낸다 */
     let cleanupGesture = () => {};
+
+    /*
+     * 인트로가 끝났다는 신호를 **한 번만** 보낸다 → 워커가 판을 연다.
+     * 정상은 영상 ended 다. 영상이 못 열려도 게임이 멈추면 안 되므로, **재생 단계에
+     * 들어선 뒤(started)** 의 error 도 종료로 친다. started 가드가 없으면 카운트다운
+     * 중의 프리로드 오류가 판을 20초 일찍 열어 버린다.
+     */
+    let started = false;
+    let fired = false;
+    const fireIntroEnd = () => {
+      if (fired) return;
+      fired = true;
+      introEndRef.current?.();
+    };
 
     const video = document.createElement('video');
     videoRef.current = video;
@@ -392,9 +430,14 @@ function ScreenVideo() {
     };
     const onError = () => {
       console.warn('[world] 스크린 영상을 열지 못했다:', SCREEN_VIDEO, video.error?.message);
+      // 재생 단계에 들어선 뒤의 실패만 "인트로 끝"으로 친다 (프리로드 오류는 제외).
+      if (started) fireIntroEnd();
     };
-    // 영상이 끝나면 음악이 이어받는다. 마지막 프레임은 화면에 그대로 남는다
-    const onEnded = () => startMusic();
+    // 영상이 끝나면 음악이 이어받고, 워커에 "인트로 끝"을 알린다(판 시작).
+    const onEnded = () => {
+      startMusic();
+      fireIntroEnd();
+    };
 
     video.addEventListener('loadedmetadata', onReady);
     video.addEventListener('error', onError);
@@ -437,6 +480,7 @@ function ScreenVideo() {
     };
 
     startVideo = () => {
+      started = true; // 이 시점부터의 error 는 "인트로 끝"으로 친다 (위 onError)
       video.muted = false;
       video.play().catch(() => {
         // 소리 있는 재생이 막혔다 — 그림이라도 나와야 한다
