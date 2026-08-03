@@ -416,6 +416,32 @@ const RemoteAvatar = memo(function RemoteAvatar({
   const fallT = useRef(eliminated ? 1 : 0);
 
   /*
+   * ★★ 이 자리가 지금 **못 움직이는 단계인가** (I1 — lib/mp/constants.ts 의 mayMove).
+   *
+   * ┌─ 왜 마지막 anim 을 믿으면 안 되나 ────────────────────────────────────────┐
+   * │ 단계가 잠기는 순간, 봇은 서버 틱에서 haltBot 이 anim='idle' 한 장을 **보내고** │
+   * │ 선다. 그런데 사람 클라는 같은 순간 송신이 막히므로(mayMove) 마지막으로 나간  │
+   * │ anim 이 **'walk' 인 채로 남는다.** 그러면 그 20~30초 동안                    │
+   * │   · 봇 좌석    → 선 자세                                                    │
+   * │   · 걷다 잠긴 사람 → 제자리에서 걷는 자세로 굳음                             │
+   * │ 이 되어, **걷는 자세로 굳은 자리 = 사람**이 된다. 총 자리·AI 수가 공개라      │
+   * │ 소거법으로 나머지도 갈린다.                                                 │
+   * │                                                                            │
+   * │ 고치는 자리를 프로토콜이 아니라 **그리는 쪽**으로 잡은 이유:                  │
+   * │   · 서버가 사람 몫의 정지 패킷을 대신 쏘면, 그 패킷이 봇의 지터(emitAsBot)와  │
+   * │     다른 타이밍으로 도착해 **새 신호**가 된다. 막으려던 것과 같은 종류의 사고. │
+   * │   · 여기서 막으면 모든 클라가 **모든 좌석에 같은 규칙**을 적용한다. 사람인지  │
+   * │     봇인지 묻지 않고 "지금 못 움직이는 자리인가"만 본다 — 그래서 대칭이다.    │
+   * │                                                                            │
+   * │ ★ 판정은 단계 하나가 아니라 **좌석마다** 다르다. defense 에서는 지목된 한     │
+   * │   자리만 서므로, 나머지는 걷는 클립이 그대로 살아 있어야 한다.               │
+   * └──────────────────────────────────────────────────────────────────────────┘
+   */
+  const frozen = useRoundtableStore((s) => !mayMove(s.phase, s.nomineeId === player.id));
+  const frz = useRef(frozen);
+  frz.current = frozen;
+
+  /*
    * ★ 아바타에게 anim · airborne 을 **값이 아니라 함수로** 준다.
    *
    *   이 컴포넌트는 memo 라서 멤버십이 바뀔 때만 다시 그린다. player 는 Map 안에서
@@ -423,12 +449,18 @@ const RemoteAvatar = memo(function RemoteAvatar({
    *   'idle' 이 굳어 **선 자세로 미끄러진다.** 아바타가 매 프레임 직접 물어보게 한다
    *   (좌표를 useFrame 에서 읽는 것과 같은 규약, avatar.tsx 머리말 참고).
    *
-   *   처형도 같은 통로로 넘긴다 — elim 은 ref 라 deps 가 그대로다. 시체는 걷지도
+   *   처형·정지도 같은 통로로 넘긴다 — 둘 다 ref 라 deps 가 그대로다. 시체는 걷지도
    *   뛰지도 않고(idle = 완전한 정지 클립), 높이가 남아 있어도 점프 클립을 켜지 않는다.
    */
-  const getAnim = useCallback((): AnimState => (elim.current ? 'idle' : player.anim), [player]);
+  const getAnim = useCallback(
+    (): AnimState => (elim.current || frz.current ? 'idle' : player.anim),
+    [player],
+  );
   // 공중인지는 높이로만 판단한다 (protocol.ts 의 ANIM_STATES 주석)
-  const getAirborne = useCallback(() => !elim.current && player.pose.y > 0.02, [player]);
+  const getAirborne = useCallback(
+    () => !elim.current && !frz.current && player.pose.y > 0.02,
+    [player],
+  );
 
   /*
    * ★ 처형된 자리만 어둡게 한다 — **머티리얼을 그냥 만지면 전원이 같이 어두워진다.**
