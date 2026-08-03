@@ -39,7 +39,6 @@ import type { ErrorCode, PlayerSnapshot, S2CMessage } from '../../lib/mp/protoco
 import { verifyTicket } from '../../lib/mp/ticket';
 import { isC2SMessage, parseMove } from '../../lib/mp/validate';
 import {
-  FALLBACK_LINES,
   botSnapshot,
   createBot,
   pickLine,
@@ -421,10 +420,11 @@ export class RoomDO {
       //    stepBot보다 먼저 걸어야 같은 틱에 발이 묶인다.
       //    스스로 꺼내는 말이라 읽는 시간은 없다 — 읽을 게 없으니 바로 친다.
       if (shouldChat(bot, now)) {
+        // 로비 방은 풀이 비어 있어 null이 온다 — 자리만 잡히고 문구는 LLM이 채운다.
         scheduleSpeech(bot, pickLine(this.botLines(), this.recentTexts()), now);
-        // ★ 스스로 꺼내는 말도 LLM 을 태운다. 안 태우면 이 자리는 **평생 풀 문구만**
-        //   말한다 — 사용자가 본 게 정확히 그거였다. trigger 는 없다(답할 상대가
-        //   없으니 흐름에 끼어드는 게 맞다).
+        // ★ 스스로 꺼내는 말도 LLM 을 태운다. 안 태우면 이 자리는 아무 말도 못 한다
+        //   (예전에는 평생 풀 문구만 말했고, 사용자가 본 게 정확히 그거였다).
+        //   trigger 는 없다(답할 상대가 없으니 흐름에 끼어드는 게 맞다).
         void this.upgradeSpeech(bot, bot.speechSeq, null);
       }
 
@@ -475,15 +475,16 @@ export class RoomDO {
     // 읽는 시간을 준다 — 0이면 사람이 말한 그 순간 멈추는 아바타가 생긴다 (I1).
     scheduleSpeech(bot, pickLine(this.botLines(), this.recentTexts()), now, readDelayMs());
 
-    // 풀 문구는 이미 예약됐다. LLM은 제때 오면 그 문구만 갈아끼운다 — 기다리지 않는다.
+    // 자리는 잡혔다. LLM이 speakAt 전에 오면 그 자리가 채워지고, 못 오면 잠깐 서 있다
+    // 그냥 지나간다 — 어느 쪽이든 서 있는 시간은 같다 (bots.ts의 speechHeld).
     void this.upgradeSpeech(bot, bot.speechSeq, trigger);
   }
 
   /**
-   * 예약된 풀 문구를 LLM 반응으로 덮어쓴다 (SPEC §12.3의 폴백 패턴).
+   * 잡아 둔 발화 자리를 LLM 반응으로 채운다 (SPEC §12.3의 폴백 패턴).
    *
    * ★ speakAt은 건드리지 않는다 — 발화 타이밍이 LLM 성공/실패와 무관해야 한다 (I1).
-   *   실패·지연이면 아무 일도 일어나지 않고 풀 문구가 그대로 나간다.
+   *   실패·지연이면 아무 일도 일어나지 않는다 — 봇은 제 시각까지 서 있다 말없이 간다.
    *
    * 예산은 **speakAt까지 남은 시간**이다. 그 뒤에 온 답은 이미 말한 뒤라 버려지므로
    * 더 기다릴 이유가 없다. 남은 시간이 얼마 없으면 아예 부르지 않는다.
@@ -528,9 +529,15 @@ export class RoomDO {
     }));
   }
 
-  /** 봇이 쓸 문구 풀. 방 메타를 못 받았으면 최소 대비책으로 버틴다. */
+  /**
+   * 봇이 쓸 문구 풀. **비어 있는 게 정상이다.**
+   *
+   * 게임이 도는 방만 DB의 bot_line_pool을 받아 온다 (/api/internal/world-room).
+   * 로비 방(월드 AI)에는 풀이 없고 — 하드코딩 문구를 없앴다 — 할 말은 전부 LLM에서
+   * 온다. 여기 코드로 된 대비책을 다시 두지 않는다 (bots.ts 끝의 주석).
+   */
   private botLines(): readonly string[] {
-    return this.meta?.botLines?.length ? this.meta.botLines : FALLBACK_LINES;
+    return this.meta?.botLines ?? [];
   }
 
   /** 채팅 한 줄 기록. 앞에서 버려 최근 CHAT_HISTORY_MAX줄만 남긴다. */

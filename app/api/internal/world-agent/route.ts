@@ -21,8 +21,9 @@
  * │       말하기 전에 알게 된다 (I1).                                          │
  * └──────────────────────────────────────────────────────────────────────────┘
  *
- * 실패는 전부 조용히 빈 결과다. 부르는 쪽(워커)에는 이미 풀 문구가 예약돼 있어서
- * 여기가 뭘 못 해도 봇은 제 시각에 제 말을 한다 (SPEC §12.3).
+ * 실패는 전부 조용히 빈 결과다. 부르는 쪽(워커)에는 이미 발화 자리가 잡혀 있어서
+ * 여기가 뭘 못 해도 타이밍은 그대로다 — 그 자리가 말없이 지나갈 뿐이다 (SPEC §12.3).
+ * 월드에는 대신 내보낼 하드코딩 문구가 없다 (lib/server/world-ai.ts).
  */
 
 import { timingSafeEqual } from '@/lib/mp/ticket';
@@ -74,7 +75,7 @@ function notFound(): Response {
   return new Response(null, { status: 404 });
 }
 
-/** 결과가 없는 것은 에러가 아니다. 부르는 쪽은 풀 문구로 그냥 간다. */
+/** 결과가 없는 것은 에러가 아니다. 부르는 쪽은 그 발화 자리를 말없이 넘긴다. */
 function empty(): Response {
   return Response.json({ ok: true, results: [] }, { headers: { 'cache-control': 'no-store' } });
 }
@@ -109,7 +110,7 @@ export async function POST(req: Request): Promise<Response> {
     // 명단을 여기서 다시 만든다. 워커가 보낸 id를 그대로 믿지 않는다 — 봇이 아닌
     // 자리로 발화를 만들어 달라고 하면 사람 자리에 봇 말이 실린다.
     // world-room 과 **같은 함수**를 쓴다. 한쪽만 월드 AI를 알면 그 AI는 영원히
-    // 풀 문구만 말한다 (실측으로 한 번 겪은 경로다).
+    // 아무 말도 못 한다 (실측으로 한 번 겪은 경로다 — 그때는 풀 문구만 말했다).
     const roster = await buildWorldRoster(roomId);
     if (!roster) return notFound();
 
@@ -171,7 +172,7 @@ export async function POST(req: Request): Promise<Response> {
       }),
     });
     if (!res.ok) {
-      console.error(`[world-agent] /api/agent ${res.status} — 풀 문구 유지 (room ${roomId})`);
+      console.error(`[world-agent] /api/agent ${res.status} — 이번 발화는 거른다 (room ${roomId})`);
       return empty();
     }
 
@@ -181,7 +182,8 @@ export async function POST(req: Request): Promise<Response> {
 
     const results: { player_id: string; text: string }[] = [];
     for (const r of data.results ?? []) {
-      // LLM 실패분·구제 문구("ㅇㅇ")보다 방의 풀 문구가 낫다 — 덮지 않는다.
+      // LLM 실패분·구제 문구("ㅇㅇ")는 버린다. 월드에는 대신 쓸 풀이 없으니 그 자리는
+      // 그냥 조용히 지나간다 — 맥락 없는 한 글자보다 침묵이 사람에 가깝다.
       if (r.fallback) continue;
 
       // **첫 발화만** 쓴다. 2D는 두 줄을 각자의 지연으로 따로 보내지만(§5.4) 월드의

@@ -139,8 +139,21 @@ export interface BotState {
   nextChatAt: number;
 
   /**
-   * 예약된 발화. 저장하지 않는다 — DO가 evict되면 그 한마디는 그냥 사라진다. 무해하다.
+   * 발화 **자리**를 잡아 뒀는가. 할 말이 정해졌는지와 별개다.
+   *
+   * ┌─ ★ pendingText로 겸하지 않는다 (I1) ──────────────────────────────────────┐
+   * │ 하드코딩 문구 풀을 없앤 뒤로, 자리를 잡는 순간에는 할 말이 아직 없다 —      │
+   * │ LLM이 도착해야 정해지고 끝내 안 올 수도 있다 (scheduleSpeech 주석).         │
+   * │ 그래도 **서서 치는 시간은 똑같이 흘러야 한다.** 둘을 한 필드로 묶으면        │
+   * │ LLM을 기다리는 동안만 발이 안 묶이고, 그 차이가 곧 봇 표식이 된다.          │
+   * └──────────────────────────────────────────────────────────────────────────┘
+   *
    * 예약이 걸린 뒤 typeAt이 지나면 **타이핑 중**이라 걷지도 뛰지도 않는다 (머리말 3번 상자).
+   */
+  speechHeld: boolean;
+  /**
+   * 예약된 문구. 저장하지 않는다 — DO가 evict되면 그 한마디는 그냥 사라진다. 무해하다.
+   * 자리는 잡혔는데 문구가 안 정해졌으면 null이고, 그러면 그 자리는 조용히 지나간다.
    */
   pendingText: string | null;
   /**
@@ -148,7 +161,7 @@ export interface BotState {
    * 사람 말에 대한 반응이면 읽는 시간만큼 뒤고, 스스로 말을 꺼내는 거면 예약 즉시다.
    */
   typeAt: number;
-  /** pendingText를 내보낼 시각 (epoch ms). pendingText가 null이면 의미 없다. */
+  /** 잡아 둔 자리를 내보낼 시각 (epoch ms). speechHeld가 false면 의미 없다. */
   speakAt: number;
   /**
    * 예약 일련번호. scheduleSpeech마다 1 오른다.
@@ -238,6 +251,7 @@ export function createBot(
     nextChatAt: now + rand(BOT_CHAT_MIN_MS, BOT_CHAT_MAX_MS),
     // 첫 점프도 흩뿌린다. 안 그러면 봇 셋이 같은 초에 같이 뛴다
     nextJumpAt: now + rand(BOT_JUMP_MIN_MS, BOT_JUMP_MAX_MS),
+    speechHeld: false,
     pendingText: null,
     typeAt: 0,
     speakAt: 0,
@@ -281,7 +295,9 @@ export function stepBot(bot: BotState, now: number, dt: number): boolean {
   // ★ 타이핑 중에는 발이 묶인다 (I1 — 머리말 3번 상자). 목적지 추적을 건너뛰므로
   //   waitUntil·tx·tz는 그대로 남고, 말하고 나면 가던 길을 이어서 간다.
   //   예약이 걸려도 typeAt 전(= 읽는 중)에는 평소처럼 걷는다.
-  const typing = bot.pendingText !== null && now >= bot.typeAt;
+  //   ★ pendingText가 아니라 speechHeld를 본다 — LLM이 끝내 안 와서 할 말이 없어도
+  //     서 있는 시간은 똑같아야 한다 (BotState.speechHeld 주석, I1).
+  const typing = bot.speechHeld && now >= bot.typeAt;
 
   // ★ 걷으려 하지 않는 동안에는 막힘 시계를 멈춘다. 안 그러면 말하려고 서 있던 3초가
   //   "못 갔다"로 세어져서, 말이 끝나자마자 가던 목적지를 잊고 방향을 튼다.
@@ -408,27 +424,39 @@ function stepJump(bot: BotState, now: number, dt: number, allowNew: boolean): vo
  * 이미 예약이 걸려 있으면(= 타이핑 중) false다. 사람도 한 번에 한 줄만 친다.
  */
 export function shouldChat(bot: BotState, now: number): boolean {
-  if (bot.pendingText !== null) return false;
+  if (bot.speechHeld) return false;
   if (now < bot.nextChatAt) return false;
   bot.nextChatAt = now + rand(BOT_CHAT_MIN_MS, BOT_CHAT_MAX_MS);
   return true;
 }
 
 /**
- * 발화를 예약한다. readDelay가 지나면 봇은 서서 "친다" — stepBot이 발을 묶는다.
+ * 발화 **자리**를 예약한다. readDelay가 지나면 봇은 서서 "친다" — stepBot이 발을 묶는다.
  * 스스로 말을 꺼낼 때는 readDelay가 0이고, 사람 말에 대한 반응일 때만 읽는 시간이 붙는다.
  *
- * ★ 이 함수가 정한 speakAt은 **나중에 바뀌지 않는다.** 3단계에서 LLM이 붙으면
- *   pendingText만 갈아끼우고 시각은 그대로 둔다 — 발화 타이밍 분포가 LLM 성공/실패와
- *   무관해야 자리 단위 봇 신호가 안 된다 (lib/agent/chat-reply.ts가 visible_at을
- *   건드리지 않는 것과 같은 규칙, I1).
+ * ★ 이 함수가 정한 speakAt은 **나중에 바뀌지 않는다.** LLM 답이 오면 pendingText만
+ *   갈아끼우고 시각은 그대로 둔다 — 발화 타이밍 분포가 LLM 성공/실패와 무관해야
+ *   자리 단위 봇 신호가 안 된다 (lib/agent/chat-reply.ts가 visible_at을 건드리지
+ *   않는 것과 같은 규칙, I1).
+ *
+ * ┌─ text가 null일 수 있다 — 그게 기본이다 ───────────────────────────────────┐
+ * │ 예전에는 하드코딩 문구 풀에서 한 줄 뽑아 미리 채웠고, LLM이 늦으면 그 문구가  │
+ * │ 그대로 나갔다. 실제로 월드에서 들리는 말이 거의 전부 그 목록이었다 —          │
+ * │ 맥락 없는 같은 말이 돌아서 그 자체가 봇 티였다. 풀을 통째로 없앴다.           │
+ * │                                                                            │
+ * │ 그래서 지금은 **자리만 잡고 문구는 비워 둔다.** LLM이 speakAt 전에 오면 그    │
+ * │ 말을 하고, 안 오면 잠깐 서 있다 그냥 간다 (takeSpeech가 null을 돌려준다).     │
+ * │ 서 있는 시간은 어느 쪽이든 같다 — 그게 speechHeld를 따로 둔 이유다.          │
+ * └──────────────────────────────────────────────────────────────────────────┘
  */
 export function scheduleSpeech(
   bot: BotState,
-  text: string,
+  /** 미리 정해진 문구. 월드에서는 보통 null이고 LLM이 replaceSpeech로 채운다. */
+  text: string | null,
   now: number,
   readDelayMs = 0,
 ): void {
+  bot.speechHeld = true;
   bot.pendingText = text;
   bot.typeAt = now + readDelayMs;
   // ★ 지연은 **text 길이와 무관하다** (BOT_TYPE_CHARS_* 주석 참고). 그 문구는 LLM 이
@@ -442,15 +470,14 @@ export function scheduleSpeech(
 }
 
 /**
- * 예약된 문구만 갈아끼운다. LLM 반응이 제때 왔을 때 부른다 (room-do.ts의 upgradeSpeech).
+ * 잡아 둔 자리에 문구를 채운다. LLM 반응이 제때 왔을 때 부른다 (room-do.ts의 upgradeSpeech).
  *
  * ★ typeAt·speakAt을 **건드리지 않는다.** 발화 타이밍 분포가 LLM 성공/실패와 무관해야
  *   자리 단위 봇 신호가 안 된다 (lib/agent/chat-reply.ts가 visible_at을 건드리지 않는
- *   것과 같은 규칙, I1). 그래서 실패·지연이면 예약된 풀 문구가 그대로 나간다 —
- *   폴백이 구조적으로 공짜다.
+ *   것과 같은 규칙, I1). 실패·지연이면 자리가 빈 채로 지나갈 뿐 타이밍은 그대로다.
  *
- * 거절하는 세 경우: 다음 발화가 이미 예약됐다(seq 불일치) · 이미 말했다 · 나갈 시각이
- * 지났다. false를 돌려주지만 호출부가 할 일은 없다 — 풀 문구가 그대로 간다.
+ * 거절하는 세 경우: 다음 발화가 이미 예약됐다(seq 불일치) · 자리가 이미 지나갔다 ·
+ * 나갈 시각이 지났다. false면 그 답은 버려지고 봇은 이번엔 아무 말도 하지 않는다.
  */
 export function replaceSpeech(
   bot: BotState,
@@ -459,16 +486,22 @@ export function replaceSpeech(
   now: number,
 ): boolean {
   if (bot.speechSeq !== seq) return false;
-  if (bot.pendingText === null) return false;
+  if (!bot.speechHeld) return false;
   if (now >= bot.speakAt) return false;
   bot.pendingText = text;
   return true;
 }
 
-/** 예약된 발화를 꺼낸다. 아직 치는 중이거나 예약이 없으면 null. */
+/**
+ * 잡아 둔 자리를 꺼낸다. 아직 치는 중이거나 잡아 둔 자리가 없으면 null.
+ *
+ * ★ 시각이 됐는데 문구가 안 채워졌어도 **자리는 놓아준다** — 그래야 봇이 다시 걷고
+ *   다음 발화를 예약할 수 있다. 이때도 null이라 호출부는 아무것도 내보내지 않는다.
+ */
 export function takeSpeech(bot: BotState, now: number): string | null {
-  if (bot.pendingText === null || now < bot.speakAt) return null;
+  if (!bot.speechHeld || now < bot.speakAt) return null;
   const text = bot.pendingText;
+  bot.speechHeld = false;
   bot.pendingText = null;
   return text;
 }
@@ -500,7 +533,7 @@ export function pickResponder(
   const chance = companionMode ? COMPANION_REACT_CHANCE : BOT_REACT_CHANCE;
   const cooldown = companionMode ? COMPANION_REACT_COOLDOWN_MS : BOT_REACT_COOLDOWN_MS;
 
-  const eligible = bots.filter((b) => b.pendingText === null && now >= b.nextReactAt);
+  const eligible = bots.filter((b) => !b.speechHeld && now >= b.nextReactAt);
   if (eligible.length === 0) return null;
   if (Math.random() >= chance) return null;
 
@@ -515,10 +548,15 @@ export function pickResponder(
  * 문구 풀에서 한 줄 고른다. **최근에 나온 줄은 피한다.**
  * 풀이 80줄 남짓이라 그냥 뽑으면 같은 말이 금방 또 나오고, 토씨까지 같은 반복은
  * 사람이 하지 않는다 — 그것부터 봇 티다. 전부 최근이면 어쩔 수 없이 아무거나 뽑는다.
+ *
+ * ★ 풀이 비면 null이다. 그게 월드의 기본 상태다 — 하드코딩 문구를 없앤 뒤로 로비
+ *   방에는 미리 채울 말이 없고, LLM이 채우지 못하면 그 자리는 조용히 지나간다
+ *   (scheduleSpeech 주석). 게임이 도는 방만 DB의 bot_line_pool을 받아 온다.
  */
-export function pickLine(lines: readonly string[], recent: readonly string[]): string {
+export function pickLine(lines: readonly string[], recent: readonly string[]): string | null {
   const fresh = lines.filter((l) => !recent.includes(l));
   const pool = fresh.length > 0 ? fresh : lines;
+  if (pool.length === 0) return null;
   return pool[Math.floor(Math.random() * pool.length)];
 }
 
@@ -540,18 +578,9 @@ export function toPose(bot: BotState): BotPose {
   return { id: bot.id, x: bot.x, z: bot.z, heading: bot.heading };
 }
 
-/**
- * 문구 풀이 비었을 때의 최소 대비책.
- * 실제 풀은 Supabase의 bot_line_pool이고 /api/internal/world-room이 실어 준다.
- * **이 배열이 클라이언트로 가면 안 된다** — 풀과 대조하면 봇이 특정된다.
+/*
+ * 예전에 여기 FALLBACK_LINES(8줄)가 있었다. 방 메타를 못 받았을 때의 "최소 대비책"이었는데,
+ * 실제로는 그게 월드에서 제일 자주 들리는 말이 됐다 — 맥락 없는 같은 문장이 돌아서
+ * 그 자체가 봇 티였다. 되살리지 않는다. 할 말이 없으면 말하지 않는 쪽이 낫다
+ * (scheduleSpeech 주석의 상자).
  */
-export const FALLBACK_LINES = [
-  '음... 잠깐만',
-  '방금 뭐라고 했어?',
-  '그건 좀 이상한데',
-  '나는 아닌 것 같은데',
-  '다들 조용하네',
-  '아까부터 저쪽이 수상해',
-  '그래서 결론이 뭐야',
-  '좀 더 생각해볼게',
-];

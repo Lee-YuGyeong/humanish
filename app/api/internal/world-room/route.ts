@@ -20,7 +20,7 @@
 import { timingSafeEqual } from '@/lib/mp/ticket';
 import { apiError } from '@/lib/server/auth';
 import { getServiceClient } from '@/lib/server/supabase';
-import { WORLD_LINES, buildWorldRoster } from '@/lib/server/world-ai';
+import { buildWorldRoster } from '@/lib/server/world-ai';
 
 export const dynamic = 'force-dynamic';
 
@@ -50,12 +50,14 @@ export async function GET(req: Request): Promise<Response> {
      * 봇이 3D 공간에서 던지는 한마디. 문구 풀은 클라이언트에 절대 내려가지 않는다
      * (풀과 대조하면 봇이 즉시 특정된다 — supabase/schema.sql 참고).
      *
-     * ★ 월드 AI 가 서 있는 방에는 **게임 풀을 주지 않는다.** bot_line_pool 의
-     *   phase='chat' 은 "그래서 누구 찍을 거야" · "시간 얼마 안 남았지" 처럼 게임이
-     *   돌아가는 중을 전제한 말들이라, 그냥 모여 노는 공간에서는 헛소리가 된다
-     *   (실측 — 사용자가 본 AI 발언이 전부 그 목록이었다).
+     * ★ 월드 AI 가 서 있는 방에는 **풀을 아예 주지 않는다** (빈 배열).
+     *   · 게임 풀(bot_line_pool.phase='chat')은 "그래서 누구 찍을 거야" 처럼 게임이
+     *     돌아가는 중을 전제해서 라운지에서는 헛소리다.
+     *   · 라운지용 문구를 따로 두는 것도 안 된다 — 그게 곧 월드에서 들리는 말의 전부가
+     *     되고 반복이 봇 표식이 된다 (lib/server/world-ai.ts 의 상자, 실측 두 번).
+     *   할 말은 LLM 에서만 온다. 못 받으면 그 자리는 조용히 지나간다.
      */
-    let botLines: readonly string[] = WORLD_LINES;
+    let botLines: readonly string[] = [];
     const db = getServiceClient();
     if (!roster.companionMode) {
       const { data: lines } = await db

@@ -319,6 +319,59 @@ describe('읽는 시간', () => {
   });
 });
 
+/*
+ * 하드코딩 문구 풀을 없앤 뒤 생긴 상태다 — 자리는 잡혔는데 할 말이 아직(또는 끝내) 없다.
+ * 여기서 지키려는 건 하나: **LLM 이 오든 안 오든 봇이 서 있는 모습이 같아야 한다.**
+ * 어긋나면 "LLM 을 기다리는 자리 = 봇"이 되어 I1 이 무너진다.
+ */
+describe('문구 없는 예약 — 월드의 기본 경로', () => {
+  it('할 말이 없어도 발이 묶인다 — 서 있는 시간이 LLM 성패와 같아야 한다 (I1)', () => {
+    const t0 = 1_000_000;
+    const withText = walkingBot(t0);
+    const without = walkingBot(t0);
+
+    scheduleSpeech(withText, '아 그거 나도 봤어', t0);
+    scheduleSpeech(without, null, t0);
+
+    run(withText, t0, 5);
+    run(without, t0, 5);
+
+    expect(without.anim).toBe('idle');
+    expect(without.anim).toBe(withText.anim);
+  });
+
+  it('시각이 되면 자리를 놓아주되 아무 말도 내보내지 않는다', () => {
+    const t0 = 1_000_000;
+    const bot = walkingBot(t0);
+    scheduleSpeech(bot, null, t0);
+
+    expect(takeSpeech(bot, bot.speakAt - 1)).toBeNull(); // 아직 치는 중
+    expect(takeSpeech(bot, bot.speakAt)).toBeNull(); // 시각이 됐지만 할 말이 없다
+
+    // 자리는 놓였다 — 다시 걷고 다음 발화도 예약할 수 있어야 한다.
+    bot.nextChatAt = 0;
+    expect(shouldChat(bot, bot.speakAt)).toBe(true);
+  });
+
+  it('LLM 이 제때 오면 그 자리가 채워진다', () => {
+    const t0 = 1_000_000;
+    const bot = walkingBot(t0);
+    scheduleSpeech(bot, null, t0, 2_000);
+
+    expect(replaceSpeech(bot, bot.speechSeq, '오 그거 나도 봤어', t0 + 500)).toBe(true);
+    expect(takeSpeech(bot, bot.speakAt)).toBe('오 그거 나도 봤어');
+  });
+
+  it('빈 자리도 겹쳐 예약되지 않는다 — 한 번에 한 줄만 친다', () => {
+    const t0 = 1_000_000;
+    const bot = walkingBot(t0);
+    bot.nextChatAt = 0;
+
+    scheduleSpeech(bot, null, t0);
+    expect(shouldChat(bot, t0 + 60_000)).toBe(false);
+  });
+});
+
 describe('replaceSpeech — LLM 덮어쓰기', () => {
   it('문구만 바뀌고 시각은 그대로다 (I1의 핵심)', () => {
     const t0 = 1_000_000;
@@ -480,9 +533,18 @@ describe('pickLine', () => {
   });
 
   it('최근이 비면 풀 전체에서 뽑는다', () => {
-    const seen = new Set<string>();
+    const seen = new Set<string | null>();
     for (let i = 0; i < 200; i += 1) seen.add(pickLine(POOL, []));
     expect(seen.size).toBe(POOL.length);
+  });
+
+  /*
+   * 로비 방(월드 AI)에는 풀이 없다 — 하드코딩 문구를 없앴기 때문이다.
+   * 여기서 빈 문자열이나 undefined 가 새면 봇이 빈 말풍선을 띄운다.
+   */
+  it('풀이 비면 null이다 — 월드 로비의 기본 상태다', () => {
+    expect(pickLine([], [])).toBeNull();
+    expect(pickLine([], ['가'])).toBeNull();
   });
 });
 
