@@ -21,7 +21,8 @@ FAIL=0
 
 # .env.local에서 접속 정보를 읽는다
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-DBURL="${DBURL:-$(grep -E '^[[:space:]]*SUPABASE_DB_URL_DIRECT=' "$ROOT/.env.local" | head -1 | cut -d= -f2-)}"
+# 등호 앞뒤 공백을 허용한다 (apply.sh 와 같은 이유 — 그 파일 주석 참고)
+DBURL="${DBURL:-$(grep -E '^[[:space:]]*SUPABASE_DB_URL_DIRECT[[:space:]]*=' "$ROOT/.env.local" | head -1 | cut -d= -f2- | sed -E 's/^[[:space:]]+//; s/[[:space:]]+$//')}"
 [ -n "$DBURL" ] || { echo ".env.local의 SUPABASE_DB_URL_DIRECT가 비었다"; exit 1; }
 curl -sf "$B/api/time" >/dev/null || { echo "개발 서버가 안 떠 있다. npm run dev 를 먼저 실행할 것"; exit 1; }
 

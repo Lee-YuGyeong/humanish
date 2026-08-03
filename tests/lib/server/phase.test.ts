@@ -18,6 +18,7 @@ const ALL_PHASES: Phase[] = [
   'target',
   'chat',
   'vote',
+  'revote', // SPEC §18.3 — 사람 표 동점일 때만
   'reveal',
   'replay',
 ];
@@ -30,7 +31,10 @@ describe('nextPhase — SPEC §5.1 전환표', () => {
     ['question', 2, 'target', 2],
     ['target', 2, 'chat', 2],
     ['chat', 2, 'vote', 2],
+    // vote 의 기본 경로는 reveal 이다. 동점이면 DB(advance_phase)가 revote 로 갈아탄다
+    // (SPEC §18.3) — 표 집계는 순수 함수가 못 보므로 nextPhase 는 동점 아닐 때의 경로다.
     ['vote', 2, 'reveal', 2],
+    ['revote', 2, 'reveal', 2], // 재투표는 한 번뿐, 언제나 reveal 로 끝난다
     ['reveal', 2, 'replay', 2],
   ];
 
@@ -74,6 +78,7 @@ describe('PHASE_DURATION_MS — SPEC §5.1', () => {
     expect(PHASE_DURATION_MS.target).toBe(30_000);
     expect(PHASE_DURATION_MS.chat).toBe(120_000);
     expect(PHASE_DURATION_MS.vote).toBe(30_000);
+    expect(PHASE_DURATION_MS.revote).toBe(20_000); // SPEC §18.3
   });
 
   it('target은 question보다 짧다 (SPEC §5.3)', () => {
@@ -94,6 +99,7 @@ describe('EARLY_EXIT — 조기 종료 조건 (I5, SPEC §5.3)', () => {
   it('question·vote는 사람 전원이 마치면 넘어간다', () => {
     expect(EARLY_EXIT.question).toBe('all-humans');
     expect(EARLY_EXIT.vote).toBe('all-humans');
+    expect(EARLY_EXIT.revote).toBe('all-humans'); // SPEC §18.3 — 사람 전원 재투표 시
   });
 
   it('★ target에는 조기 종료가 없다 — 대상이 누구든 30초를 채운다', () => {

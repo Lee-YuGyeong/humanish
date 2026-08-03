@@ -20,6 +20,8 @@ export const PHASE_DURATION_MS: Record<Phase, number | null> = {
   target: 30_000,
   chat: 120_000,
   vote: 30_000,
+  // 재투표는 짧다 — 후보가 좁혀졌고 생각도 이미 굳었다 (SPEC §18.3)
+  revote: 20_000,
   reveal: null,
   replay: null,
 };
@@ -47,6 +49,8 @@ export const EARLY_EXIT: Record<Phase, 'all-humans' | 'none'> = {
   target: 'none', // ★ 대상이 사람이든 봇이든 30초를 채운다. 위 상자 참고
   chat: 'none', // 시간 만료만
   vote: 'all-humans',
+  // 재투표도 사람 전원이 다시 내면 넘어간다. 진입 훅이 vote 표를 지우므로 이번 표만 센다 (§18.3)
+  revote: 'all-humans',
   reveal: 'none',
   replay: 'none',
 };
@@ -66,6 +70,11 @@ export function nextPhase(phase: Phase, round: number): { phase: Phase; round: n
     case 'chat':
       return { phase: 'vote', round };
     case 'vote':
+      // 기본은 reveal. **사람 표가 동점이면** DB(advance_phase)가 revote 로 갈아탄다
+      // (SPEC §18.3). 표 집계는 순수 함수가 못 보므로 여기서는 정할 수 없다 —
+      // 이 미러는 '동점이 아닐 때'의 경로다.
+      return { phase: 'reveal', round };
+    case 'revote':
       return { phase: 'reveal', round };
     case 'reveal':
       return { phase: 'replay', round };
