@@ -88,9 +88,14 @@ export interface WorldRoster {
   companionMode: boolean;
 }
 
-/** 방 id + 번호 → 결정적 uuid. 진짜 players.id 와 모양이 같아야 한다 (머리말 2번 상자). */
-async function stableUuid(roomId: string, index: number): Promise<string> {
-  const data = new TextEncoder().encode(`${roomId}:world-ai:${index}`);
+/**
+ * 방 id + **자리 번호** → 결정적 uuid. 진짜 players.id 와 모양이 같아야 한다 (머리말 2번 상자).
+ * 자리에 묶는 이유: 자리가 바뀌면 id 도 바뀌어야 워커의 명부 diff(id 기준)가
+ * player_left + player_joined 로 이동을 방송한다. 순번으로 만들면 자리가 밀릴 때
+ * id 가 그대로라 아무 이벤트도 안 나고, 화면에 옛 익명N 이 그대로 남는다.
+ */
+async function stableUuid(roomId: string, seat: number): Promise<string> {
+  const data = new TextEncoder().encode(`${roomId}:world-ai:${seat}`);
   const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', data));
   const hex = Array.from(digest.slice(0, 16), (b) => b.toString(16).padStart(2, '0')).join('');
   // uuid v4 자리(버전 4 · variant 10xx)를 맞춘다. 그래야 uuid 검사기에도 걸리지 않는다.
@@ -143,13 +148,27 @@ export async function buildWorldRoster(roomId: string): Promise<WorldRoster | nu
 
   let companionMode = false;
   if (room.phase === 'lobby') {
-    const taken = new Set(seats.map((s) => s.seat));
+    /*
+     * ┌─ 월드 AI 는 **지금 최대 자리 다음 번호부터** 선다 (2026-08-04 결정) ────────┐
+     * │ 예전엔 1번부터 빈 자리를 채웠다. 그런데 DB 의 자리 배정(pick_free_seat)은   │
+     * │ 월드 AI 를 모르고 무작위로 고르므로, 사람이 AI 가 서 있던 자리를 받을 수     │
+     * │ 있었다. 그러면 AI 가 옆 자리로 밀리는데 id 가 순번 기반이라 그대로였고,      │
+     * │ 명부 diff(id 기준)가 아무 이벤트도 못 내서 **같은 익명N 이 화면에 둘** 남았다.│
+     * │                                                                            │
+     * │ · 아래 빈 번호(나간 사람 자리)는 채우지 않는다 — 거기가 바로 무작위 배정이   │
+     * │   고를 수 있는 자리다.                                                      │
+     * │ · 그래도 사람이 AI 자리를 받으면(무작위니까 가능하다) 다음 조회에서 AI 가    │
+     * │   더 위로 민다. id 를 자리에 묶었으므로(stableUuid) 그 이동은 player_left    │
+     * │   + player_joined 로 방송된다 — 조용히 닉네임만 바뀌는 일은 없다.            │
+     * │ · 위 번호가 모자라면 AI 는 그만큼 덜 선다. 이 규칙의 대가다.                 │
+     * └────────────────────────────────────────────────────────────────────────────┘
+     */
+    const maxTaken = seats.reduce((m, s) => Math.max(m, s.seat), 0);
     let added = 0;
-    for (let seat = 1; seat <= room.capacity && added < WORLD_AI_COUNT; seat += 1) {
-      if (taken.has(seat)) continue;
+    for (let seat = maxTaken + 1; seat <= room.capacity && added < WORLD_AI_COUNT; seat += 1) {
       seats.push({
         // 닉네임·가면은 fill_with_bots 와 같은 규칙이다. 다르게 만들면 그게 표식이다.
-        id: await stableUuid(roomId, added),
+        id: await stableUuid(roomId, seat),
         seat,
         nickname: `익명${seat}`,
         mask_id: `mask-${String(seat).padStart(2, '0')}`,
