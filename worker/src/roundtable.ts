@@ -47,7 +47,13 @@
  * bots.ts 와 같은 결이다 — 가변 상태 + 스텝 함수. DB·네트워크를 모르고 now 는 인자로 받는다.
  */
 
-import type { RevealIdentity, RevealVote, RoundPhase, RoundWinner } from '../../lib/mp/protocol';
+import type {
+  RevealIdentity,
+  RevealVote,
+  RoundPhase,
+  RoundRole,
+  RoundWinner,
+} from '../../lib/mp/protocol';
 import {
   ROUND_DEFENSE_MS,
   ROUND_FREECHAT_MS,
@@ -110,6 +116,12 @@ export interface RoundState {
    *   판정이 주사위가 된다). 봇도 반드시 투표하되 집계에서만 빠진다.
    */
   humanIds: string[];
+  /**
+   * ★ 그중 연기자 좌석 (SPEC §18.2). humanIds 의 부분집합. 수는 0~상한 균등 랜덤이고
+   *   **비공개다** — 밖으로 나가는 길은 각자에게 가는 `t:'role'`(humanRole)과
+   *   revealSnapshot 둘뿐이다. 0명인 판이 정상적으로 나온다 — 예외 처리 대상이 아니다.
+   */
+  actorIds: string[];
 
   /** voterId → targetId. **마지막 선택이 유효하다** (덮어쓴다). 사람·봇 전부 담긴다. */
   votes: Record<string, string>;
@@ -183,6 +195,35 @@ function pickTopics(rng: Rng): string[] {
   return out;
 }
 
+/* ─────────────────────────────── 연기자 (§18.2) ─────────────────────────────── */
+
+/** 사람 수 → 연기자 상한 (SPEC §18.1 인원표). 2명 이하 0 · 3~5명 1 · 6명부터 2. */
+function actorCap(humanCount: number): number {
+  if (humanCount <= 2) return 0;
+  if (humanCount <= 5) return 1;
+  return 2;
+}
+
+/**
+ * 연기자를 뽑는다. **수는 0~상한 균등 랜덤이고 비공개다** (§18.2) — 고정값이면
+ * 표만 보면 누구나 아는 수라, 랜덤으로 두는 것이 곧 비밀로 두는 것이다.
+ *
+ * ★ 뽑기가 명단 순서에 의존하면 안 된다 (I1 — tallyNomination 의 동점 추첨과 같은
+ *   이유). humanIds 는 좌석/입장 순서라, 앞에서 자르기 전에 rng 로 섞는다.
+ */
+function pickActors(humans: readonly string[], rng: Rng): string[] {
+  const cap = actorCap(humans.length);
+  // rng()가 1을 돌려줘도 cap 을 넘지 않는다 (pick 과 같은 방어)
+  const count = Math.min(cap, Math.floor(rng() * (cap + 1)));
+  if (count === 0) return [];
+  const pool = humans.slice();
+  for (let i = pool.length - 1; i > 0; i -= 1) {
+    const j = Math.min(i, Math.floor(rng() * (i + 1)));
+    [pool[i], pool[j]] = [pool[j], pool[i]];
+  }
+  return pool.slice(0, count);
+}
+
 /* ─────────────────────────────── 판 열기 ─────────────────────────────── */
 
 /**
@@ -214,6 +255,7 @@ export function startRound(
     spotlightId: null,
     seatIds: seats,
     humanIds: humans,
+    actorIds: pickActors(humans, rng),
     votes: {},
     verdicts: {},
     nomineeId: null,
@@ -289,20 +331,45 @@ export function resolveVerdict(
 }
 
 /**
- * 이긴 진영. 처형했고 그가 봇이면 시민 승, 그 밖에는 전부 AI 승이다 (SPEC §18.4).
+ * 이긴 진영 (SPEC §18.4의 월드 변형). 처형된 자리의 정체가 판을 끝낸다:
+ * AI → 시민 승 · 연기자 → 연기자 승 · 시민 → AI 승.
+ * 처형이 없으면(지목 없음 · 부결) AI 승 — AI 가 살아남은 판이다.
  *
- * ★ 'actor'(연기자 승)는 여기서 나오지 않는다 — 워커는 is_bot 만 알고 역할(citizen/actor)은
- *   모른다(room-meta.ts 의 SeatRow 에 역할 필드가 없다). 프로토콜 타입에는 미리 들어가 있다
- *   (union 멤버를 나중에 늘리면 구 클라가 조용히 default 로 흘리기 때문 — protocol.ts 규칙 2).
+ * ★ 연기자는 판 시작 때 워커가 직접 뽑는다 (pickActors, §18.2). 예전 주석의
+ *   "워커는 역할을 모른다"는 그때 이야기다 — 이제 RoundState.actorIds 가 안다.
  */
-export function decideWinner(executed: boolean, nomineeIsBot: boolean): RoundWinner {
-  return executed && nomineeIsBot ? 'citizen' : 'ai';
+export function decideWinner(executed: boolean, nomineeRole: RoundRole | null): RoundWinner {
+  if (!executed || nomineeRole === null) return 'ai';
+  if (nomineeRole === 'ai') return 'citizen';
+  return nomineeRole === 'actor' ? 'actor' : 'ai';
 }
 
 /** 판 시작 시점 명단 기준으로 이 좌석이 봇인가. **이 파일 밖으로 새면 안 되는 판단이다.** */
 function isBotSeat(s: RoundState, id: string | null): boolean {
   if (id === null) return false;
   return s.seatIds.includes(id) && !s.humanIds.includes(id);
+}
+
+/**
+ * 판 시작 시점 명단 기준 좌석의 진영. isBotSeat 과 같은 급 — **밖으로 새면 안 된다.**
+ * 좌석이 아니면 null.
+ */
+function seatRole(s: RoundState, id: string | null): RoundRole | null {
+  if (id === null || !s.seatIds.includes(id)) return null;
+  if (!s.humanIds.includes(id)) return 'ai';
+  return s.actorIds.includes(id) ? 'actor' : 'citizen';
+}
+
+/**
+ * **본인에게만** 알려줄 역할 (`t:'role'` 용, §18.2). 봇·좌석 밖이면 null 이라
+ * 봇 여부가 이 함수로는 새지 않는다 — null 은 "보낼 것 없음"일 뿐이다.
+ *
+ * ★ revealSnapshot 밖에서 정체가 나가는 **유일한 통로**다. 반환값은 반드시
+ *   그 사람의 소켓 하나에만 보낸다 — 브로드캐스트에 실으면 연기자 명단이 샌다.
+ */
+export function humanRole(s: RoundState, id: string): 'citizen' | 'actor' | null {
+  const role = seatRole(s, id);
+  return role === 'ai' ? null : role;
 }
 
 /* ─────────────────────────────── 표 받기 ─────────────────────────────── */
@@ -473,7 +540,7 @@ function settleVerdict(s: RoundState): void {
   const r = resolveVerdict(s.verdicts, s.humanIds, s.nomineeId);
   s.verdictTally = { guilty: r.guilty, innocent: r.innocent };
   s.executed = s.nomineeId !== null && r.executed;
-  s.winner = decideWinner(s.executed, isBotSeat(s, s.nomineeId));
+  s.winner = decideWinner(s.executed, seatRole(s, s.nomineeId));
 }
 
 /**
@@ -575,7 +642,13 @@ export function revealSnapshot(s: RoundState): {
     winner: s.winner ?? 'ai',
     verdict: { guilty: s.verdictTally.guilty, innocent: s.verdictTally.innocent },
     votes,
-    identities: s.seatIds.map((id) => ({ id, isBot: isBotSeat(s, id) })),
+    // role 은 §18.2 확정 뒤에 붙었다. isBot 은 role 없이 보내던 구 워커와 같은 값 —
+    // 클라이언트가 role 이 없으면 isBot 으로 접으므로 둘을 함께 낸다.
+    identities: s.seatIds.map((id) => ({
+      id,
+      isBot: isBotSeat(s, id),
+      role: seatRole(s, id) ?? 'citizen',
+    })),
   };
 }
 

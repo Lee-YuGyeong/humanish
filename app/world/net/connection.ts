@@ -70,6 +70,11 @@ export interface WorldEvents {
   onEliminated(id: string): void;
   /** 판이 끝났다. 정체가 실린 유일한 이벤트다 */
   onReveal(reveal: RevealResult): void;
+  /**
+   * 내 역할 (§18.2). **내 것만** 온다 — 남의 역할은 reveal 전에는 어떤 경로로도
+   * 오지 않는다. 판이 열릴 때·재접속할 때 한 번.
+   */
+  onRole(role: 'citizen' | 'actor'): void;
   onError(code: ErrorCode | 'connection_failed'): void;
   onClose(): void;
 }
@@ -162,6 +167,9 @@ export class WorldConnection {
             votes: msg.votes,
             identities: msg.identities,
           });
+          break;
+        case 'role':
+          events.onRole(msg.role);
           break;
         case 'error':
           this.failed = true;

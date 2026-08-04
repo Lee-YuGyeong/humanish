@@ -80,6 +80,7 @@ import {
   castVote,
   eliminatedId,
   haveAllVoted,
+  humanRole,
   revealSnapshot,
   roundSnapshot,
   startRound,
@@ -385,7 +386,13 @@ export class RoomDO {
     //   그것 하나뿐이고(I1의 유일한 예외), 판을 함께 보지 않은 사람에게 결말만 던져
     //   줄 이유가 없다. roundSnapshot 은 nomineeId·spotlightId 를 단계로 막아 준다.
     await this.ensureRound();
-    if (this.round) this.send(server, { t: 'round', ...roundSnapshot(this.round) });
+    if (this.round) {
+      this.send(server, { t: 'round', ...roundSnapshot(this.round) });
+      // 자기 역할은 재접속 때도 다시 알려준다 — 새로고침하면 로컬엔 아무것도 없다.
+      // humanRole 은 봇·판 밖 좌석이면 null 이라 여기서 보낼 게 없다 (§18.2).
+      const role = humanRole(this.round, snapshot.id);
+      if (role) this.send(server, { t: 'role', role });
+    }
 
     await this.ctx.storage.delete(KEY_EMPTY_AT);
     await this.ensureAlarm();
@@ -1120,7 +1127,8 @@ export class RoomDO {
     this.roundLoaded = true;
     const stored = await this.ctx.storage.get<StoredRound>(KEY_ROUND);
     if (!stored?.round) return;
-    this.round = stored.round;
+    // 연기자(actorIds)가 생기기 전에 구운 판 방어 — 없으면 연기자 0명 판으로 읽는다.
+    this.round = { ...stored.round, actorIds: stored.round.actorIds ?? [] };
     this.botVotes = stored.botVotes ?? {};
     this.botVerdicts = stored.botVerdicts ?? {};
   }
@@ -1163,8 +1171,28 @@ export class RoomDO {
     // 안 하면 첫 주제가 뜨는 동안 봇만 화면을 등지고 걸어 나간다 (gatherBot, I1).
     for (const bot of this.roundBots()) gatherBot(bot, now);
     this.broadcastRound();
+    this.sendRoles();
     await this.saveRound();
     this.startSim();
+  }
+
+  /**
+   * 각자에게 **자기 역할만** 보낸다 (§18.2 — 연기자끼리도 서로 모른다).
+   *
+   * ★ 반드시 소켓 단위 send 다. broadcast 에 실으면 그 순간 연기자 명단이 방 전체에
+   *   새고, 그게 곧 게임의 끝이다 (protocol.ts 의 t:'role' 상자).
+   * ★ round 브로드캐스트 **뒤에** 부른다 — 클라이언트가 topic 에서 지난 판 역할을
+   *   지운 다음 새 역할을 받는 순서가 돼야 한다 (roundtable-store 의 applyRound).
+   */
+  private sendRoles(): void {
+    const s = this.round;
+    if (!s || s.done) return;
+    for (const ws of this.ctx.getWebSockets()) {
+      const snap = ws.deserializeAttachment() as PlayerSnapshot | null;
+      if (!snap) continue;
+      const role = humanRole(s, snap.id);
+      if (role) this.send(ws, { t: 'role', role });
+    }
   }
 
   /**

@@ -172,6 +172,7 @@ export default function WorldPage() {
       onVoteProgress: (voted, total) => useRoundtableStore.getState().applyProgress(voted, total),
       onEliminated: (id) => useRoundtableStore.getState().applyEliminated(id),
       onReveal: (reveal) => useRoundtableStore.getState().applyReveal(reveal),
+      onRole: (role) => useRoundtableStore.getState().setMyRole(role),
       onError: (codeText) =>
         useWorldStore.getState().setStatus('error', errorMessage(codeText)),
       onClose: () => useWorldStore.getState().setStatus('error', '연결이 끊겼다'),

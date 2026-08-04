@@ -71,6 +71,11 @@ interface RoundtableState {
   myVote: string | null;
   /** 내 생사 재투표(찬=true). 안 냈으면 null */
   myVerdict: boolean | null;
+  /**
+   * 내 역할 (§18.2). t:'role' 이 내 것만 준다 — **남의 역할은 여기 절대 없다.**
+   * 판이 열리기 전(idle)·역할이 아직 안 온 동안은 null.
+   */
+  myRole: 'citizen' | 'actor' | null;
 
   // ── 액션 ──────────────────────────────────────────────────────────────────
   /**
@@ -94,6 +99,8 @@ interface RoundtableState {
   setMyVote(targetId: string | null): void;
   /** 내 생사 재투표 선택. 확정 조건은 setMyVote 와 같다 */
   setMyVerdict(guilty: boolean | null): void;
+  /** 내 역할 반영 (page.tsx 의 onRole) */
+  setMyRole(role: 'citizen' | 'actor'): void;
   /** 방을 옮기거나 판이 끝나면 부른다. **지난 판의 정체가 새 방으로 새면 안 된다** */
   reset(): void;
 }
@@ -116,6 +123,7 @@ const IDLE = {
   reveal: null,
   myVote: null,
   myVerdict: null,
+  myRole: null,
 };
 
 export const useRoundtableStore = create<RoundtableState>((set) => ({
@@ -136,7 +144,9 @@ export const useRoundtableStore = create<RoundtableState>((set) => ({
         ...(changed ? { myVote: null, myVerdict: null, voted: 0, total: 0 } : null),
         // 한 판 더(rematch) — 새 판(topic)이 열리면 지난 판의 결과·처형 연출을 걷는다.
         // 여기 말고는 안 걷는다: ended 뒤에도 reveal 은 남아 있어야 한다(결과를 읽는 중).
-        ...(round.phase === 'topic' ? { reveal: null, eliminatedId: null } : null),
+        // myRole 도 같이 걷는다 — 새 역할(t:'role')은 round 브로드캐스트 **뒤에** 온다
+        // (room-do 의 sendRoles 순서). 안 걷으면 새 역할이 오기 전 지난 역할이 보인다.
+        ...(round.phase === 'topic' ? { reveal: null, eliminatedId: null, myRole: null } : null),
       };
     }),
 
@@ -149,6 +159,8 @@ export const useRoundtableStore = create<RoundtableState>((set) => ({
   setMyVote: (myVote) => set({ myVote }),
 
   setMyVerdict: (myVerdict) => set({ myVerdict }),
+
+  setMyRole: (myRole) => set({ myRole }),
 
   reset: () => set({ ...IDLE }),
 }));

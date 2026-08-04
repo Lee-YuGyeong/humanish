@@ -174,6 +174,13 @@ export type RoundPhase =
  */
 export type RoundWinner = 'citizen' | 'ai' | 'actor';
 
+/**
+ * 한 좌석의 진영 (SPEC §18.2 — 예전 이름 '스파이'는 쓰지 않는다).
+ * 연기자('actor')는 AI 인 척하는 **사람**이다. 수는 0~상한 균등 랜덤이고 비공개 —
+ * 밖으로 나가는 자리는 각자에게 가는 `t:'role'` 과 reveal 의 identities 둘뿐이다.
+ */
+export type RoundRole = 'citizen' | 'actor' | 'ai';
+
 /** reveal 에서 공개하는 한 표. 누가 누구를 찍었나 (사람·봇 전부). */
 export interface RevealVote {
   voterId: string;
@@ -187,6 +194,11 @@ export interface RevealVote {
 export interface RevealIdentity {
   id: string;
   isBot: boolean;
+  /**
+   * 진영. `isBot` 과 겹치지만(role==='ai' ⇔ isBot) 지우지 않는다 — 구 워커가
+   * 이 필드 없이 보낼 수 있어서, 클라이언트는 없으면 isBot 으로 접는다.
+   */
+  role?: RoundRole;
 }
 
 /** 접속이 거절되는 이유. 클라이언트가 이걸 보고 재시도할지 정한다. */
@@ -315,6 +327,14 @@ export type S2CMessage =
       /** ★ 정체. 전 좌석, 좌석 순서 */
       identities: RevealIdentity[];
     }
+  /**
+   * 내 역할 — **이 소켓 하나에만** 간다 (§18.2 — 자기 역할만 안다, 연기자끼리도
+   * 서로 모른다). 판이 열릴 때, 그리고 판 도중 재접속할 때 한 번. 봇 좌석에는
+   * 소켓이 없으니 애초에 갈 곳이 없다.
+   * ★ 브로드캐스트에 실으면 그 순간 연기자 명단이 방 전체에 새는 것이다 —
+   *   이 메시지는 반드시 소켓 단위 send 로만 보낸다.
+   */
+  | { t: 'role'; role: 'citizen' | 'actor' }
   | { t: 'error'; code: ErrorCode };
 
 /**

@@ -427,16 +427,65 @@ describe('resolveVerdict — 찬 과반만 처형, 동수는 생존', () => {
   });
 });
 
-describe('decideWinner — 승패 매핑 3가지 (SPEC §18.4)', () => {
-  it('처형했고 그가 봇이면 시민 승', () => {
-    expect(decideWinner(true, true)).toBe('citizen');
+describe('decideWinner — 승패 매핑 (SPEC §18.4)', () => {
+  it('처형했고 그가 AI 면 시민 승', () => {
+    expect(decideWinner(true, 'ai')).toBe('citizen');
   });
-  it('처형했는데 사람이면 AI 승', () => {
-    expect(decideWinner(true, false)).toBe('ai');
+  it('처형했는데 연기자면 연기자 승', () => {
+    expect(decideWinner(true, 'actor')).toBe('actor');
   });
-  it('처형하지 못했으면 AI 승', () => {
-    expect(decideWinner(false, true)).toBe('ai');
-    expect(decideWinner(false, false)).toBe('ai');
+  it('처형했는데 시민이면 AI 승', () => {
+    expect(decideWinner(true, 'citizen')).toBe('ai');
+  });
+  it('처형하지 못했으면 정체와 무관하게 AI 승', () => {
+    expect(decideWinner(false, 'ai')).toBe('ai');
+    expect(decideWinner(false, 'citizen')).toBe('ai');
+    expect(decideWinner(false, 'actor')).toBe('ai');
+    expect(decideWinner(true, null)).toBe('ai'); // 지목 없음 방어 — 실제로는 오지 않는 조합
+  });
+});
+
+describe('연기자 배정 (§18.2) — 수는 0~상한 균등 랜덤, 사람 중에서만', () => {
+  it('사람 2명 이하면 연기자가 없다 — 인원표의 상한이 0 이다 (§18.1)', () => {
+    const s = startRound(SEATS, HUMANS, 0, rngOf(0.99))!;
+    expect(s.actorIds).toEqual([]);
+  });
+
+  it('0명인 판이 정상적으로 나온다 — 예외 처리 대상이 아니다', () => {
+    const zero = startRound(['a', 'b', 'c', 'd', 'e'], ['a', 'b', 'c'], 0, rngOf(0))!;
+    expect(zero.actorIds).toEqual([]);
+    const one = startRound(['a', 'b', 'c', 'd', 'e'], ['a', 'b', 'c'], 0, rngOf(0.99))!;
+    expect(one.actorIds.length).toBe(1);
+  });
+
+  it('연기자는 언제나 사람 중에서만 나오고 상한을 넘지 않는다', () => {
+    for (let i = 0; i < 200; i += 1) {
+      const s = startRound(
+        ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'],
+        ['a', 'b', 'c', 'd', 'e', 'f'],
+        0,
+      )!;
+      for (const id of s.actorIds) expect(s.humanIds).toContain(id);
+      expect(s.actorIds.length).toBeLessThanOrEqual(2); // 사람 6명 → 상한 2 (§18.1)
+    }
+  });
+
+  it('연기자를 처형하면 연기자 승이고 reveal 에 role 이 실린다 (§18.4)', () => {
+    const s = startRound(['a', 'b', 'c', 'd'], ['a', 'b', 'c'], 0, rngOf(0.99))!;
+    expect(s.actorIds.length).toBe(1);
+    const actor = s.actorIds[0];
+    const others = s.humanIds.filter((h) => h !== actor);
+
+    runTo(s, 'vote');
+    castAll(s, { [others[0]]: actor, [others[1]]: actor });
+    advance(s); // → defense
+    advance(s); // → verdict
+    castVerdict(s, others[0], true, s.phaseEndsAt - 1);
+    castVerdict(s, others[1], true, s.phaseEndsAt - 1);
+    advance(s); // → reveal
+
+    expect(s.winner).toBe('actor');
+    expect(revealSnapshot(s)!.identities.find((i) => i.id === actor)?.role).toBe('actor');
   });
 });
 
@@ -781,11 +830,12 @@ describe('revealSnapshot — 정체를 내보내는 유일한 함수', () => {
     const s = playRound({ votes: { a: 'c', b: 'c' }, verdicts: { a: true, b: true } });
     const r = revealSnapshot(s)!;
     expect(r.identities.map((i) => i.id)).toEqual(SEATS);
+    // 사람 2명 방은 연기자 상한이 0 (§18.1) — 사람은 전부 시민이다
     expect(r.identities).toEqual([
-      { id: 'a', isBot: false },
-      { id: 'b', isBot: false },
-      { id: 'c', isBot: true },
-      { id: 'd', isBot: true },
+      { id: 'a', isBot: false, role: 'citizen' },
+      { id: 'b', isBot: false, role: 'citizen' },
+      { id: 'c', isBot: true, role: 'ai' },
+      { id: 'd', isBot: true, role: 'ai' },
     ]);
   });
 
@@ -830,10 +880,10 @@ describe('revealSnapshot — 정체를 내보내는 유일한 함수', () => {
         { voterId: 'b', targetId: 'c' },
       ],
       identities: [
-        { id: 'a', isBot: false },
-        { id: 'b', isBot: false },
-        { id: 'c', isBot: true },
-        { id: 'd', isBot: true },
+        { id: 'a', isBot: false, role: 'citizen' },
+        { id: 'b', isBot: false, role: 'citizen' },
+        { id: 'c', isBot: true, role: 'ai' },
+        { id: 'd', isBot: true, role: 'ai' },
       ],
     });
   });

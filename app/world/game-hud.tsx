@@ -29,7 +29,7 @@
 
 import { useEffect, useMemo, useState } from 'react';
 
-import type { RoundPhase, RoundWinner } from '@/lib/mp/protocol';
+import type { RevealIdentity, RoundPhase, RoundRole, RoundWinner } from '@/lib/mp/protocol';
 import { seatColor } from '@/lib/mp/validate';
 import { useRoundtableStore } from './roundtable-store';
 import { useWorldStore } from './store';
@@ -62,6 +62,21 @@ const WINNER_LABEL: Record<RoundWinner, string> = {
   ai: 'AI 승리',
   actor: '연기자 승리',
 };
+
+/** reveal 정체 표기. 이 라벨 밖에서 role 을 화면에 적지 않는다 (역할 안내는 RoleBanner 하나) */
+const ROLE_TAG: Record<RoundRole, { label: string; className: string }> = {
+  ai: { label: 'AI', className: 'text-emerald-400' },
+  actor: { label: '연기자', className: 'text-[#d4a373]' },
+  citizen: { label: '시민', className: 'text-neutral-500' },
+};
+
+/**
+ * 정체의 진영. **구 워커 호환** — role 이 없던 시절의 reveal 은 isBot 만 실어
+ * 보냈으므로, 없으면 isBot 으로 접는다 (그때는 연기자가 없어 사람 = 시민이 맞다).
+ */
+function identityRole(i: RevealIdentity): RoundRole {
+  return i.role ?? (i.isBot ? 'ai' : 'citizen');
+}
 
 /** ①②③… 은 유니코드로 20까지 있다. 좌석·라운드가 그보다 많을 일은 없다 */
 const CIRCLED = ['①', '②', '③', '④', '⑤', '⑥', '⑦', '⑧', '⑨', '⑩'];
@@ -185,11 +200,21 @@ function PhaseHud() {
   const endsAt = useRoundtableStore((s) => s.endsAt);
   const round = useRoundtableStore((s) => s.round);
   const totalRounds = useRoundtableStore((s) => s.totalRounds);
+  const myRole = useRoundtableStore((s) => s.myRole);
   const left = useRemainingSec(endsAt);
 
   if (phase === 'idle') return null;
 
   const hint = PHASE_HINT[phase];
+  /**
+   * 연기자 안내 (§18.2). **내 화면에만 있는 로컬 값이다** — myRole 은 t:'role' 로
+   * 내 것만 왔다. 시민에게는 아무것도 띄우지 않는다: "안내가 안 뜨는 동안 = 시민"은
+   * 자기 화면 안에서만 성립하는 사실이라 새는 게 없다.
+   */
+  const actorHint =
+    myRole === 'actor' && phase !== 'reveal' && phase !== 'ended'
+      ? '당신은 연기자다 — AI 인 척해서 지목을 받아라'
+      : null;
 
   return (
     <div className="pointer-events-none absolute left-1/2 top-5 z-30 flex -translate-x-1/2 flex-col items-center gap-1.5">
@@ -223,6 +248,12 @@ function PhaseHud() {
       {hint ? (
         <p className="text-[11px] text-neutral-400 drop-shadow-[0_1px_6px_rgba(0,0,0,0.9)]">
           {hint}
+        </p>
+      ) : null}
+
+      {actorHint ? (
+        <p className="text-[11px] font-bold text-[#d4a373] drop-shadow-[0_1px_6px_rgba(0,0,0,0.9)]">
+          {actorHint}
         </p>
       ) : null}
     </div>
@@ -451,10 +482,11 @@ function RevealOverlay({ onLeave, onRematch }: { onLeave: () => void; onRematch:
   if (!reveal) return null;
 
   const nomineeName = reveal.nomineeId ? nameOf(reveal.nomineeId) : null;
-  const nomineeIsBot =
+  const nominee =
     reveal.nomineeId === null
       ? null
-      : (reveal.identities.find((i) => i.id === reveal.nomineeId)?.isBot ?? null);
+      : (reveal.identities.find((i) => i.id === reveal.nomineeId) ?? null);
+  const nomineeRole = nominee ? identityRole(nominee) : null;
 
   return (
     <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/80 p-6 backdrop-blur">
@@ -474,15 +506,17 @@ function RevealOverlay({ onLeave, onRematch }: { onLeave: () => void; onRematch:
           )}
         </p>
 
-        {/* ② 그는 AI 였는가 */}
+        {/* ② 그는 누구였는가 — AI / 연기자 / 시민 (§18.4) */}
         <Layer show={stage >= 1}>
           <p className="mt-4 text-center text-[15px] font-bold">
-            {nomineeIsBot === null ? (
+            {nomineeRole === null ? (
               <span className="text-neutral-500">지목이 없어 정체를 열지 못했다</span>
-            ) : nomineeIsBot ? (
+            ) : nomineeRole === 'ai' ? (
               <span className="text-emerald-400">그는 AI 였다</span>
+            ) : nomineeRole === 'actor' ? (
+              <span className="text-[#d4a373]">그는 연기자였다 — AI 인 척한 사람</span>
             ) : (
-              <span className="text-red-400">그는 사람이었다</span>
+              <span className="text-red-400">그는 시민이었다</span>
             )}
           </p>
         </Layer>
@@ -524,11 +558,9 @@ function RevealOverlay({ onLeave, onRematch }: { onLeave: () => void; onRematch:
                       {nameOf(i.id)}
                     </span>
                     <span
-                      className={`shrink-0 font-mono text-[10px] ${
-                        i.isBot ? 'text-emerald-400' : 'text-neutral-500'
-                      }`}
+                      className={`shrink-0 font-mono text-[10px] ${ROLE_TAG[identityRole(i)].className}`}
                     >
-                      {i.isBot ? 'AI' : '사람'}
+                      {ROLE_TAG[identityRole(i)].label}
                     </span>
                   </div>
                 ))}
