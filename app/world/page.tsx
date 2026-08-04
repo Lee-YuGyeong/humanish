@@ -122,8 +122,17 @@ function requestLock(tries = 3, delayMs = 1400, waitTries = CANVAS_WAIT_TRIES): 
   }
 }
 
+/**
+ * 새 방 정원 선택지. **lib/server/room.ts 의 MIN/MAX/DEFAULT_ROOM_CAPACITY 와 같은
+ * 값이어야 한다** — 서버 모듈은 클라이언트로 못 가져오니 여기 복사본을 둔다
+ * (app/main/lobby.tsx 가 같은 이유로 같은 복사본을 갖고 있다).
+ */
+const ROOM_CAPACITIES = [3, 4, 5, 6, 7, 8] as const;
+const DEFAULT_CAPACITY = 5;
+
 export default function WorldPage() {
   const [code, setCode] = useState('');
+  const [capacity, setCapacity] = useState<number>(DEFAULT_CAPACITY);
   const [busy, setBusy] = useState(false);
   const [ticket, setTicket] = useState<Ticket | null>(null);
   const [locked, setLocked] = useState(false);
@@ -194,7 +203,7 @@ export default function WorldPage() {
 
         const room = roomCode
           ? await postJson<{ room: { id: string } }>('/api/room/join', { code: roomCode.toUpperCase() })
-          : await postJson<{ room: { id: string } }>('/api/room', {});
+          : await postJson<{ room: { id: string } }>('/api/room', { capacity });
 
         const t = await postJson<Ticket>('/api/world/ticket', { room_id: room.room.id });
         setTicket(t);
@@ -211,7 +220,8 @@ export default function WorldPage() {
         setBusy(false);
       }
     },
-    [conn, events],
+    // capacity 가 바뀌면 enter 도 바뀐다 — 자동 입장 효과는 ref 가드가 재진입을 막는다
+    [conn, events, capacity],
   );
 
   useEffect(() => () => conn.close(), [conn]);
@@ -634,6 +644,25 @@ export default function WorldPage() {
               >
                 입장
               </button>
+            </div>
+
+            {/* 새 방의 정원. 코드로 들어갈 때는 안 쓴다 — 그 방의 정원은 만든 사람이 정했다 */}
+            <div className="mt-4 flex items-center gap-1.5">
+              <span className="mr-1 text-[11px] text-neutral-500">정원</span>
+              {ROOM_CAPACITIES.map((n) => (
+                <button
+                  key={n}
+                  type="button"
+                  onClick={() => setCapacity(n)}
+                  className={`h-8 w-8 rounded-lg font-mono text-[13px] transition-colors ${
+                    capacity === n
+                      ? 'bg-amber-500/90 font-bold text-black'
+                      : 'bg-white/5 text-neutral-300 ring-1 ring-white/10 hover:bg-white/10'
+                  }`}
+                >
+                  {n}
+                </button>
+              ))}
             </div>
 
             <button
