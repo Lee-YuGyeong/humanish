@@ -25,10 +25,13 @@ import { ApiError } from '@/lib/server/auth';
 
 /**
  * 월드에 세울 AI 수. 게임 정원과 무관하다 — 빈자리가 있는 만큼만 선다.
- * 늘리기 전에 "봇끼리 떠들기 시작하지 않나"를 확인할 것 (worker/src/room-do.ts의
- * reactToHuman 은 사람 발화에서만 불린다).
+ *
+ * 2로 올린 근거(2026-08-04): "봇끼리 떠들기 시작하지 않나"는 워커에서 막혀 있다 —
+ * 봇→봇 대꾸는 maybeChain 이 상한(BOT_CHAIN_MAX)을 세고 사람 발화가 와야 풀리며,
+ * 자발 발화는 직전 발화가 자기 것이면 차례를 쉰다 (room-do.ts tick ①의 자답 가드).
+ * 더 올리기 전에는 라운지에서 봇 발화 밀도를 실측할 것.
  */
-export const WORLD_AI_COUNT = 1;
+export const WORLD_AI_COUNT = 2;
 
 /*
  * 월드 AI 가 연기할 인물은 lib/agent/world-persona.ts 로 이관했다 (페르소나는 B 도메인).
