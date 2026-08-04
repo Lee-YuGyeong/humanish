@@ -287,9 +287,13 @@ export function Lobby() {
    * 코드로 입장. 목록의 줄도 이 길을 쓴다 — /room/{code}로 그냥 이동하면 자리가
    * 배정되지 않아 "이 방의 참가자가 아니다" 화면을 보게 된다.
    * 이미 그 방에 있으면 서버가 원래 자리를 그대로 돌려준다(rejoined).
+   *
+   * @param dest 입장 후 어디로 가는가. 목록 선택은 3D 월드('world')로 간다 —
+   *             게임을 월드에서 돌리기로 해서다. 자리 배정(join)은 여기서 이미
+   *             끝났고, /world 는 ?code= 를 받아 같은 자리로 재입장한다.
    */
   const enterRoom = useCallback(
-    async (raw: string): Promise<void> => {
+    async (raw: string, dest: "room" | "world" = "room"): Promise<void> => {
       const normalized = raw.trim().toUpperCase();
       setBusy(true);
       setJoinError(null);
@@ -305,7 +309,7 @@ export function Lobby() {
           return;
         }
         setCodeOpen(false);
-        router.push(`/room/${normalized}`);
+        router.push(dest === "world" ? `/world?code=${normalized}` : `/room/${normalized}`);
       } catch {
         setJoinError("서버에 연결하지 못했다");
       } finally {
@@ -379,7 +383,7 @@ export function Lobby() {
               sort={sort}
               onSort={(col) => setSort((cur) => nextSort(cur, col))}
               onRetry={() => void loadRooms()}
-              onEnter={(c) => void enterRoom(c)}
+              onEnter={(c) => void enterRoom(c, "world")}
               onCreate={(seed) => {
                 setSeedName(seed ?? "");
                 setTab("create");

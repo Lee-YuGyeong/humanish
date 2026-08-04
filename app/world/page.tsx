@@ -215,6 +215,27 @@ export default function WorldPage() {
 
   useEffect(() => () => conn.close(), [conn]);
 
+  /**
+   * `/world?code=ABCD` — 방 목록(/main)에서 넘어온 자동 입장.
+   *
+   * · 자리는 로비가 이미 배정했다(/api/room/join). 여기 enter 의 join 은 같은
+   *   쿠키로 원래 자리를 돌려받는 재입장(200)이라 두 번 불러도 안전하다.
+   * · useSearchParams 대신 location.search 를 읽는다 — 이 페이지는 전부 클라이언트
+   *   상호작용이라 Suspense 경계를 새로 파느니 마운트 때 한 번 읽는 게 맞다.
+   * · ref 가드는 StrictMode 의 이중 실행 방지다. 「새로운 게임 시작하기」로 나온
+   *   뒤에도 주소에 code 가 남지만, 이 가드 덕에 다시 끌려 들어가지 않는다.
+   */
+  const autoEntered = useRef(false);
+  useEffect(() => {
+    if (autoEntered.current) return;
+    const fromList = new URLSearchParams(window.location.search).get('code');
+    if (!fromList || fromList.trim().length !== 4) return;
+    autoEntered.current = true;
+    const normalized = fromList.trim().toUpperCase();
+    setCode(normalized);
+    void enter(normalized);
+  }, [enter]);
+
   /** 세계가 실제로 떠 있는가. 아래 효과들이 전부 이 값을 본다 (선언이 먼저여야 한다) */
   const live = status === 'live' && ticket !== null;
 
