@@ -134,6 +134,9 @@ export const useRoundtableStore = create<RoundtableState>((set) => ({
         nomineeId: round.nomineeId,
         // 단계가 넘어갔으면 지난 단계의 선택·진행은 의미가 없다
         ...(changed ? { myVote: null, myVerdict: null, voted: 0, total: 0 } : null),
+        // 한 판 더(rematch) — 새 판(topic)이 열리면 지난 판의 결과·처형 연출을 걷는다.
+        // 여기 말고는 안 걷는다: ended 뒤에도 reveal 은 남아 있어야 한다(결과를 읽는 중).
+        ...(round.phase === 'topic' ? { reveal: null, eliminatedId: null } : null),
       };
     }),
 

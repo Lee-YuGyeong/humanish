@@ -541,6 +541,20 @@ export class RoomDO {
         return;
       }
 
+      case 'rematch': {
+        // 한 판 더 — **끝난 판에서만**. intro_done 과 같은 "첫 신호만" 규칙이다:
+        // 첫 rematch 가 판을 비우고 새로 열면, 나머지는 round 가 살아 있어
+        // maybeStartRound 첫 줄에서 그냥 돌아선다.
+        if (!this.allowGameMessage(ws)) return;
+        if (!this.round?.done) return;
+        this.round = null;
+        // 저장본도 지운다 — 새 판이 어떤 이유로 못 열리면(좌석 0) DO 재기동 때
+        // 끝난 판이 되살아나 rematch 가 영영 막힌다.
+        await this.ctx.storage.delete(KEY_ROUND);
+        await this.maybeStartRound(Date.now());
+        return;
+      }
+
       default:
         return; // 전방 호환. 모르는 타입은 무시한다
     }
@@ -1124,7 +1138,8 @@ export class RoomDO {
 
   /**
    * 판을 연다. `intro_done` 첫 신호에만 실제로 열리고, 두 번째부터는 그냥 돌아선다.
-   * **끝난 판도 다시 시작하지 않는다** (this.round 가 남아 있으므로 첫 줄에서 걸린다).
+   * **끝난 판도 여기서는 다시 시작하지 않는다** (this.round 가 남아 있으므로 첫 줄에서
+   * 걸린다) — 되살리는 길은 `rematch` 하나뿐이고, 그쪽이 round 를 비운 뒤 다시 부른다.
    */
   private async maybeStartRound(now: number): Promise<void> {
     if (this.round) return;

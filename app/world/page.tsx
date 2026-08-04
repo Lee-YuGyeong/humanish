@@ -378,6 +378,11 @@ export default function WorldPage() {
     [conn],
   );
 
+  /** 같은 방에서 한 판 더 — 서버가 새 판(topic)을 쏘면 결과 오버레이가 걷힌다 */
+  const rematch = useCallback(() => {
+    conn.sendRematch();
+  }, [conn]);
+
   /**
    * 판이 끝난 뒤(결과 화면) 방을 떠나 입장 패널로 돌아간다.
    *
@@ -703,7 +708,7 @@ export default function WorldPage() {
           <VolumeHud visible={volumeHud} />
 
           {/* 판 진행 — 단계 HUD(z-30) · 투표/찬반(z-40) · 결과(z-50) */}
-          <GameHud onVote={castVote} onVerdict={castVerdict} onLeave={leave} />
+          <GameHud onVote={castVote} onVerdict={castVerdict} onLeave={leave} onRematch={rematch} />
 
           {/* 아래 가운데 — 말하기와 안내가 같은 자리를 쓴다 */}
           <div className="absolute inset-x-0 bottom-6 z-30 flex justify-center px-6">

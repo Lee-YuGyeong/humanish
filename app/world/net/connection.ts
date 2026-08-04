@@ -203,6 +203,11 @@ export class WorldConnection {
     return this.send({ t: 'verdict', guilty });
   }
 
+  /** 한 판 더 — 끝난 판에서만 서버가 받는다. 반환값의 뜻은 sendVote 와 같다. */
+  sendRematch(): boolean {
+    return this.send({ t: 'rematch' });
+  }
+
   /**
    * 연결 전 호출은 정상 상황이다(씬이 먼저 뜬다). 조용히 버린다.
    * 실제로 나갔으면 true — 투표처럼 "보냈나"가 화면에 남는 요청이 이 값을 본다.
