@@ -357,6 +357,23 @@ export default function WorldPage() {
     [conn],
   );
 
+  /**
+   * 판이 끝난 뒤(결과 화면) 방을 떠나 입장 패널로 돌아간다.
+   *
+   * `enter` 첫머리의 정리 순서와 같다 — conn.close() 가 핸들러를 먼저 떼므로
+   * (connection.ts close) "연결이 끊겼다" 오류가 입장 패널에 새지 않고,
+   * 스토어 reset 이 status 를 'idle' 로 되돌려 패널이 깨끗하게 뜬다.
+   * `code` 는 남겨 둔다 — 같은 방으로 바로 되돌아갈 수 있게.
+   */
+  const leave = useCallback(() => {
+    conn.close();
+    setSceneReady(false);
+    setComposing(false);
+    setTicket(null);
+    useWorldStore.getState().reset();
+    useRoundtableStore.getState().reset();
+  }, [conn]);
+
   const spawn = useMemo(
     () => (ticket ? spawnFor(ticket.self.seat, ticket.room.capacity) : { x: 0, z: 0 }),
     [ticket],
@@ -665,7 +682,7 @@ export default function WorldPage() {
           <VolumeHud visible={volumeHud} />
 
           {/* 판 진행 — 단계 HUD(z-30) · 투표/찬반(z-40) · 결과(z-50) */}
-          <GameHud onVote={castVote} onVerdict={castVerdict} />
+          <GameHud onVote={castVote} onVerdict={castVerdict} onLeave={leave} />
 
           {/* 아래 가운데 — 말하기와 안내가 같은 자리를 쓴다 */}
           <div className="absolute inset-x-0 bottom-6 z-30 flex justify-center px-6">

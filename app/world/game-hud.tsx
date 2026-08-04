@@ -142,11 +142,14 @@ export function useSeats(): SeatEntry[] {
 export default function GameHud({
   onVote,
   onVerdict,
+  onLeave,
 }: {
   /** 좌석을 골랐다. 실제로 소켓에 나갔을 때만 선택이 확정된다(page.tsx) */
   onVote: (targetId: string) => void;
   /** 찬(처형)/반(생존). 확정 조건은 onVote 와 같다 */
   onVerdict: (guilty: boolean) => void;
+  /** 결과를 다 본 뒤 방을 떠난다 — 연결·스토어 정리는 page.tsx 의 몫 */
+  onLeave: () => void;
 }) {
   const phase = useRoundtableStore((s) => s.phase);
   const reveal = useRoundtableStore((s) => s.reveal);
@@ -161,7 +164,7 @@ export default function GameHud({
         ★ `phase === 'reveal'` 이 아니라 **결과가 실제로 도착했는지**로 띄운다.
           단계만 보고 띄우면 정체가 오기 전에 빈 표가 한 번 번쩍인다.
       */}
-      {reveal ? <RevealOverlay /> : null}
+      {reveal ? <RevealOverlay onLeave={onLeave} /> : null}
     </>
   );
 }
@@ -418,7 +421,7 @@ const REVEAL_STEPS = 3;
  *   화면이 이 값을 읽기 시작하면 그 순간 I1이 무너진다 — 판이 끝나기 전에
  *   "정체를 아는 코드 경로"가 생기고, 그 경로는 언젠가 화면에 닿는다.
  */
-function RevealOverlay() {
+function RevealOverlay({ onLeave }: { onLeave: () => void }) {
   const reveal = useRoundtableStore((s) => s.reveal);
   const seats = useSeats();
   const [stage, setStage] = useState(0);
@@ -543,6 +546,19 @@ function RevealOverlay() {
                 <li className="text-[12px] text-neutral-600">표가 하나도 없었다</li>
               ) : null}
             </ul>
+
+            {/*
+              판이 끝난 방에서 나가는 유일한 문. 마지막 겹과 같이 나타난다 —
+              결과가 다 열리기 전에 문부터 보이면 읽다 만 채로 나가게 된다.
+              연결·스토어 정리는 page.tsx 의 leave 가 한다(여기는 신호만 올린다).
+            */}
+            <button
+              type="button"
+              onClick={onLeave}
+              className="mt-6 w-full rounded-xl bg-[#d4a373]/90 px-4 py-3 text-sm font-bold text-black transition-colors hover:bg-[#d4a373]"
+            >
+              새로운 게임 시작하기
+            </button>
           </div>
         </Layer>
       </div>
