@@ -535,6 +535,15 @@ check "로그인 안 하면 아무것도 안 보인다"     "0" \
   "$(psql -tAq -c "set role authenticated; select count(*) from match_results;")"
 blocked "anon은 match_results를 못 읽는다 (I1)" "select count(*) from match_results;"
 
+# ★ 월드 판은 연기자를 'actor' 로 적는다 (§18.2). 'spy' 는 예전 2D 판의 이름이고
+#   지난 행을 고쳐 쓰지 않아서(소급 금지, §15-2-결정 주석) 둘 다 살아 있어야 한다.
+#   여기가 막히면 월드 전적이 전부 조용히 실패한다 — 기록은 곁다리라 화면은 안 깨진다.
+MR_C=11111111-0000-0000-0000-000000000003
+psql -q -c "insert into match_results (room_id,user_id,role,score,won,humans)
+            values ('$MR_C','$UC','actor',3,true,2);"
+check "role='actor' 가 적힌다 (§18.2 — 월드 판)" "1" \
+  "$(q "select count(*) from match_results where room_id='$MR_C';")"
+
 # ★ 방은 24시간 뒤 지워지지만(§16.4) 전적은 남아야 한다. room_id 에 외래키가
 #   달려 있으면 cascade 로 같이 사라진다 — 화면은 그날 하루 멀쩡하게 돈다.
 #   진짜 방 하나로 확인한다. 위의 MR_A·MR_B 는 방이 없는 uuid 라 이걸 못 잡는다.

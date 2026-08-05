@@ -110,10 +110,14 @@ export interface Profile {
  * ★ 방 안 화면에 쓰지 않는다. Profile 과 같은 이유다 — 로비·전적 화면의 것이다.
  */
 export interface RecentMatch {
-  /** 목록의 key 로만 쓴다. 방은 24시간 뒤 지워지지만(§16.4) 이 값은 남는다 */
+  /** 목록의 key 로만 쓴다. 방은 24시간 뒤 지워지지만(§16.4) 이 값은 남는다.
+   *  ★ 월드 판은 방이 아니라 **판**의 uuid 다 (lib/server/match.ts 의
+   *    buildWorldMatchRows) — 같은 방의 rematch 판들이 각각 한 줄씩 온다. */
   room_id: string;
-  /** 봇의 'ai' 는 오지 않는다. 봇에게는 계정이 없어서 행 자체가 없다 */
-  role: 'citizen' | 'spy';
+  /** 봇의 'ai' 는 오지 않는다. 봇에게는 계정이 없어서 행 자체가 없다.
+   *  'spy' 는 예전 2D 판, 'actor' 는 월드 판이다 — 같은 뜻이고 이름만 §18.2 에서
+   *  바뀌었다. 지난 행을 고쳐 쓰지 않으므로(소급 금지) 둘 다 온다. */
+  role: 'citizen' | 'spy' | 'actor';
   /** 자기 목표를 이뤘나. 기록할 때 정해서 저장한 값이다 (lib/server/match.ts) */
   won: boolean;
   score: number;

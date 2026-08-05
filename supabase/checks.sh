@@ -164,6 +164,16 @@ schema_checks() {
             from pg_constraint
            where conrelid = to_regclass('match_results') and contype = 'c';")"
 
+  # ★ 월드 판은 연기자를 'actor' 로 적는다 (§18.2, §15-2-결정 주석). 이 check 가
+  #   'spy' 만 알면 월드 전적(/api/internal/world-match)이 전부 조용히 실패한다 —
+  #   기록은 곁다리라 아무 화면도 안 깨지고, 승률만 안 움직인다.
+  check "match_results 가 role='actor' 를 받는다 (§18.2)" "t" \
+    "$(q "select coalesce(bool_or(
+                    pg_get_constraintdef(oid) like '%role%'
+                and pg_get_constraintdef(oid) like '%actor%'), false)
+            from pg_constraint
+           where conrelid = to_regclass('match_results') and contype = 'c';")"
+
   # ★ 한 방에 같은 이름이 둘이면 대기방에서 누가 누구인지 못 가린다.
   #   **부분 인덱스**여야 한다 — 이름 없는 사람은 여럿이어도 되고, shuffle_seats 가
   #   전원을 null 로 만들 때 서로 부딪히면 게임 시작이 통째로 죽는다.

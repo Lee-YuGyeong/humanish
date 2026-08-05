@@ -65,7 +65,9 @@ WebSocket URL 에 실을 수 없고, 다른 오리진(워커)으로 자동 전�
 | `lib/server/world-ai.ts` | 월드 AI — **게임 좌석이 아닌** 3D 거주자 |
 | `app/api/internal/world-room/` | **워커 전용.** 좌석 명단(`is_bot` 포함) · 봇 문구 풀(게임 방만) |
 | `app/api/internal/world-agent/` | **워커 전용.** 대화 맥락 → 봇 반응 한 줄 (LLM) |
+| `app/api/internal/world-match/` | **워커 전용.** 끝난 판 → 전적(`match_results`, §15-2-결정) |
 | `worker/src/world-agent.ts` | 위를 부르는 래퍼. 실패는 전부 삼킨다 |
+| `worker/src/match-report.ts` | reveal 진입 틱에 끝난 판을 위로 보낸다. 실패는 삼킨다 |
 | `worker/src/index.ts` | 라우팅만 |
 | `worker/src/room-do.ts` | 입장 · 릴레이 · 하트비트 · 알람 |
 | `worker/src/bots.ts` | 봇 조종 (순수 스텝 함수) · 발화 예약 |

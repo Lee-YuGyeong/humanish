@@ -91,6 +91,7 @@ import {
   voteProgress,
   type RoundState,
 } from './roundtable';
+import { postMatchReport } from './match-report';
 import { fetchRoomMeta, type RoomMeta } from './room-meta';
 import { fetchAgentLines, type ChatLine } from './world-agent';
 import type { Env } from './bindings';
@@ -1181,8 +1182,13 @@ export class RoomDO {
     this.roundLoaded = true;
     const stored = await this.ctx.storage.get<StoredRound>(KEY_ROUND);
     if (!stored?.round) return;
-    // 연기자(actorIds)가 생기기 전에 구운 판 방어 — 없으면 연기자 0명 판으로 읽는다.
-    this.round = { ...stored.round, actorIds: stored.round.actorIds ?? [] };
+    // 연기자(actorIds)·전적 키(matchId)가 생기기 전에 구운 판 방어 —
+    // 없으면 연기자 0명 · 전적 없는 판으로 읽는다.
+    this.round = {
+      ...stored.round,
+      actorIds: stored.round.actorIds ?? [],
+      matchId: stored.round.matchId ?? null,
+    };
     this.botVotes = stored.botVotes ?? {};
     this.botVerdicts = stored.botVerdicts ?? {};
   }
@@ -1213,7 +1219,8 @@ export class RoomDO {
 
     const seatIds = meta.seats.map((s) => s.id);
     const humanIds = meta.seats.filter((s) => !s.is_bot).map((s) => s.id);
-    const round = startRound(seatIds, humanIds, now);
+    // 전적 키는 판이 열리는 이 자리에서 발급한다 (RoundState.matchId 의 상자).
+    const round = startRound(seatIds, humanIds, now, Math.random, crypto.randomUUID());
     if (!round) return;
 
     this.round = round;
@@ -1327,7 +1334,34 @@ export class RoomDO {
       //    이 반환값을 다른 메시지에 재사용하지 마라.
       const reveal = revealSnapshot(s);
       if (reveal) this.broadcast({ t: 'reveal', ...reveal });
+      // 전적. 기다리지 않는다 — reveal 은 게임의 마지막 장면이고 기록은 곁다리다.
+      void this.reportMatch(s);
     }
+  }
+
+  /**
+   * 끝난 판을 전적으로 보낸다 (SPEC §15-2-결정). reveal 진입 틱에 **한 번** 불린다 —
+   * onPhaseEnter 는 전환 틱에만 돌고, DO 가 죽었다 살아나도 phase 는 이미 reveal 이라
+   * 다시 안 들어온다. 그래도 겹치면 DB 기본키 (matchId, user_id) 가 무시한다.
+   */
+  private async reportMatch(s: RoundState): Promise<void> {
+    // matchId 없는 판 = 이 필드가 생기기 전에 구운 판 (배포 경계). 조용히 넘어간다.
+    if (!s.matchId || !s.winner || !this.meta) return;
+    // 사람 2명 미만 판은 안 적는다 — 혼자 봇만 지목하며 전적을 만드는 걸 막는
+    // 기존 규칙 그대로다 (lib/server/match.ts 의 MIN_HUMANS_FOR_RECORD, 그쪽이
+    // 한 번 더 거르고 DB check 가 세 번째 겹이다). 여기서 거르는 건 왕복 절약이다.
+    if (s.humanIds.length < 2) return;
+
+    await postMatchReport(this.env, {
+      matchId: s.matchId,
+      roomId: this.meta.roomId,
+      winner: s.winner,
+      // 판 시작 시점 명단(동결)의 사람 좌석만. 봇은 계정이 없어 적을 곳이 없다.
+      seats: s.humanIds.map((id) => ({
+        id,
+        role: s.actorIds.includes(id) ? ('actor' as const) : ('citizen' as const),
+      })),
+    });
   }
 
   private broadcastRound(): void {

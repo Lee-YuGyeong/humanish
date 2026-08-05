@@ -604,9 +604,12 @@ function AccountChip() {
  *     시민은 진짜 AI를 맞히면 +2, 스파이는 사람 표를 한 장이라도 받으면 +4.
  *   즉 **점수가 붙은 판 = 자기 목표를 이룬 판**이고, 그게 won 이다.
  */
-const MATCH_LABEL: Record<"citizen" | "spy", { won: string; lost: string }> = {
+const MATCH_LABEL: Record<"citizen" | "spy" | "actor", { won: string; lost: string }> = {
   citizen: { won: "AI 적중", lost: "AI 놓침" },
+  // 'spy'(예전 2D 판)와 'actor'(월드 판, §18.2)는 같은 역할의 옛/새 이름이다.
+  // 지난 행을 고쳐 쓰지 않아서 둘 다 오고, 화면에서는 같은 문구로 접는다.
   spy: { won: "연기 성공", lost: "연기 실패" },
+  actor: { won: "연기 성공", lost: "연기 실패" },
 };
 
 /**

@@ -273,10 +273,14 @@ create trigger profiles_name_frozen
 --
 -- ★ role 에 'ai' 가 없다. 봇에게는 user_id 가 없어서 여기 올 수 없고, 만약 온다면
 --   그건 계정과 봇 자리가 이어졌다는 뜻이라 I1 이 이미 깨진 것이다. check 로 막는다.
+--
+-- ★ 'spy' 와 'actor' 는 같은 역할의 옛/새 이름이다 (§18.2 — 연기자). 2D 판이
+--   'spy' 로, 월드 판이 'actor' 로 적는다. 지난 행을 고쳐 쓰면 그게 곧 소급이라
+--   (§15-2-결정 주석) 이름을 하나로 합치지 않고 둘 다 받는다.
 create table if not exists match_results (
   room_id    uuid not null,
   user_id    uuid not null references auth.users(id) on delete cascade,
-  role       text not null check (role in ('citizen','spy')),
+  role       text not null check (role in ('citizen','spy','actor')),
   -- 그 판에서 얻은 점수. calcScores(lib/game/rules.ts)가 준 값 그대로다.
   score      int  not null default 0 check (score >= 0),
   -- 자기 목표를 이뤘나. 시민은 진짜 AI를 맞혔고, 스파이는 사람 표를 받았다.
@@ -288,6 +292,13 @@ create table if not exists match_results (
   created_at timestamptz not null default now(),
   primary key (room_id, user_id)
 );
+
+-- 이미 만들어진 DB 에 'actor' 를 열어 주는 길 (위 create 는 if not exists 라 기존
+-- 표의 check 를 못 고친다). drop + add 라 두 번 돌아도 같은 자리다.
+-- 이름은 인라인 check 의 자동 명명 규칙(<표>_<컬럼>_check)과 같게 맞춘다.
+alter table match_results drop constraint if exists match_results_role_check;
+alter table match_results add constraint match_results_role_check
+  check (role in ('citizen','spy','actor'));
 
 -- 로비는 "내 최근 판"만 읽는다. 계정별 최신순 인덱스 하나면 충분하다.
 create index if not exists match_results_user_idx

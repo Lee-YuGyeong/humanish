@@ -21,6 +21,7 @@
  */
 
 import type { ProfileStats, RecentMatch, Role } from '@/lib/game/types';
+import type { RoundWinner } from '@/lib/mp/protocol';
 import { getServiceClient } from '@/lib/server/supabase';
 import { toProfileStats } from '@/lib/server/stats';
 
@@ -85,6 +86,93 @@ export async function recordMatch(roomId: string, seats: MatchSeat[]): Promise<v
     .upsert(rows, { onConflict: 'room_id,user_id', ignoreDuplicates: true });
 
   if (error) throw new Error(`전적 기록 실패: ${error.message}`);
+}
+
+/* ─────────────────────────── 월드 판 (SPEC §18.4) ─────────────────────────── */
+
+/**
+ * 월드 판의 승패→점수 환산 (SPEC §15-2-결정의 §18.4 주석).
+ *
+ * 이긴 판 3 · 진 판 1. **진 판에도 1을 주는 이유**는 참가 자체를 세기 위해서다 —
+ * 안 그러면 계속 지는 사람의 레벨이 영영 안 오른다. 이 둘은 게임 규칙이 아니라
+ * 전적 쪽 값이다: 바꾸는 건 레벨 곡선을 바꾸는 일이고 §18을 건드리지 않는다.
+ *
+ * 2D 판(recordMatch)의 개인 점수와 다른 이유: 월드는 §18.4가 이미 코드로 돌고
+ * 있어서(진영 승패, worker/src/roundtable.ts) 새 규칙으로 적고, 2D 는 §18.7 이
+ * 옮겨질 때까지 옛 채점(calcScores) 그대로 적는다. 저장하는 값이라 소급이 없다.
+ */
+const WORLD_EXP_WON = 3;
+const WORLD_EXP_LOST = 1;
+
+/** 월드 판 시작 시점의 사람 좌석 하나. 봇은 애초에 안 온다 (계정이 없다). */
+export interface WorldMatchSeat {
+  /** 계정. 월드는 로그인 없이도 들어올 수 있어서 null 이 있을 수 있다 */
+  userId: string | null;
+  /** 그 판의 역할 (SPEC §18.2). 'spy' 가 아니라 'actor' 다 — §15-2-결정 주석 */
+  role: 'citizen' | 'actor';
+}
+
+/**
+ * 월드 판 하나를 match_results 행들로 바꾼다. **순수 함수**라 npm test 가 직접
+ * 검사한다 (tests/lib/server/world-match.test.ts). 쓰는 쪽은 recordWorldMatch.
+ *
+ * won 은 §18.4 진영 승패 그대로다: 내 진영이 이긴 판만 true. winner 가 'ai' 면
+ * (부결·지목 없음·시민 처형) 사람은 전부 진 판이다 — role === winner 가 그 셋을
+ * 한 번에 말한다.
+ */
+export function buildWorldMatchRows(
+  matchId: string,
+  winner: RoundWinner,
+  seats: WorldMatchSeat[],
+): {
+  room_id: string;
+  user_id: string;
+  role: 'citizen' | 'actor';
+  score: number;
+  won: boolean;
+  humans: number;
+}[] {
+  if (seats.length < MIN_HUMANS_FOR_RECORD) return [];
+
+  return seats
+    .filter((s) => s.userId) // 계정이 없으면 적을 곳이 없다. 사람 수에는 위에서 이미 셌다
+    .map((s) => {
+      const won = s.role === winner;
+      return {
+        /*
+         * ★ 방 id 가 아니라 **판 id** 다 (worker RoundState.matchId 의 상자).
+         *   room_id 컬럼은 외래키가 아니고 역할이 "같은 판 두 번 안 적기" 하나라
+         *   (supabase/schema.sql) 판 id 가 그 자리의 뜻에 맞다 — 같은 방의
+         *   rematch 판들이 각각 한 번씩 적힌다.
+         */
+        room_id: matchId,
+        user_id: s.userId as string,
+        role: s.role,
+        score: won ? WORLD_EXP_WON : WORLD_EXP_LOST,
+        won,
+        humans: seats.length,
+      };
+    });
+}
+
+/**
+ * 월드 판 하나를 적는다. 부르는 곳은 /api/internal/world-match 하나뿐이다.
+ * 이미 적힌 판(워커가 겹쳐 보낸 경우)이면 아무 일도 하지 않는다 — recordMatch 와
+ * 같은 기본키 무시 패턴이다.
+ */
+export async function recordWorldMatch(
+  matchId: string,
+  winner: RoundWinner,
+  seats: WorldMatchSeat[],
+): Promise<void> {
+  const rows = buildWorldMatchRows(matchId, winner, seats);
+  if (rows.length === 0) return;
+
+  const { error } = await getServiceClient()
+    .from('match_results')
+    .upsert(rows, { onConflict: 'room_id,user_id', ignoreDuplicates: true });
+
+  if (error) throw new Error(`월드 전적 기록 실패: ${error.message}`);
 }
 
 /** match_stats(uuid) 가 돌려주는 한 행 (supabase/schema.sql). */

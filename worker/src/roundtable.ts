@@ -89,6 +89,16 @@ export interface RoundState {
   phaseEndsAt: number;
 
   /**
+   * 이 판의 전적 키 (SPEC §15-2-결정). match_results 의 room_id 자리에 들어간다 —
+   * 방 id 가 아니라 **판 id** 를 쓰는 이유는 rematch 다: 같은 방에서 「한 판 더」를
+   * 돌 때마다 새 판이고, 방 id 로 적으면 기본키 (room_id, user_id) 가 두 번째 판부터
+   * 조용히 무시한다. **판이 시작될 때 한 번 발급되고 절대 안 바뀐다** — reveal 에서
+   * 발급하면 DO 가 그 틱에 죽었다 살아났을 때 같은 판이 다른 키로 두 번 적힌다.
+   * 이 값이 없는 판(필드가 생기기 전에 구운 것)은 전적을 안 적는다.
+   */
+  matchId: string | null;
+
+  /**
    * 판 시작 때 뽑아 둔 주제 둘. [0] 사실형, [1] 감정형이고 **서로 다르다**
    * (GAMEFLOW-V2 §3-② 일관성 축 — 같은 사람이 두 축에서 어긋나는지를 본다).
    * 미리 뽑는 이유: 라운드 경계에서 뽑으면 그 순간의 랜덤이 단계 전환을 늦출 수 있고,
@@ -241,6 +251,9 @@ export function startRound(
   humanIds: readonly string[],
   now: number,
   rng: Rng = Math.random,
+  // 전적 키. 여기서 만들지 않고 받는 이유: 이 파일은 rng 까지 인자로 받는
+  // 결정적 계층이라, uuid 발급 같은 비결정을 들이면 테스트 근거가 무너진다.
+  matchId: string | null = null,
 ): RoundState | null {
   if (seatIds.length === 0) return null;
   const seats = seatIds.slice();
@@ -249,6 +262,7 @@ export function startRound(
   return {
     phase: 'topic',
     phaseEndsAt: now + ROUND_TOPIC_MS,
+    matchId,
     topics,
     topic: topics[0] ?? null,
     round: 1,
