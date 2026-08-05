@@ -919,8 +919,8 @@ export class RoomDO {
    * │   나오지도 않은 말에 답이 걸린다.                                          │
    * └──────────────────────────────────────────────────────────────────────────┘
    *
-   * 라운지는 월드 AI가 하나뿐이라(lib/server/world-ai.ts의 WORLD_AI_COUNT) 여기서
-   * 바로 돌아선다. 그 수를 늘릴 때 비로소 켜지는 길이다.
+   * 라운지의 월드 AI 는 지연 합류로 하나씩 늘어난다(lib/server/world-ai.ts의
+   * joinDelayMs — 빈 좌석을 정원까지 채운다). 둘 미만인 동안은 여기서 바로 돌아선다.
    */
   private maybeChain(speaker: BotState, text: string, now: number): void {
     const bots = this.bots;

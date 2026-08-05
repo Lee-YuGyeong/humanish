@@ -23,15 +23,16 @@
 import { getServiceClient } from '@/lib/server/supabase';
 import { ApiError } from '@/lib/server/auth';
 
-/**
- * 월드에 세울 AI 수. 게임 정원과 무관하다 — 빈자리가 있는 만큼만 선다.
+/*
+ * 월드 AI 수 상한(WORLD_AI_COUNT=2)은 2026-08-05 에 없앴다 — **빈 좌석은 전부 AI 가
+ * 채운다** (2D 의 fill_with_bots 와 같은 그림). 대신 한꺼번에 서지 않고 joinDelayMs
+ * 간격으로 하나씩 걸어 들어온다 (아래 상자).
  *
- * 2로 올린 근거(2026-08-04): "봇끼리 떠들기 시작하지 않나"는 워커에서 막혀 있다 —
+ * "봇끼리 떠들기 시작하지 않나"는 수와 무관하게 워커에서 막혀 있다 —
  * 봇→봇 대꾸는 maybeChain 이 상한(BOT_CHAIN_MAX)을 세고 사람 발화가 와야 풀리며,
  * 자발 발화는 직전 발화가 자기 것이면 차례를 쉰다 (room-do.ts tick ①의 자답 가드).
- * 더 올리기 전에는 라운지에서 봇 발화 밀도를 실측할 것.
+ * 봇이 많아진 방에서 발화 밀도가 이상하면 저 둘부터 실측할 것.
  */
-export const WORLD_AI_COUNT = 2;
 
 /*
  * 월드 AI 가 연기할 인물은 lib/agent/world-persona.ts 로 이관했다 (페르소나는 B 도메인).
@@ -85,8 +86,9 @@ export interface WorldRoster {
    * 자리가 곧 봇이다), 라운지의 말동무가 열 번에 네 번만 대답하면 그건 그냥
    * 고장 난 것으로 보인다.
    *
-   * ★ 혼자인 방에는 이제 AI 가 안 서므로(위 2026-08-05 상자) 이 값이 true 면
-   *   방에는 항상 사람이 둘 이상이다.
+   * ★ 지연 합류(joinDelayMs)라 **혼자인 방에도 시간이 지나면 AI 가 선다** — 이 값이
+   *   true 여도 사람이 하나뿐일 수 있다. 방장 혼자일 때 AI 가 즉시 서지 않는 것까지가
+   *   보장이고, 그 뒤로는 말동무다.
    */
   companionMode: boolean;
 }
@@ -116,13 +118,24 @@ async function stableUuid(roomId: string, seat: number): Promise<string> {
  *
  * 방 id 해시로 정하므로 **조회 때마다 같다** — buildWorldRoster 는 상태가 없어서,
  * 랜덤을 그냥 쓰면 워커가 명부를 읽을 때마다 AI 가 나타났다 사라진다.
- * 첫 AI 는 45초~2분, 둘째는 2분30초~5분 — 사람이 코드를 받고 들어오는 속도쯤.
+ * 첫 AI 는 45초~2분, 둘째는 2분30초~5분(기존 그대로), 셋째부터는 90초 간격의
+ * 1분짜리 창(5~6분, 6분30초~7분30초, …) — 사람이 코드를 받고 들어오는 속도쯤이고,
+ * 정원 10인 방도 15분 안에 다 찬다.
+ *
+ * ★ 창끼리 겹치지 않아 **순번이 클수록 반드시 늦다** — buildWorldRoster 의 루프가
+ *   "첫 미도착에서 break" 하는 근거다. 창을 겹치게 고치면 뒷 순번이 먼저 도착해
+ *   AI 가 조회마다 늘었다 줄었다 한다.
  */
 async function joinDelayMs(roomId: string, ordinal: number): Promise<number> {
   const data = new TextEncoder().encode(`${roomId}:world-ai-join:${ordinal}`);
   const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', data));
   const r = digest[0] / 255; // 0~1
-  const [base, span] = ordinal === 0 ? [45_000, 75_000] : [150_000, 150_000];
+  const [base, span] =
+    ordinal === 0
+      ? [45_000, 75_000]
+      : ordinal === 1
+        ? [150_000, 150_000]
+        : [300_000 + (ordinal - 2) * 90_000, 60_000];
   return base + Math.round(r * span);
 }
 
@@ -198,7 +211,10 @@ export async function buildWorldRoster(roomId: string): Promise<WorldRoster | nu
      */
     const maxTaken = seats.reduce((m, s) => Math.max(m, s.seat), 0);
     let added = 0;
-    for (let seat = maxTaken + 1; seat <= room.capacity && added < WORLD_AI_COUNT; seat += 1) {
+    // 정원까지 전부 채운다 (2026-08-05 결정 — 2D 의 fill_with_bots 와 같은 그림).
+    // 단, 위 상자의 규칙대로 **지금 최대 자리 위쪽만** 채우므로, 사람 자리가 높으면
+    // AI 는 그만큼 덜 선다 — 아래 빈 번호를 채우는 순간 익명N 중복이 되살아난다.
+    for (let seat = maxTaken + 1; seat <= room.capacity; seat += 1) {
       // 아직 합류 시각 전이면 여기서 끝 — 뒤 순번은 더 늦게 온다 (joinDelayMs 단조 증가).
       if (age < (await joinDelayMs(roomId, added))) break;
       seats.push({
