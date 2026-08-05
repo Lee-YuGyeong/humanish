@@ -973,6 +973,8 @@ function errorMessage(code: string): string {
       return '이 방의 자리가 아니다. 다시 입장할 것';
     case 'room_full':
       return '방이 가득 찼다';
+    case 'round_in_progress':
+      return '이 방은 지금 판이 진행 중이다. 판이 끝나면 다시 입장할 수 있다';
     case 'room_unavailable':
       return '워커가 좌석 명단을 못 받았다. NEXT_ORIGIN이 밖에서 닿는 주소인지 확인하고 다시 배포할 것 (npm run world:deploy)';
     case 'connection_failed':

@@ -207,6 +207,8 @@ export type ErrorCode =
   | 'unauthorized'
   | 'room_full'
   | 'room_unavailable'
+  /** 판이 도는 중이다 — 새 얼굴은 판이 끝날 때까지 못 들어온다. 판에 있던 사람의 재접속은 통과한다. */
+  | 'round_in_progress'
   | 'bad_request';
 
 /** 서버 → 클라이언트 */

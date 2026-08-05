@@ -326,6 +326,16 @@ export class RoomDO {
     );
     if (!ticket || ticket.rid !== roomId) return reject('unauthorized');
 
+    // ②′ 판이 도는 동안에는 새 얼굴을 받지 않는다 (2026-08-05 결정 — 첫 주제부터 판 끝까지).
+    //    판 명단(seatIds — 시작 시점에 동결)에 있는 사람의 재접속은 통과한다. 새로고침이
+    //    막히면 안 되니까. ★ 반드시 ③(명부 갱신)보다 먼저다 — 거절할 사람 때문에
+    //    ensureMeta(force)가 판 중간에 명부를 다시 읽으면, 그 사람의 DB 좌석이 유령
+    //    아바타로 나타나고 월드 AI 가 판 중간에 이사한다 (ensureMeta 의 판-동결 상자).
+    await this.ensureRound();
+    if (this.round && !this.round.done && !this.round.seatIds.includes(ticket.pid)) {
+      return reject('round_in_progress');
+    }
+
     // ③ 방 메타. 티켓의 pid가 명단에 없으면 방금 들어온 사람일 수 있으니 한 번 갱신한다.
     let meta = await this.ensureMeta(roomId, false);
     if (meta && !meta.seats.some((s) => s.id === ticket.pid)) {
@@ -1511,6 +1521,16 @@ export class RoomDO {
   private async ensureMeta(roomId: string, force: boolean): Promise<CachedMeta | null> {
     const now = Date.now();
     if (!this.meta) await this.loadMeta();
+
+    // ┌─ 판이 도는 동안에는 명부를 다시 읽지 않는다 (upgrade ②′ 의 짝) ────────────┐
+    // │ 판의 좌석은 어차피 얼어 있다(RoundState.seatIds). 그런데 명부만 갱신되면    │
+    // │ 판 밖에서 DB 에 앉은 사람(입장은 round_in_progress 로 거절된다)이 유령      │
+    // │ 아바타로 나타나고, 그 좌석이 밀어낸 월드 AI 가 판 중간에 이사한다 —         │
+    // │ 판에 있던 아바타가 눈앞에서 사라지는 게 그 증상이다. 판이 끝나면 다음       │
+    // │ 조회가 한꺼번에 따라잡고, 이동은 player_left/joined 로 정상 방송된다.       │
+    // └────────────────────────────────────────────────────────────────────────────┘
+    if (this.round && !this.round.done && this.meta) return this.meta;
+
     if (!force && this.meta && now - this.meta.fetchedAt < META_TTL_MS) return this.meta;
 
     const fresh = await fetchRoomMeta(this.env, roomId);
