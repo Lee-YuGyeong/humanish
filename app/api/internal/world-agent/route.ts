@@ -263,6 +263,7 @@ export async function POST(req: Request): Promise<Response> {
     const personaOf = new Map(plan.map((p) => [p.player_id, p.persona]));
     const priorFactsOf = new Map(plan.map((p) => [p.player_id, p.priorFacts]));
 
+    const synthetic = bots.some((b) => b.synthetic);
     const res = await fetch(`${AGENT_SELF_URL}/api/agent`, {
       method: 'POST',
       headers: agentHeaders(),
@@ -270,7 +271,17 @@ export async function POST(req: Request): Promise<Response> {
         room_id: roomId,
         bots: jobs,
         // 월드 AI 는 players 행이 없어 agent_logs 외래키에 걸린다 (lib/server/world-ai.ts).
-        no_log: bots.some((b) => b.synthetic),
+        no_log: synthetic,
+        /*
+         * ★ 월드 AI 는 LLM 컷을 8초에서 10초로 늘린다 (신고: "말을 안 할 때가 많다").
+         *   그 방은 자리를 놓친 답도 말하고(room-do.ts 의 upgradeSpeech — "어색한 풀
+         *   문구 < 침묵 < 늦은 진짜 답"), 워커는 이미 12초를 기다려 준다
+         *   (COMPANION_AGENT_TIMEOUT_MS). 그런데 기본 8초 컷이 먼저 끊으면 8~12초에
+         *   올 답이 전부 침묵이 된다 — gemma 실측이 정확히 그 구간을 1/3쯤 쓴다.
+         *   게임 방의 진짜 봇은 그대로 8초다 (§12.3) — 어차피 speakAt 을 넘긴 답은
+         *   버려지므로 더 기다릴 이유가 없다.
+         */
+        ...(synthetic ? { deadline_ms: 10_000 } : {}),
       }),
     });
     if (!res.ok) {

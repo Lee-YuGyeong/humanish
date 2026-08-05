@@ -105,8 +105,16 @@ function nimConfig(): NimConfig | null {
      *   parseOutput 을 통과해서 폴백 플래그가 안 켜진다 — 즉 집계로는 정상으로
      *   잡히고 화면에서만 티가 난다. 봇 티는 여기서 난다.
      *   되돌릴 거면 'google/gemma-4-31b-it' 로 돌아가면 된다.
+     *
+     * ── 2026-08-05: gemma 로 되돌렸다 (신고: 말이 느리고, 안 할 때도 많다) ─────
+     * ★ 추론 모델의 실패 모양 그대로였다. nemotron 계열은 발화 전에 생각을 먼저
+     *   쓰는데, 그 생각이 max_tokens(300)와 8초 컷을 잡아먹는다 — JSON 이 안 나와
+     *   폴백이 되고, 월드는 폴백을 버리므로(world-agent) 그게 곧 **침묵**이다.
+     *   컷 직전에 겨우 온 답은 지각 발화로 나가 **느림**이 된다. 철자 깨짐
+     *   ("깼어"→"깟어")도 이 모델의 한국어 증상이다 — 일부러 얹는 오타(applyTypo)는
+     *   모음을 못 바꾼다.
      */
-    model: process.env.NVIDIA_NIM_MODEL || 'nvidia/nemotron-3-super-120b-a12b',
+    model: process.env.NVIDIA_NIM_MODEL || 'google/gemma-4-31b-it',
   };
 }
 
@@ -162,6 +170,13 @@ function withDeadline<T>(run: (signal: AbortSignal) => Promise<T>, ms: number): 
  */
 const LAB_TIMEOUT_MS = 30_000;
 
+/**
+ * deadline_ms 로 늘릴 수 있는 상한. 워커의 월드 AI 대기(COMPANION_AGENT_TIMEOUT_MS,
+ * 12초)에서 self-fetch 왕복 + 명단 조회 + 기록 insert 여유를 뺀 값이다 —
+ * 여기를 12초까지 열면 워커가 답을 받기 전에 제 시계로 끊어서, 만들어 놓고 버린다.
+ */
+const MAX_DEADLINE_MS = 10_000;
+
 // ── 라우트 ──────────────────────────────────────────────────────────────────
 
 export async function GET(req: Request): Promise<Response> {
@@ -210,6 +225,14 @@ interface Body {
    * 콘솔만 에러로 덮인다. 발화 자체는 그대로 만든다.
    */
   no_log?: boolean;
+  /**
+   * 이번 요청의 LLM 컷 (ms). 안 주면 8초 (AGENT_TIMEOUT_MS, §12.3).
+   *
+   * 월드 AI 용이다 (app/api/internal/world-agent) — 그 방은 자리를 놓친 답도
+   * 말하고("침묵 < 늦은 진짜 답"), 워커가 12초를 기다려 주는데 여기가 8초에
+   * 끊으면 남는 시간이 통째로 버려진다. MAX_DEADLINE_MS 위로는 눌린다.
+   */
+  deadline_ms?: number;
 }
 
 /** 정원 상한(8)보다 많은 봇을 한 번에 만들 일이 없다 (SPEC §4). */
@@ -316,7 +339,13 @@ export async function POST(req: Request): Promise<Response> {
 
     // 봇 수만큼 병렬 (§12.3). 순차 호출은 봇 수 배만큼 느리다.
     // LlmCall을 봇마다 deadline의 signal에 묶어 generate에 넘긴다 (SPEC §9.2).
-    const deadlineMs = body.lab ? LAB_TIMEOUT_MS : AGENT_TIMEOUT_MS;
+    // 게임은 8초가 규칙이고(§12.3), deadline_ms 는 월드 AI 의 지각 발화 예산이다
+    // (Body.deadline_ms). 내부 Bearer 뒤라 아무나 못 늘린다.
+    const deadlineMs = body.lab
+      ? LAB_TIMEOUT_MS
+      : typeof body.deadline_ms === 'number'
+        ? Math.min(MAX_DEADLINE_MS, Math.max(1_000, Math.round(body.deadline_ms)))
+        : AGENT_TIMEOUT_MS;
     const t0 = Date.now();
     const settled = await Promise.allSettled(
       jobs.map((job) =>
