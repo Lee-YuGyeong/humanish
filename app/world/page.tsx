@@ -155,6 +155,8 @@ export default function WorldPage() {
   const [composing, setComposing] = useState(false);
   /** 볼륨을 방금 건드렸다 — 잠깐 떴다 사라지는 표시용 (VolumeHud) */
   const [volumeHud, setVolumeHud] = useState(false);
+  /** 헤더의 「현재 방에서 퇴장하기」를 눌렀다 — 실수 방지로 한 번 더 묻는다 */
+  const [confirmLeave, setConfirmLeave] = useState(false);
 
   const status = useWorldStore((s) => s.status);
   const errorText = useWorldStore((s) => s.errorText);
@@ -395,7 +397,8 @@ export default function WorldPage() {
   }, [conn]);
 
   /**
-   * 판이 끝난 뒤(결과 화면) 방을 떠나 입장 패널로 돌아간다.
+   * 방을 떠나 입장 패널로 돌아간다 — 결과 화면의 「새로운 게임 시작하기」와
+   * 헤더의 「현재 방에서 퇴장하기」(확인 오버레이 뒤)가 쓴다.
    *
    * `enter` 첫머리의 정리 순서와 같다 — conn.close() 가 핸들러를 먼저 떼므로
    * (connection.ts close) "연결이 끊겼다" 오류가 입장 패널에 새지 않고,
@@ -403,6 +406,7 @@ export default function WorldPage() {
    * `code` 는 남겨 둔다 — 같은 방으로 바로 되돌아갈 수 있게.
    */
   const leave = useCallback(() => {
+    setConfirmLeave(false);
     conn.close();
     setSceneReady(false);
     setComposing(false);
@@ -410,6 +414,16 @@ export default function WorldPage() {
     useWorldStore.getState().reset();
     useRoundtableStore.getState().reset();
   }, [conn]);
+
+  /** 확인 오버레이는 ESC 로도 닫힌다 — 잠금이 풀린 상태라 keydown 이 페이지로 온다 */
+  useEffect(() => {
+    if (!confirmLeave) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setConfirmLeave(false);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [confirmLeave]);
 
   const spawn = useMemo(
     () => (ticket ? spawnFor(ticket.self.seat, ticket.room.capacity) : { x: 0, z: 0 }),
@@ -600,12 +614,23 @@ export default function WorldPage() {
       {/* 헤더 */}
       <header className="pointer-events-none absolute inset-x-0 top-0 flex items-start justify-between gap-4 p-6">
         <div>
-          <Link
-            href="/"
-            className="pointer-events-auto text-xs text-neutral-500 transition-colors hover:text-neutral-200"
-          >
-            ← 작업 보드
-          </Link>
+          {/* 방 안에서는 작업 보드 링크 대신 퇴장 버튼 — 눌러도 바로 안 나가고 한 번 더 묻는다 */}
+          {live ? (
+            <button
+              type="button"
+              onClick={() => setConfirmLeave(true)}
+              className="pointer-events-auto text-xs text-neutral-500 transition-colors hover:text-neutral-200"
+            >
+              ← 현재 방에서 퇴장하기
+            </button>
+          ) : (
+            <Link
+              href="/"
+              className="pointer-events-auto text-xs text-neutral-500 transition-colors hover:text-neutral-200"
+            >
+              ← 작업 보드
+            </Link>
+          )}
           <h1 className="mt-2 text-2xl font-black tracking-tight text-neutral-200 drop-shadow-[0_2px_12px_rgba(0,0,0,0.9)]">
             3D 월드
           </h1>
@@ -723,7 +748,7 @@ export default function WorldPage() {
             **pointer-events-none 이라 이 글자를 뚫고 캔버스가 클릭된다** — 그래서
             "클릭하면 계속"이 말 그대로 아무 데나 눌러도 동작한다.
           */}
-          {!locked && !composing && !uiOpen ? (
+          {!locked && !composing && !uiOpen && !confirmLeave ? (
             <div className="pointer-events-none absolute inset-0 z-20 flex flex-col items-center justify-center gap-2">
               <p className="text-lg font-bold text-neutral-100 drop-shadow-[0_2px_12px_rgba(0,0,0,0.9)]">
                 화면을 클릭하면 계속
@@ -739,6 +764,39 @@ export default function WorldPage() {
 
           {/* 판 진행 — 단계 HUD(z-30) · 투표/찬반(z-40) · 결과(z-50) */}
           <GameHud onVote={castVote} onVerdict={castVerdict} onLeave={leave} onRematch={rematch} />
+
+          {/*
+            퇴장 확인 (z-60 — 결과 오버레이보다 위).
+            배경이 클릭을 다 받으므로(캔버스가 e.target 이 아니다) 화면 클릭 재잠금
+            경로와 충돌하지 않는다. 취소하면 잠깐 멈춤 상태로 돌아가고, 화면을
+            클릭하면 이어서 걷는다.
+          */}
+          {confirmLeave ? (
+            <div className="absolute inset-0 z-[60] flex items-center justify-center bg-black/60 p-6">
+              <div className="w-full max-w-xs rounded-2xl bg-black/80 p-6 ring-1 ring-white/10 backdrop-blur">
+                <p className="text-sm font-bold text-neutral-100">현재 방에서 퇴장할까요?</p>
+                <p className="mt-1 text-[11px] leading-relaxed text-neutral-500">
+                  같은 코드로 다시 들어오면 원래 자리로 돌아옵니다.
+                </p>
+                <div className="mt-4 flex gap-2">
+                  <button
+                    type="button"
+                    onClick={leave}
+                    className="flex-1 rounded-lg bg-[#d4a373]/90 px-4 py-2 text-sm font-bold text-black transition-colors hover:bg-[#d4a373]"
+                  >
+                    퇴장하기
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setConfirmLeave(false)}
+                    className="flex-1 rounded-lg bg-white/10 px-4 py-2 text-sm font-bold text-neutral-200 transition-colors hover:bg-white/20"
+                  >
+                    취소
+                  </button>
+                </div>
+              </div>
+            </div>
+          ) : null}
 
           {/* 아래 가운데 — 말하기와 안내가 같은 자리를 쓴다 */}
           <div className="absolute inset-x-0 bottom-6 z-30 flex justify-center px-6">
