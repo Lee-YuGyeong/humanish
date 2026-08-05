@@ -692,6 +692,66 @@ export function scheduleSpeech(
 }
 
 /**
+ * 라운지 전용 — 자리를 잡되 **읽는 시간도 치는 시간도 없다.**
+ *
+ * ┌─ 왜 (사용자 결정 2026-08-05: "의도적으로 느리게 한 부분 일단 빼자") ────────┐
+ * │ 위장 지연(읽기 1.2~4초 + 타이핑 1.3~2.8초 + 지터)과 LLM 지연은 겹쳐 돌아서   │
+ * │ 체감은 둘 중 큰 쪽이다. LLM 이 이미 2~8초라, 위장까지 얹으면 라운지의 AI 는   │
+ * │ 말 걸어도 한참 늦게 답하는 상대가 된다 — 판이 없는 방에서는 빠른 쪽이 낫다.   │
+ * │                                                                            │
+ * │ speakAt 을 now 로 두므로 replaceSpeech(now < speakAt)는 항상 거절되고,       │
+ * │ LLM 답은 upgradeSpeech 의 지각 경로(companion)를 타고 scheduleArrivedSpeech  │
+ * │ 로 **도착하자마자 잠깐 서서 치고** 나간다. 기다리는 동안 자리는 다음 틱에     │
+ * │ 비어서 봇은 하던 대로 걷는다 — 서는 건 답이 온 다음이다.                     │
+ * │                                                                            │
+ * │ ★ 판이 도는 동안에는 부르지 않는다 (호출부 room-do 의 isLounge). 사람은      │
+ * │   서서 치는데 봇만 걸으면서 즉답하면 그 자리가 바로 갈리고(I1), 라운지의      │
+ * │   아바타가 그대로 판의 좌석이 되므로 판이 열리면 위장이 다시 켜져야 한다.     │
+ * └──────────────────────────────────────────────────────────────────────────┘
+ */
+export function scheduleInstantSpeech(bot: BotState, now: number): void {
+  bot.speechHeld = true;
+  bot.pendingText = null;
+  bot.pendingTail = null;
+  bot.typeAt = now;
+  bot.speakAt = now;
+  bot.speechSeq += 1;
+}
+
+/**
+ * **도착한** 답을 잠깐 서서 치고 내보낸다 — scheduleInstantSpeech 의 짝이다.
+ * upgradeSpeech 의 지각 경로가 부른다 (자리를 이미 놓친 companion 답).
+ *
+ * ┌─ 왜 즉시 내보내지 않는가 (사용자 결정 2026-08-05 2차) ─────────────────────┐
+ * │ 지각 답을 도착 즉시 broadcast 했더니 **걸으면서 말하는** 아바타가 됐다.       │
+ * │ 사람은 치는 동안 발이 묶이므로(composing) 말풍선은 항상 멈춘 아바타 위에      │
+ * │ 뜬다 — 그 모양만은 유지한다. 기다림은 빼되 멈춤은 남긴다.                    │
+ * │                                                                          │
+ * │ 시간은 scheduleTail 과 같은 공식(진짜 문구의 타이핑 시간 + 지터)인데,        │
+ * │ maxTypeMs 로 누를 수 있다 — 라운지는 속도가 우선이라 LOUNGE_TYPE_MAX_MS      │
+ * │ (1.5초)로 짧게 세우고, 판이 도는 방의 지각 답은 상한 없이 사람 속도로 친다.   │
+ * └──────────────────────────────────────────────────────────────────────────┘
+ *
+ * ★ seq 를 올린다 — 이 자리는 문구가 확정됐으므로 묵은 LLM 응답이 덮으면 안 된다
+ *   (scheduleTail 과 같은 이유).
+ */
+export function scheduleArrivedSpeech(
+  bot: BotState,
+  text: string,
+  tail: string | null,
+  now: number,
+  maxTypeMs = Infinity,
+): void {
+  bot.speechHeld = true;
+  bot.pendingText = text;
+  bot.pendingTail = tail;
+  bot.typeAt = now;
+  const type = typingDelayMs(text) + Math.floor(Math.random() * SPEAK_JITTER_MS);
+  bot.speakAt = now + Math.min(type, maxTypeMs);
+  bot.speechSeq += 1;
+}
+
+/**
  * 뒷줄을 **앞 줄 바로 뒤에** 잇는다. takeSpeech가 내부에서만 부른다.
  *
  * ★ 여기서는 typingDelayMs에 **진짜 문구**를 넘긴다. 위(scheduleSpeech)가 더미를

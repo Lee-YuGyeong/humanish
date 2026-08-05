@@ -18,6 +18,8 @@ import {
   pickResponder,
   readDelayMs,
   replaceSpeech,
+  scheduleArrivedSpeech,
+  scheduleInstantSpeech,
   scheduleSpeech,
   shouldChat,
   stepBot,
@@ -31,6 +33,7 @@ import {
   BOT_REACT_COOLDOWN_MS,
   BOT_TYPE_CHARS_MAX,
   BOT_TYPE_CHARS_MIN,
+  LOUNGE_TYPE_MAX_MS,
   MOVE_THROTTLE_MS,
   SPEAK_JITTER_MS,
 } from '../../lib/mp/constants';
@@ -428,6 +431,92 @@ describe('문구 없는 예약 — 월드의 기본 경로', () => {
     scheduleSpeech(bot, null, t0);
     // 사람이 마지막으로 말했더라도(mayInitiate=true) 자리가 잡혀 있으면 막힌다.
     expect(shouldChat(bot, t0 + 60_000, true)).toBe(false);
+  });
+});
+
+describe('scheduleInstantSpeech — 라운지의 즉답 예약', () => {
+  it('서지 않는다 — 다음 틱에 자리가 비고 계속 걷는다', () => {
+    const t0 = 1_000_000;
+    const bot = walkingBot(t0);
+    scheduleInstantSpeech(bot, t0);
+
+    // 자리는 첫 takeSpeech 에서 곧장 비고, 아무 말도 나가지 않는다.
+    expect(takeSpeech(bot, t0 + MOVE_THROTTLE_MS)).toBeNull();
+    expect(bot.speechHeld).toBe(false);
+
+    run(bot, t0 + MOVE_THROTTLE_MS, 5);
+    expect(bot.anim).toBe('walk');
+  });
+
+  it('LLM 답은 예약 자리로 못 들어온다 — 지각 경로(도착 후 잠깐 서서 말하기)만 남는다', () => {
+    const t0 = 1_000_000;
+    const bot = walkingBot(t0);
+    scheduleInstantSpeech(bot, t0);
+    const seq = bot.speechSeq;
+
+    // speakAt = now 라 replaceSpeech 는 항상 거절 — 호출부(upgradeSpeech)는
+    // companion 지각 경로로 넘어가 scheduleArrivedSpeech 로 내보낸다.
+    expect(replaceSpeech(bot, seq, '바로 온 답', t0 + 1_500)).toBe(false);
+    // 그 사이 새 예약이 없었으면 일련번호는 그대로다 — 지각 경로의 열쇠가 맞는다.
+    takeSpeech(bot, t0 + MOVE_THROTTLE_MS);
+    expect(bot.speechSeq).toBe(seq);
+  });
+
+  it('다음 예약이 걸렸으면 일련번호가 달라진다 — 묵은 답이 새 자리에 얹히지 않는다', () => {
+    const t0 = 1_000_000;
+    const bot = walkingBot(t0);
+    scheduleInstantSpeech(bot, t0);
+    const stale = bot.speechSeq;
+
+    takeSpeech(bot, t0 + MOVE_THROTTLE_MS); // 자리 해제
+    scheduleInstantSpeech(bot, t0 + 5_000); // 새 반응 예약
+
+    expect(bot.speechSeq).not.toBe(stale);
+  });
+});
+
+describe('scheduleArrivedSpeech — 도착한 답은 잠깐 서서 치고 나간다', () => {
+  it('말풍선이 뜨기 전까지 서 있는다 — 걸으면서 말하면 그게 표식이다', () => {
+    const t0 = 1_000_000;
+    const bot = walkingBot(t0);
+    scheduleArrivedSpeech(bot, '어 나도 그거 봤어', null, t0);
+
+    expect(takeSpeech(bot, t0)).toBeNull(); // 아직 치는 중
+    run(bot, t0, 3);
+    expect(bot.anim).toBe('idle');
+
+    expect(takeSpeech(bot, bot.speakAt)).toBe('어 나도 그거 봤어');
+  });
+
+  it('라운지 상한이 걸리면 그 안에 나간다 — 속도가 우선이다', () => {
+    const t0 = 1_000_000;
+    const bot = walkingBot(t0);
+    // 상한 없이는 1.5초를 넘길 만큼 긴 문구
+    const long = '오늘 점심에 회사 앞에서 마라탕 먹었는데 완전 맛있었음';
+    expect(typingDelayMs(long)).toBeGreaterThan(1_500);
+
+    scheduleArrivedSpeech(bot, long, null, t0, LOUNGE_TYPE_MAX_MS);
+    expect(bot.speakAt - t0).toBeLessThanOrEqual(LOUNGE_TYPE_MAX_MS);
+  });
+
+  it('상한이 없으면 사람 타이핑 속도로 친다 — 판이 도는 방의 지각 답', () => {
+    const t0 = 1_000_000;
+    const bot = walkingBot(t0);
+    const text = '아 그건 좀 아닌 것 같은데';
+    scheduleArrivedSpeech(bot, text, null, t0);
+
+    expect(bot.speakAt - t0).toBeGreaterThanOrEqual(typingDelayMs(text));
+    expect(bot.speakAt - t0).toBeLessThan(typingDelayMs(text) + SPEAK_JITTER_MS);
+  });
+
+  it('뒷줄은 앞 줄이 나간 뒤에 이어 예약된다', () => {
+    const t0 = 1_000_000;
+    const bot = walkingBot(t0);
+    scheduleArrivedSpeech(bot, '앞 줄', '뒷줄이야', t0, LOUNGE_TYPE_MAX_MS);
+
+    expect(takeSpeech(bot, bot.speakAt)).toBe('앞 줄');
+    expect(bot.speechHeld).toBe(true);
+    expect(bot.pendingText).toBe('뒷줄이야');
   });
 });
 

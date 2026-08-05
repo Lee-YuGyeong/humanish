@@ -39,6 +39,7 @@ import {
   CHAT_MAX_LEN,
   CHAT_MIN_INTERVAL_MS,
   GAME_MSG_MIN_INTERVAL_MS,
+  LOUNGE_TYPE_MAX_MS,
   MAX_GAME_MESSAGE_LEN,
   MAX_WS_MESSAGE_LEN,
   MOVE_MIN_INTERVAL_MS,
@@ -65,6 +66,8 @@ import {
   primeForTopic,
   readDelayMs,
   replaceSpeech,
+  scheduleArrivedSpeech,
+  scheduleInstantSpeech,
   scheduleSpeech,
   shouldChat,
   spawnFor,
@@ -182,7 +185,8 @@ const MIN_AGENT_BUDGET_MS = 900;
 /**
  * 월드 AI 방에서 LLM을 기다려 주는 상한 (ms). 예약 시각(speakAt)에 매이지 않는다 —
  * 풀 문구가 없는 방이라 자리를 놓친 답은 버리면 그냥 침묵인데, 사용자 결정은
- * "어색한 풀 문구 < 침묵 < 늦은 진짜 답"이다. /api/agent의 8초 컷(SPEC §12.3)
+ * "어색한 풀 문구 < 침묵 < 늦은 진짜 답"이다. 월드 AI 의 LLM 컷 10초
+ * (world-agent 가 deadline_ms 로 늘린다 — 게임 방은 8초 그대로, SPEC §12.3)
  * + self-fetch 왕복 여유.
  */
 const COMPANION_AGENT_TIMEOUT_MS = 12_000;
@@ -763,8 +767,10 @@ export class RoomDO {
       const speakWindow = this.speakTopic();
       const wantsChat = shouldChat(bot, now, speakWindow !== null || this.humanSpokeLast());
       if (wantsChat && this.botsMayChat()) {
+        // 라운지는 위장 지연 없이 LLM 이 오는 대로 말한다 (scheduleInstantSpeech 상자).
         // 로비 방은 풀이 비어 있어 null이 온다 — 자리만 잡히고 문구는 LLM이 채운다.
-        scheduleSpeech(bot, pickLine(this.botLines(), this.recentTexts()), now);
+        if (this.isLounge()) scheduleInstantSpeech(bot, now);
+        else scheduleSpeech(bot, pickLine(this.botLines(), this.recentTexts()), now);
         // ★ 스스로 꺼내는 말도 LLM 을 태운다. 안 태우면 이 자리는 아무 말도 못 한다
         //   (예전에는 평생 풀 문구만 말했고, 사용자가 본 게 정확히 그거였다).
         //   trigger 는 없다(답할 상대가 없으니 흐름에 끼어드는 게 맞다).
@@ -832,8 +838,11 @@ export class RoomDO {
     const bot = pickResponder(bots, now, this.meta?.companionMode === true);
     if (!bot) return;
 
-    // 읽는 시간을 준다 — 0이면 사람이 말한 그 순간 멈추는 아바타가 생긴다 (I1).
-    scheduleSpeech(bot, pickLine(this.botLines(), this.recentTexts()), now, readDelayMs());
+    // 라운지는 읽는 시간도 치는 시간도 없다 — LLM 이 오는 대로 바로 말한다
+    // (scheduleInstantSpeech 상자). 판이 도는 방은 읽는 시간을 준다 — 0이면
+    // 사람이 말한 그 순간 멈추는 아바타가 생긴다 (I1).
+    if (this.isLounge()) scheduleInstantSpeech(bot, now);
+    else scheduleSpeech(bot, pickLine(this.botLines(), this.recentTexts()), now, readDelayMs());
 
     // 자리는 잡혔다. LLM이 speakAt 전에 오면 그 자리가 채워지고, 못 오면 잠깐 서 있다
     // 그냥 지나간다 — 어느 쪽이든 서 있는 시간은 같다 (bots.ts의 speechHeld).
@@ -862,8 +871,10 @@ export class RoomDO {
     const bot = pickResponder(bots, now, true, chance);
     if (!bot) return;
 
-    // 여기도 읽는 시간을 준다 — 문이 열리는 순간 멈춰 서는 아바타는 그 자체가 표식이다 (I1).
-    scheduleSpeech(bot, null, now, readDelayMs());
+    // 라운지는 즉시(자리를 잡을 뿐 서지 않으니 "문 열리는 순간 멈춤"도 없다),
+    // 판 도중(퇴장 사건)은 읽는 시간을 준다 — 그 순간 멈추면 그게 표식이다 (I1).
+    if (this.isLounge()) scheduleInstantSpeech(bot, now);
+    else scheduleSpeech(bot, null, now, readDelayMs());
     void this.upgradeSpeech(bot, bot.speechSeq, null, event);
   }
 
@@ -928,7 +939,9 @@ export class RoomDO {
     if (!bot) return;
 
     this.botChainHops += 1;
-    scheduleSpeech(bot, pickLine(this.botLines(), this.recentTexts()), now, readDelayMs());
+    // 봇→봇 연쇄도 같은 규칙이다 — 라운지는 즉시, 판 도중은 위장 지연.
+    if (this.isLounge()) scheduleInstantSpeech(bot, now);
+    else scheduleSpeech(bot, pickLine(this.botLines(), this.recentTexts()), now, readDelayMs());
     void this.upgradeSpeech(bot, bot.speechSeq, text);
   }
 
@@ -996,16 +1009,23 @@ export class RoomDO {
     }
 
     // 자리를 놓친 답. 게임 방이면 버린다 (위 머리말). 월드 AI 방은 **seq가 그대로일
-    // 때만** 지금 바로 말한다 — 다음 예약이 이미 걸렸으면(seq 불일치) 그 예약의 LLM이
-    // 이 맥락을 대신 안다. 아직 서 있는 중이면 자리도 걷는다 — 침묵과 답이 겹치지 않게.
+    // 때만** 말한다 — 다음 예약이 이미 걸렸으면(seq 불일치) 그 예약의 LLM이
+    // 이 맥락을 대신 안다.
+    //
+    // ★ 도착 즉시 broadcast 하지 않는다 — 걸으면서 말하는 아바타가 된다. 잠깐
+    //   멈춰 서서 치고 내보낸다 (scheduleArrivedSpeech 상자, 사용자 결정 2026-08-05).
+    //   라운지는 짧게(LOUNGE_TYPE_MAX_MS) 세우고, 판이 도는 방의 지각 답은 상한
+    //   없이 사람 속도로 친다. 뒷줄(tail)은 takeSpeech 가 앞 줄을 내보내면서 이어
+    //   예약한다 — 늦은 판에서만 한 줄로 끝나면 안 된다.
     if (companion && bot.speechSeq === seq) {
       remember();
-      bot.speechHeld = false;
-      bot.pendingText = null;
-      // ★ 뒷줄은 여기서도 살린다(botSpoke가 이어 예약한다). 늦게라도 앞 줄을 말했으면
-      //   이어서 한 줄 더 치는 게 맞다 — 버리면 두 줄로 나눠 친 말이 늦은 판에서만
-      //   한 줄로 끝난다. 자리를 새로 잡으므로 서서 치는 모습도 평소와 같다.
-      this.botSpoke(bot, line.text, Date.now(), line.tail ?? null);
+      scheduleArrivedSpeech(
+        bot,
+        line.text,
+        line.tail ?? null,
+        Date.now(),
+        this.isLounge() ? LOUNGE_TYPE_MAX_MS : Infinity,
+      );
     }
   }
 
@@ -1096,6 +1116,18 @@ export class RoomDO {
 
   private roundActive(): boolean {
     return this.round !== null && !this.round.done;
+  }
+
+  /**
+   * 라운지 상태인가 — 월드 AI 방이고 **판이 돌지 않는다.**
+   *
+   * 발화의 위장 지연(읽기·타이핑)을 걷어내는 조건이다 (bots.ts 의
+   * scheduleInstantSpeech, 사용자 결정 2026-08-05). companionMode 만 보면 안 된다 —
+   * 월드 AI 방에서도 판은 돌고(maybeStartRound 는 meta.seats 그대로 연다), 라운지의
+   * 아바타가 그대로 판의 좌석이 되므로 판 도중에는 위장이 다시 켜져야 한다 (I1).
+   */
+  private isLounge(): boolean {
+    return this.meta?.companionMode === true && !this.roundActive();
   }
 
   private phase(): RoundPhase {
