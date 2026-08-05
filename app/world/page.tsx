@@ -17,6 +17,7 @@
 
 import dynamic from 'next/dynamic';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 
 import { isMovementLocked, mayChat } from '@/lib/mp/constants';
@@ -131,6 +132,7 @@ const ROOM_CAPACITIES = [3, 4, 5, 6, 7, 8] as const;
 const DEFAULT_CAPACITY = 5;
 
 export default function WorldPage() {
+  const router = useRouter();
   const [code, setCode] = useState('');
   const [capacity, setCapacity] = useState<number>(DEFAULT_CAPACITY);
   /** 새 방 이름 — **이 이름이 곧 입장 코드다** (lib/server/room.ts codeFromName). 비우면 랜덤 4자 */
@@ -405,8 +407,9 @@ export default function WorldPage() {
   }, [conn]);
 
   /**
-   * 방을 떠나 입장 패널로 돌아간다 — 결과 화면의 「새로운 게임 시작하기」와
-   * 헤더의 「현재 방에서 퇴장하기」(확인 오버레이 뒤)가 쓴다.
+   * 방을 떠나 입장 패널로 돌아간다 — 결과 화면의 「새로운 게임 시작하기」가 쓴다.
+   * 헤더의 「현재 방에서 퇴장하기」도 이 정리를 거친 뒤 방 목록(/main)으로 나간다 —
+   * 스토어가 전역이라 reset 없이 떠나면 다음 /world 방문에 이전 방 상태가 샌다.
    *
    * `enter` 첫머리의 정리 순서와 같다 — conn.close() 가 핸들러를 먼저 떼므로
    * (connection.ts close) "연결이 끊겼다" 오류가 입장 패널에 새지 않고,
@@ -793,12 +796,18 @@ export default function WorldPage() {
               <div className="w-full max-w-xs rounded-2xl bg-black/80 p-6 ring-1 ring-white/10 backdrop-blur">
                 <p className="text-sm font-bold text-neutral-100">현재 방에서 퇴장할까요?</p>
                 <p className="mt-1 text-[11px] leading-relaxed text-neutral-500">
-                  같은 코드로 다시 들어오면 원래 자리로 돌아옵니다.
+                  방 목록으로 돌아갑니다. 같은 이름(코드)으로 다시 들어오면 원래 자리로
+                  돌아옵니다.
                 </p>
                 <div className="mt-4 flex gap-2">
                   <button
                     type="button"
-                    onClick={leave}
+                    onClick={() => {
+                      // 정리(leave)를 먼저 — 스토어가 전역이라 안 비우고 떠나면
+                      // 다음 /world 방문에 이전 방 상태가 샌다.
+                      leave();
+                      router.push('/main');
+                    }}
                     className="flex-1 rounded-lg bg-[#d4a373]/90 px-4 py-2 text-sm font-bold text-black transition-colors hover:bg-[#d4a373]"
                   >
                     퇴장하기
