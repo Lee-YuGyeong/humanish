@@ -274,8 +274,9 @@ export function Lobby() {
         return;
       }
       // 만든 사람은 이미 방장으로 앉아 있다. 토큰은 쿠키로 왔다 (SPEC §17.4).
+      // 이름을 지었으면 코드가 그 이름이다 (codeFromName) — 한글이라 인코딩해서 싣는다.
       const { room } = (await res.json()) as { room: { code: string } };
-      router.push(`/room/${room.code}`);
+      router.push(`/room/${encodeURIComponent(room.code)}`);
     } catch {
       setCreateError("서버에 연결하지 못했다");
     } finally {
@@ -294,7 +295,8 @@ export function Lobby() {
    */
   const enterRoom = useCallback(
     async (raw: string, dest: "room" | "world" = "room"): Promise<void> => {
-      const normalized = raw.trim().toUpperCase();
+      // 코드는 이제 방 이름일 수 있다 (서버 codeFromName 과 같은 모양 — 공백 제거 + 대문자)
+      const normalized = raw.replace(/\s+/g, "").toUpperCase();
       setBusy(true);
       setJoinError(null);
       try {
@@ -309,7 +311,9 @@ export function Lobby() {
           return;
         }
         setCodeOpen(false);
-        router.push(dest === "world" ? `/world?code=${normalized}` : `/room/${normalized}`);
+        // 한글 이름 코드가 URL 에 실린다 — 인코딩 없이는 push 가 깨진다
+        const encoded = encodeURIComponent(normalized);
+        router.push(dest === "world" ? `/world?code=${encoded}` : `/room/${encoded}`);
       } catch {
         setJoinError("서버에 연결하지 못했다");
       } finally {
@@ -1415,15 +1419,16 @@ function CodeDialog({
           className={`${styles.field} ${styles.mono}`}
           type="text"
           value={code}
-          // 코드는 대문자 4자다 (SPEC §13-1). 화면에 보이는 값과 보내는 값을 같게 둔다.
-          onChange={(e) => onCode(e.target.value.replace(/\s/g, "").toUpperCase().slice(0, 4))}
+          // 코드는 이제 방 이름일 수 있다 (이름이 곧 코드) — 4자 제한을 버렸다.
+          // 공백 제거 + 대문자는 서버 codeFromName 과 같은 모양이다.
+          onChange={(e) => onCode(e.target.value.replace(/\s/g, "").toUpperCase().slice(0, 20))}
           onKeyDown={(e) => {
-            if (e.key === "Enter" && !busy && code.length === 4) onSubmit();
+            if (e.key === "Enter" && !busy && code.length > 0) onSubmit();
           }}
-          placeholder="CODE"
+          placeholder="방 이름 또는 코드"
           aria-label="방 코드"
           autoFocus
-          style={{ letterSpacing: "0.3em", fontSize: "1.02rem", marginBottom: "1rem" }}
+          style={{ letterSpacing: "0.15em", fontSize: "1.02rem", marginBottom: "1rem" }}
         />
 
         {error && (
@@ -1436,7 +1441,7 @@ function CodeDialog({
           type="button"
           className={styles.btnAccent}
           style={{ width: "100%", padding: "0.85rem" }}
-          disabled={busy || code.length !== 4}
+          disabled={busy || code.length === 0}
           onClick={onSubmit}
         >
           {busy ? "들어가는 중…" : "입장하기"} <ArrowIcon />

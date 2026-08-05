@@ -133,6 +133,8 @@ const DEFAULT_CAPACITY = 5;
 export default function WorldPage() {
   const [code, setCode] = useState('');
   const [capacity, setCapacity] = useState<number>(DEFAULT_CAPACITY);
+  /** 새 방 이름 — **이 이름이 곧 입장 코드다** (lib/server/room.ts codeFromName). 비우면 랜덤 4자 */
+  const [newName, setNewName] = useState('');
   const [busy, setBusy] = useState(false);
   const [ticket, setTicket] = useState<Ticket | null>(null);
   const [locked, setLocked] = useState(false);
@@ -203,9 +205,14 @@ export default function WorldPage() {
         useRoundtableStore.getState().reset();
         useWorldStore.getState().setStatus('connecting');
 
+        const trimmedName = newName.trim();
         const room = roomCode
           ? await postJson<{ room: { id: string } }>('/api/room/join', { code: roomCode.toUpperCase() })
-          : await postJson<{ room: { id: string } }>('/api/room', { capacity });
+          : await postJson<{ room: { id: string } }>('/api/room', {
+              capacity,
+              // 이름을 지었으면 그 이름이 곧 입장 코드가 된다. 겹치면 409 가 그대로 뜬다.
+              ...(trimmedName ? { name: trimmedName } : null),
+            });
 
         const t = await postJson<Ticket>('/api/world/ticket', { room_id: room.room.id });
         setTicket(t);
@@ -222,8 +229,8 @@ export default function WorldPage() {
         setBusy(false);
       }
     },
-    // capacity 가 바뀌면 enter 도 바뀐다 — 자동 입장 효과는 ref 가드가 재진입을 막는다
-    [conn, events, capacity],
+    // capacity·newName 이 바뀌면 enter 도 바뀐다 — 자동 입장 효과는 ref 가드가 재진입을 막는다
+    [conn, events, capacity, newName],
   );
 
   useEffect(() => () => conn.close(), [conn]);
@@ -242,9 +249,10 @@ export default function WorldPage() {
   useEffect(() => {
     if (autoEntered.current) return;
     const fromList = new URLSearchParams(window.location.search).get('code');
-    if (!fromList || fromList.trim().length !== 4) return;
+    // 코드는 이제 방 이름일 수 있다 — "4자" 검사를 버리고 비었는지만 본다.
+    const normalized = fromList?.replace(/\s+/g, '').toUpperCase() ?? '';
+    if (!normalized) return;
     autoEntered.current = true;
-    const normalized = fromList.trim().toUpperCase();
     setCode(normalized);
     void enter(normalized);
   }, [enter]);
@@ -657,15 +665,16 @@ export default function WorldPage() {
             <div className="mt-4 flex gap-2">
               <input
                 value={code}
-                onChange={(e) => setCode(e.target.value.toUpperCase().slice(0, 4))}
-                placeholder="ABCD"
-                className="w-28 rounded-lg bg-white/5 px-3 py-2 text-center font-mono text-sm tracking-[0.3em] text-neutral-100 ring-1 ring-white/15 outline-none focus:ring-amber-500/50"
+                // 코드는 이제 방 이름일 수 있다 — 공백 제거 + 대문자 (서버 codeFromName 과 같은 모양)
+                onChange={(e) => setCode(e.target.value.replace(/\s/g, '').toUpperCase().slice(0, 20))}
+                placeholder="방 이름 또는 코드"
+                className="min-w-0 flex-1 rounded-lg bg-white/5 px-3 py-2 text-center font-mono text-sm tracking-widest text-neutral-100 ring-1 ring-white/15 outline-none focus:ring-amber-500/50"
               />
               <button
                 type="button"
-                disabled={busy || code.length !== 4}
+                disabled={busy || code.length === 0}
                 onClick={() => void enter(code)}
-                className="flex-1 rounded-lg bg-amber-500/90 px-4 py-2 text-sm font-bold text-black transition-colors hover:bg-amber-400 disabled:opacity-40"
+                className="shrink-0 rounded-lg bg-amber-500/90 px-5 py-2 text-sm font-bold text-black transition-colors hover:bg-amber-400 disabled:opacity-40"
               >
                 입장
               </button>
@@ -690,6 +699,14 @@ export default function WorldPage() {
               ))}
             </div>
 
+            {/* 새 방 이름 — **이 이름이 곧 입장 코드다.** 겹치면 서버가 409 로 거절한다 */}
+            <input
+              value={newName}
+              onChange={(e) => setNewName(e.target.value.slice(0, 20))}
+              maxLength={20}
+              placeholder="새 방 이름 (비우면 랜덤 코드)"
+              className="mt-3 w-full rounded-lg bg-white/5 px-3 py-2 text-sm text-neutral-100 ring-1 ring-white/15 outline-none placeholder:text-neutral-600 focus:ring-amber-500/50"
+            />
             <button
               type="button"
               disabled={busy}

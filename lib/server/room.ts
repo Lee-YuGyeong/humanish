@@ -90,6 +90,29 @@ export function normalizeRoomName(raw: unknown): string | null {
 }
 
 /**
+ * 방 제목 → 입장 코드 (2026-08-05 결정 — **이름이 곧 코드다**). 순수 함수다.
+ *
+ * 방장이 지은 이름 그대로 들어가게 한다 — 예전엔 이름 따로, 랜덤 4자 코드 따로라
+ * "이름을 지었는데 코드가 자기 마음대로"였다. 이름 없는 방만 랜덤 코드를 받는다.
+ *
+ * 공백을 전부 지우고 대문자로 접는 이유: 입장 정규화(normalizeCode)와 입력칸들이
+ * 이미 그 모양이라, 저장을 같은 모양으로 해야 어떻게 쳐도 맞는다. '초보 방'과
+ * '초보방'이 같은 코드가 되는 건 의도다 — 눈으로 구분 안 되는 두 방이 나란히
+ * 서느니 "이미 있다"로 거절되는 쪽이 낫다.
+ */
+export function codeFromName(name: string): string {
+  return name.replace(/\s+/g, '').toUpperCase();
+}
+
+/**
+ * 입장 코드 정규화. codeFromName 과 **같은 모양**이어야 한다 — 여기가 어긋나면
+ * 목록에는 보이는데 쳐서는 못 들어가는 방이 생긴다.
+ */
+function normalizeCode(code: string): string {
+  return code.normalize('NFC').replace(/\s+/g, '').toUpperCase();
+}
+
+/**
  * 시작에 필요한 최소 인원(사람만). 정원 하한 3의 근거를 **실제로 강제하는** 값이다.
  *
  * ★ 이게 없으면 방장 혼자서도 시작 버튼이 눌린다. 그 판은 게임이 아니다 —
@@ -217,6 +240,29 @@ export async function createRoom(
   // 코드 재시도 루프 **밖에서** 한 번만 다듬는다. 안에서 하면 같은 400을 5번 던진다.
   const roomName = normalizeRoomName(name);
 
+  /*
+   * 이름이 있으면 코드는 이름에서 나온다 (codeFromName — 이름이 곧 코드다).
+   * 재시도가 없다 — 겹치는 건 우연이 아니라 **같은 이름이 이미 있다**는 뜻이므로,
+   * 다른 코드를 뽑을 게 아니라 만든 사람에게 알리고 거절한다 (2026-08-05 결정).
+   */
+  if (roomName) {
+    const { data, error } = await db.rpc('create_room', {
+      p_code: codeFromName(roomName),
+      p_capacity: capacity ?? null,
+      p_name: roomName,
+      p_user_id: userId ?? null,
+    });
+    if (!error) {
+      const row = (data as SeatRow[])[0];
+      return toResult(row, await fetchRoom(row.room_id));
+    }
+    if (error.code === UNIQUE_VIOLATION) {
+      throw new ApiError(409, '이미 같은 이름의 방이 있다. 다른 이름을 붙일 것');
+    }
+    if (error.code === 'P0001') throw new ApiError(400, error.message);
+    throw new ApiError(500, `방 생성 실패: ${error.message}`);
+  }
+
   for (let attempt = 1; attempt <= CODE_RETRY_LIMIT; attempt += 1) {
     const code = generateRoomCode();
     // p_capacity가 null이면 SQL이 default_room_capacity()를 쓴다.
@@ -250,9 +296,11 @@ export async function createRoom(
  *               라우트가 쿠키 세션에서 되찾아 넘긴다 (SPEC §15-2-결정, I9).
  */
 export async function joinRoom(code: string, userId?: string | null): Promise<JoinResult> {
-  const normalized = code.trim().toUpperCase();
-  if (!/^[A-Z]{4}$/.test(normalized)) {
-    throw new ApiError(400, '방 코드는 알파벳 4자다');
+  // 코드는 이제 방 이름일 수 있다 (codeFromName) — "알파벳 4자" 검사를 버렸다.
+  // 모양 검사는 길이 하나면 된다: 존재하지 않는 코드는 어차피 P0002(404)로 떨어진다.
+  const normalized = normalizeCode(code);
+  if (!normalized || normalized.length > MAX_ROOM_NAME_LEN) {
+    throw new ApiError(400, '방 이름(코드)이 비었거나 너무 길다');
   }
 
   const { data, error } = await getServiceClient().rpc('join_room', {
@@ -375,7 +423,7 @@ export async function cleanupStaleRooms(): Promise<number> {
 
 /** 방 코드로 방을 찾는다. 없으면 404. 화면이 방 id를 알아내는 통로다. */
 export async function findRoomByCode(code: string): Promise<Room> {
-  const normalized = code.trim().toUpperCase();
+  const normalized = normalizeCode(code);
   const { data, error } = await getServiceClient()
     .from('rooms')
     .select(ROOM_COLUMNS)

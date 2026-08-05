@@ -9,7 +9,7 @@
  */
 import { describe, expect, it } from 'vitest';
 
-import { MAX_ROOM_NAME_LEN, normalizeRoomName } from '@/lib/server/room';
+import { MAX_ROOM_NAME_LEN, codeFromName, normalizeRoomName } from '@/lib/server/room';
 
 describe('빈 값은 전부 null 하나로 접힌다', () => {
   // ★ 이게 이 함수의 존재 이유 절반이다. null 과 '' 이 둘 다 존재하면
@@ -100,6 +100,23 @@ describe('멀쩡한 제목은 그대로 지나간다', () => {
     '5명 채우면 시작!',
   ])('%s', (input) => {
     expect(normalizeRoomName(input)).toBe(input);
+  });
+});
+
+describe('이름이 곧 코드다 (codeFromName)', () => {
+  // ★ 입장 정규화(joinRoom 의 normalizeCode)·입력칸들과 **같은 모양**이어야 한다 —
+  //   여기가 어긋나면 목록에는 보이는데 쳐서는 못 들어가는 방이 생긴다.
+  it('공백을 전부 지우고 대문자로 접는다', () => {
+    expect(codeFromName('초보 방')).toBe('초보방');
+    expect(codeFromName('my room')).toBe('MYROOM');
+  });
+
+  it('한글 이름은 그대로 코드가 된다', () => {
+    expect(codeFromName('한빛방')).toBe('한빛방');
+  });
+
+  it("'초보 방'과 '초보방'은 같은 코드다 — 눈으로 구분 안 되는 두 방을 막는다", () => {
+    expect(codeFromName('초보 방')).toBe(codeFromName('초보방'));
   });
 });
 

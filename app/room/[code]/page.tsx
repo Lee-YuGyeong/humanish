@@ -26,6 +26,10 @@ export default async function RoomPage({
   params: Promise<{ code: string }>;
 }) {
   const { code } = await params;
+  // 코드는 방 이름일 수 있다 (한글 — lib/server/room.ts codeFromName). App Router 의
+  // 동적 세그먼트는 퍼센트 인코딩된 채로 오므로 여기서 풀어야 조회가 맞는다.
+  // 4자 랜덤 코드는 인코딩될 게 없어 그대로 통과한다.
+  const decoded = decodeURIComponent(code);
   return (
     <div className={space.variable}>
       {/*
@@ -33,7 +37,7 @@ export default async function RoomPage({
         RequireLogin 이 next 에 이 주소를 담아 가므로, 로그인하면 이 방으로 돌아온다.
       */}
       <RequireLogin>
-        <RoomView code={code} />
+        <RoomView code={decoded} />
       </RequireLogin>
     </div>
   );
