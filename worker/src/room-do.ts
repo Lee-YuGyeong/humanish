@@ -638,6 +638,18 @@ export class RoomDO {
     }
 
     await this.reviveIfNeeded();
+
+    // 라운지에서는 명부를 주기적으로 따라잡는다 (META_TTL 이 과호출을 막는다).
+    // 월드 AI 는 방이 생기고 잠시 뒤에 합류하므로(lib/server/world-ai.ts 지연 합류),
+    // **접속 이벤트가 없어도** 새 좌석을 집어와야 한다 — 혼자 서 있는 방장 화면에
+    // AI 가 걸어 들어오는 경로가 이 알람뿐이다. 판이 도는 동안은 ensureMeta
+    // 첫머리의 판-동결이 알아서 거른다.
+    if (this.meta) {
+      await this.ensureMeta(this.meta.roomId, false);
+      // 봇이 0기 → 1기가 된 방은 틱 타이머가 여기서 처음 돈다 (startSim 조건).
+      this.startSim();
+    }
+
     await this.persistBots();
     await this.ctx.storage.setAlarm(this.nextAlarmAt(now));
   }

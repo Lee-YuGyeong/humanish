@@ -82,8 +82,11 @@ export interface WorldRoster {
    * 월드 AI 가 서 있는 방인가 (= 게임이 아직 안 돌아간다).
    *
    * 워커가 이걸로 대화 성향을 바꾼다. 게임 중 봇은 아껴 말해야 하지만(늘 대꾸하는
-   * 자리가 곧 봇이다), 혼자 들어온 사람 옆의 동행자가 열 번에 네 번만 대답하면
-   * 그건 그냥 고장 난 것으로 보인다.
+   * 자리가 곧 봇이다), 라운지의 말동무가 열 번에 네 번만 대답하면 그건 그냥
+   * 고장 난 것으로 보인다.
+   *
+   * ★ 혼자인 방에는 이제 AI 가 안 서므로(위 2026-08-05 상자) 이 값이 true 면
+   *   방에는 항상 사람이 둘 이상이다.
    */
   companionMode: boolean;
 }
@@ -109,6 +112,21 @@ async function stableUuid(roomId: string, seat: number): Promise<string> {
 }
 
 /**
+ * n번째 월드 AI 가 방이 생기고 몇 ms 뒤에 합류하는가.
+ *
+ * 방 id 해시로 정하므로 **조회 때마다 같다** — buildWorldRoster 는 상태가 없어서,
+ * 랜덤을 그냥 쓰면 워커가 명부를 읽을 때마다 AI 가 나타났다 사라진다.
+ * 첫 AI 는 45초~2분, 둘째는 2분30초~5분 — 사람이 코드를 받고 들어오는 속도쯤.
+ */
+async function joinDelayMs(roomId: string, ordinal: number): Promise<number> {
+  const data = new TextEncoder().encode(`${roomId}:world-ai-join:${ordinal}`);
+  const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', data));
+  const r = digest[0] / 255; // 0~1
+  const [base, span] = ordinal === 0 ? [45_000, 75_000] : [150_000, 150_000];
+  return base + Math.round(r * span);
+}
+
+/**
  * 워커에게 줄 월드 명단 — 진짜 사람·봇 좌석에 월드 AI 를 얹는다.
  *
  * 게임이 시작되면(phase !== 'lobby') **얹지 않는다.** 그때는 진짜 봇이 빈자리를
@@ -120,7 +138,8 @@ export async function buildWorldRoster(roomId: string): Promise<WorldRoster | nu
   const { data: room } = await db
     .from('rooms')
     // capacity를 빠뜨리면 자리 계산이 통째로 어긋난다 — 컬럼을 항상 명시한다.
-    .select('id, capacity, phase')
+    // created_at 은 월드 AI 의 지연 합류 기준점이다 (아래 2026-08-05 상자).
+    .select('id, capacity, phase, created_at')
     .eq('id', roomId)
     .maybeSingle();
   if (!room) return null;
@@ -147,7 +166,21 @@ export async function buildWorldRoster(roomId: string): Promise<WorldRoster | nu
   }));
 
   let companionMode = false;
+  /*
+   * ┌─ 월드 AI 는 방이 생기고 **잠시 뒤에** 하나씩 합류한다 (2026-08-05 결정) ────┐
+   * │ 방을 만든 사람이 들어갔을 때는 **그 사람만** 있어야 한다. 방금 만든 방에      │
+   * │ 이미 둘이 서 있으면, 코드를 아무에게도 안 준 방장에게 그 둘은 AI 확정이다 —  │
+   * │ 위장이 아니라 자기소개가 된다.                                               │
+   * │                                                                            │
+   * │ 그래서 AI 는 joinDelayMs 만큼 기다렸다 온다 — 방 목록을 보고 사람이 들어오는  │
+   * │ 속도쯤이라, 방장 입장에서 "코드를 안 줬는데 들어온 사람"과 구분되지 않는다    │
+   * │ (방은 공개 목록에 뜬다). 화면에 나타나는 건 워커의 다음 명부 조회 때고        │
+   * │ (room-do 알람이 라운지에서 주기적으로 따라잡는다), player_joined 로 나가므로  │
+   * │ 사람 입장과 같은 모양이다 (ensureMeta 는 사람·봇 좌석을 구분하지 않는다).     │
+   * └────────────────────────────────────────────────────────────────────────────┘
+   */
   if (room.phase === 'lobby') {
+    const age = Date.now() - new Date(room.created_at as string).getTime();
     /*
      * ┌─ 월드 AI 는 **지금 최대 자리 다음 번호부터** 선다 (2026-08-04 결정) ────────┐
      * │ 예전엔 1번부터 빈 자리를 채웠다. 그런데 DB 의 자리 배정(pick_free_seat)은   │
@@ -166,6 +199,8 @@ export async function buildWorldRoster(roomId: string): Promise<WorldRoster | nu
     const maxTaken = seats.reduce((m, s) => Math.max(m, s.seat), 0);
     let added = 0;
     for (let seat = maxTaken + 1; seat <= room.capacity && added < WORLD_AI_COUNT; seat += 1) {
+      // 아직 합류 시각 전이면 여기서 끝 — 뒤 순번은 더 늦게 온다 (joinDelayMs 단조 증가).
+      if (age < (await joinDelayMs(roomId, added))) break;
       seats.push({
         // 닉네임·가면은 fill_with_bots 와 같은 규칙이다. 다르게 만들면 그게 표식이다.
         id: await stableUuid(roomId, seat),
