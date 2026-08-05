@@ -127,9 +127,10 @@ export interface RoundState {
    */
   humanIds: string[];
   /**
-   * ★ 그중 연기자 좌석 (SPEC §18.2). humanIds 의 부분집합. 수는 0~상한 균등 랜덤이고
-   *   **비공개다** — 밖으로 나가는 길은 각자에게 가는 `t:'role'`(humanRole)과
-   *   revealSnapshot 둘뿐이다. 0명인 판이 정상적으로 나온다 — 예외 처리 대상이 아니다.
+   * ★ 그중 연기자 좌석. humanIds 의 부분집합. **사람이 2명 이상이면 정확히 1명**이고
+   *   (2026-08-05 결정 — 2D 의 spy 와 같은 규칙. §18.2 의 "수는 0~상한 랜덤"을 뒤집는다),
+   *   비밀은 **누구인가** 하나다 — 밖으로 나가는 길은 각자에게 가는 `t:'role'`(humanRole)과
+   *   revealSnapshot 둘뿐이다. 사람 1명 이하인 판만 0명이다 (연기를 볼 상대가 없다).
    */
   actorIds: string[];
 
@@ -207,31 +208,20 @@ function pickTopics(rng: Rng): string[] {
 
 /* ─────────────────────────────── 연기자 (§18.2) ─────────────────────────────── */
 
-/** 사람 수 → 연기자 상한 (SPEC §18.1 인원표). 2명 이하 0 · 3~5명 1 · 6명부터 2. */
-function actorCap(humanCount: number): number {
-  if (humanCount <= 2) return 0;
-  if (humanCount <= 5) return 1;
-  return 2;
-}
-
 /**
- * 연기자를 뽑는다. **수는 0~상한 균등 랜덤이고 비공개다** (§18.2) — 고정값이면
- * 표만 보면 누구나 아는 수라, 랜덤으로 두는 것이 곧 비밀로 두는 것이다.
+ * 연기자를 뽑는다. **사람이 2명 이상이면 정확히 1명** — 2D(assignRoles 의 spy)와 같은
+ * 규칙이다 (2026-08-05 결정. §18.2 의 "수는 0~상한 균등 랜덤"을 뒤집는다 — 수가
+ * 고정이면 수는 더 이상 비밀이 아니고, 비밀은 **누구인가** 하나로 좁아진다).
+ * 사람 1명 이하면 0명 — 연기를 봐 줄 상대가 없다.
  *
  * ★ 뽑기가 명단 순서에 의존하면 안 된다 (I1 — tallyNomination 의 동점 추첨과 같은
- *   이유). humanIds 는 좌석/입장 순서라, 앞에서 자르기 전에 rng 로 섞는다.
+ *   이유). 균등 인덱스 하나라 순서 편향이 없다. rng()가 1을 돌려줘도 배열 밖으로
+ *   나가지 않는다 (pick 과 같은 방어).
  */
 function pickActors(humans: readonly string[], rng: Rng): string[] {
-  const cap = actorCap(humans.length);
-  // rng()가 1을 돌려줘도 cap 을 넘지 않는다 (pick 과 같은 방어)
-  const count = Math.min(cap, Math.floor(rng() * (cap + 1)));
-  if (count === 0) return [];
-  const pool = humans.slice();
-  for (let i = pool.length - 1; i > 0; i -= 1) {
-    const j = Math.min(i, Math.floor(rng() * (i + 1)));
-    [pool[i], pool[j]] = [pool[j], pool[i]];
-  }
-  return pool.slice(0, count);
+  if (humans.length < 2) return [];
+  const i = Math.min(humans.length - 1, Math.floor(rng() * humans.length));
+  return [humans[i]];
 }
 
 /* ─────────────────────────────── 판 열기 ─────────────────────────────── */

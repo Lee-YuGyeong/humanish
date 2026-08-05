@@ -445,28 +445,29 @@ describe('decideWinner — 승패 매핑 (SPEC §18.4)', () => {
   });
 });
 
-describe('연기자 배정 (§18.2) — 수는 0~상한 균등 랜덤, 사람 중에서만', () => {
-  it('사람 2명 이하면 연기자가 없다 — 인원표의 상한이 0 이다 (§18.1)', () => {
-    const s = startRound(SEATS, HUMANS, 0, rngOf(0.99))!;
-    expect(s.actorIds).toEqual([]);
+describe('연기자 배정 — 사람 2명 이상이면 정확히 1명 (2026-08-05 결정)', () => {
+  it('사람 1명 이하면 연기자가 없다 — 연기를 봐 줄 상대가 없다', () => {
+    expect(startRound(SEATS, ['a'], 0, rngOf(0.99))!.actorIds).toEqual([]);
+    expect(startRound(SEATS, [], 0, rngOf(0.99))!.actorIds).toEqual([]);
   });
 
-  it('0명인 판이 정상적으로 나온다 — 예외 처리 대상이 아니다', () => {
-    const zero = startRound(['a', 'b', 'c', 'd', 'e'], ['a', 'b', 'c'], 0, rngOf(0))!;
-    expect(zero.actorIds).toEqual([]);
-    const one = startRound(['a', 'b', 'c', 'd', 'e'], ['a', 'b', 'c'], 0, rngOf(0.99))!;
-    expect(one.actorIds.length).toBe(1);
+  it('사람 2명부터는 rng 와 무관하게 정확히 1명이다 — 0명인 판은 더 이상 없다', () => {
+    expect(startRound(SEATS, HUMANS, 0, rngOf(0))!.actorIds.length).toBe(1);
+    expect(startRound(SEATS, HUMANS, 0, rngOf(0.99))!.actorIds.length).toBe(1);
+    expect(
+      startRound(['a', 'b', 'c', 'd', 'e'], ['a', 'b', 'c'], 0, rngOf(0))!.actorIds.length,
+    ).toBe(1);
   });
 
-  it('연기자는 언제나 사람 중에서만 나오고 상한을 넘지 않는다', () => {
+  it('연기자는 언제나 사람 중에서만 나온다', () => {
     for (let i = 0; i < 200; i += 1) {
       const s = startRound(
         ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'],
         ['a', 'b', 'c', 'd', 'e', 'f'],
         0,
       )!;
-      for (const id of s.actorIds) expect(s.humanIds).toContain(id);
-      expect(s.actorIds.length).toBeLessThanOrEqual(2); // 사람 6명 → 상한 2 (§18.1)
+      expect(s.actorIds.length).toBe(1);
+      expect(s.humanIds).toContain(s.actorIds[0]);
     }
   });
 
@@ -525,12 +526,14 @@ describe('판 전체 — 집계가 결말로 이어진다', () => {
     expect(eliminatedId(s)).toBe('c');
   });
 
-  it('사람을 처형하면 AI 승', () => {
-    const s = playRound({ votes: { a: 'b', b: 'a' }, verdicts: { a: true, b: true }, rng: rngOf(0) });
-    expect(s.nomineeId).toBe('a'); // 동점 [a,b] 의 0번
+  it('시민을 처형하면 AI 승', () => {
+    // FIXED 로 연 판의 연기자는 a 다 (pickActors 가 humans[floor(0×2)]) — b 가 시민이다.
+    // 연기자 처형(→ 연기자 승)은 위 「연기자를 처형하면」 테스트가 본다.
+    const s = playRound({ votes: { a: 'b', b: 'a' }, verdicts: { a: true }, rng: rngOf(0.99) });
+    expect(s.nomineeId).toBe('b'); // 동점 [a,b] 의 1번
     expect(s.executed).toBe(true);
     expect(s.winner).toBe('ai');
-    expect(eliminatedId(s)).toBe('a');
+    expect(eliminatedId(s)).toBe('b');
   });
 
   it('생사 표가 동수면 생존하고 AI 승이다 — 확신 없이 처형하지 못한다', () => {
@@ -830,9 +833,9 @@ describe('revealSnapshot — 정체를 내보내는 유일한 함수', () => {
     const s = playRound({ votes: { a: 'c', b: 'c' }, verdicts: { a: true, b: true } });
     const r = revealSnapshot(s)!;
     expect(r.identities.map((i) => i.id)).toEqual(SEATS);
-    // 사람 2명 방은 연기자 상한이 0 (§18.1) — 사람은 전부 시민이다
+    // FIXED 로 연 판의 연기자는 a 다 — 사람 2명이면 정확히 1명 (2026-08-05 결정)
     expect(r.identities).toEqual([
-      { id: 'a', isBot: false, role: 'citizen' },
+      { id: 'a', isBot: false, role: 'actor' },
       { id: 'b', isBot: false, role: 'citizen' },
       { id: 'c', isBot: true, role: 'ai' },
       { id: 'd', isBot: true, role: 'ai' },
@@ -880,7 +883,7 @@ describe('revealSnapshot — 정체를 내보내는 유일한 함수', () => {
         { voterId: 'b', targetId: 'c' },
       ],
       identities: [
-        { id: 'a', isBot: false, role: 'citizen' },
+        { id: 'a', isBot: false, role: 'actor' }, // FIXED 판의 연기자 (위 identities 검사 참고)
         { id: 'b', isBot: false, role: 'citizen' },
         { id: 'c', isBot: true, role: 'ai' },
         { id: 'd', isBot: true, role: 'ai' },
