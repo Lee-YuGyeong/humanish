@@ -42,6 +42,16 @@ export function PlayButton({
   const [failed, setFailed] = useState<string | null>(null);
 
   const go = async () => {
+    // 전체화면은 클릭 제스처 안에서만 허용된다 — 여기가 그 제스처다.
+    // 미지원 환경(아이폰 Safari)이나 거부는 게임 진행을 막지 않는다. 게임 진행과 무관하다.
+    // 단, 처음 로그인은 구글 OAuth 로 도메인을 나갔다 오면서 전체화면이 풀린다.
+    if (document.documentElement.requestFullscreen) {
+      document.documentElement
+        .requestFullscreen()
+        .catch((e) => console.warn('[fullscreen] 거절됨:', e));
+    } else {
+      console.warn('[fullscreen] requestFullscreen 미지원 브라우저');
+    }
     // 익명 계정은 로그인한 것으로 치지 않는다 (components/require-login.tsx 와 같은 규칙).
     if (user && !user.isAnonymous) {
       router.push('/main');
