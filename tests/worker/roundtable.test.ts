@@ -620,6 +620,13 @@ describe('연기자 배정 — 상한은 사람 수로, 그 안에서 균등 랜
     expect([...seen].sort()).toEqual([0, 1, 2]);
   });
 
+  it('미리 뽑은 명단(presetActorIds)이 오면 rng 를 무시하고 그대로 쓴다 — 카드 선공개', () => {
+    // 게이트가 열릴 때 카드로 보여준 역할과 판의 역할이 갈리면 안 된다 (room-do)
+    expect(startRound(SEATS, HUMANS, 0, rngOf(0.99), null, ['b'])!.actorIds).toEqual(['b']);
+    // 카운트다운 사이에 나간 사람(명단 밖 id)은 버린다
+    expect(startRound(SEATS, HUMANS, 0, rngOf(0.99), null, ['b', 'zzz'])!.actorIds).toEqual(['b']);
+  });
+
   it('연기자를 처형하면 연기자 승이고 reveal 에 role 이 실린다 (§18.4)', () => {
     // rngOf(0.6): 사람 4명은 상한 1 — count = floor(0.6×2) = 1, 연기자는
     // humans[floor(0.6×4)] = 'c'. 시민이 셋 남아 표가 성립한다

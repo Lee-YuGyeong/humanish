@@ -241,8 +241,11 @@ function actorCap(humanCount: number): number {
  * ★ 뽑기가 명단 순서에 의존하면 안 된다 (I1 — tallyNomination 의 동점 추첨과 같은
  *   이유). 매번 균등 인덱스로 하나씩 빼내므로 순서 편향이 없다. rng()가 1을
  *   돌려줘도 배열 밖으로 나가지 않는다 (pick 과 같은 방어).
+ * ★ export 는 room-do 의 **카드 선공개** 때문이다 — 집결 게이트가 열리는 순간
+ *   (전원 도착, 카운트다운 시작) 미리 뽑아 나눠주고, 판은 그 명단을 이어받는다
+ *   (startRound 의 presetActorIds).
  */
-function pickActors(humans: readonly string[], rng: Rng): string[] {
+export function pickActors(humans: readonly string[], rng: Rng): string[] {
   const cap = actorCap(humans.length);
   if (cap === 0) return [];
   const count = Math.min(cap, Math.floor(rng() * (cap + 1)));
@@ -276,6 +279,13 @@ export function startRound(
   // 전적 키. 여기서 만들지 않고 받는 이유: 이 파일은 rng 까지 인자로 받는
   // 결정적 계층이라, uuid 발급 같은 비결정을 들이면 테스트 근거가 무너진다.
   matchId: string | null = null,
+  /**
+   * 게이트가 열릴 때 미리 뽑아 카드로 보여준 연기자 명단 (room-do 의 pendingActors).
+   * 있으면 **그대로 쓴다** — 카드에 보여준 역할과 판의 역할이 갈리면 안 된다.
+   * 없으면(라운지 · 한 판 더) 여기서 새로 뽑는다. 명단 밖 id 는 버린다
+   * (카운트다운 사이에 나간 사람 방어).
+   */
+  presetActorIds: readonly string[] | null = null,
 ): RoundState | null {
   if (seatIds.length === 0) return null;
   const seats = seatIds.slice();
@@ -291,7 +301,9 @@ export function startRound(
     spotlightId: null,
     seatIds: seats,
     humanIds: humans,
-    actorIds: pickActors(humans, rng),
+    actorIds: presetActorIds
+      ? presetActorIds.filter((id) => humans.includes(id))
+      : pickActors(humans, rng),
     votes: {},
     verdicts: {},
     nomineeId: null,

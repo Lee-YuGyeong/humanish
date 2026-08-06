@@ -88,6 +88,7 @@ import {
   eliminatedId,
   haveAllVoted,
   humanRole,
+  pickActors,
   revealSnapshot,
   roundSnapshot,
   startRound,
@@ -106,6 +107,8 @@ const KEY_BOTS = 'bots';
 const KEY_EMPTY_AT = 'emptyAt';
 const KEY_ROUND = 'round';
 const KEY_GATE = 'gate';
+/** 게이트가 열릴 때 미리 뽑은 연기자 명단 (카드 선공개). 판이 열리면 지운다 */
+const KEY_PENDING_ACTORS = 'pendingActors';
 
 /**
  * 판이 이만큼 뒤처져 있으면 따라잡지 않고 **끝낸다** (ms).
@@ -280,6 +283,14 @@ export class RoomDO {
   private gateLoaded = false;
   /** 마지막으로 내보낸 gate 의 present 값. -1이면 아직 안 보냈다 (같은 값 재전송 방지). */
   private gateSent = -1;
+  /**
+   * 게이트가 열릴 때 미리 뽑아 나눠준 연기자 명단 — **카드 선공개** (사용자 결정
+   * 2026-08-06: 역할 카드는 전원 집결 + 카운트다운 시작 순간에 뜬다). 판이 열리면
+   * startRound 가 이 명단을 그대로 이어받고(presetActorIds) 여기는 비워진다 —
+   * 두 번 뽑으면 카드와 판의 역할이 갈린다.
+   */
+  private pendingActors: string[] | null = null;
+  private pendingActorsLoaded = false;
 
   constructor(
     private readonly ctx: DurableObjectState,
@@ -431,6 +442,12 @@ export class RoomDO {
       // 자기 역할은 재접속 때도 다시 알려준다 — 새로고침하면 로컬엔 아무것도 없다.
       // humanRole 은 봇·판 밖 좌석이면 null 이라 여기서 보낼 게 없다 (§18.2).
       const role = humanRole(this.round, snapshot.id);
+      if (role) this.send(server, { t: 'role', role });
+    } else {
+      // 게이트는 열렸는데 판은 아직인 구간(카운트다운·인트로)의 접속 — 미리 뽑아 둔
+      // 역할을 준다. 마감으로 열려 늦게 온 사람과 새로고침한 사람이 여기로 온다.
+      await this.ensurePendingActors();
+      const role = this.earlyRole(snapshot.id);
       if (role) this.send(server, { t: 'role', role });
     }
 
@@ -1310,7 +1327,50 @@ export class RoomDO {
       // 알람이 잡혀 있어야 상한이 실제로 걸린다 — 대기 중에는 마감에 맞춰 당긴다.
       await this.ctx.storage.setAlarm(this.nextAlarmAt(now));
     }
+    // 이 호출에서 **막 열렸다** — 전원 집결, 카운트다운 시작. 역할 카드가 뜨는 순간이다.
+    if (before?.openedAt == null && this.gate.openedAt !== null) {
+      await this.dealEarlyRoles();
+    }
     return this.broadcastGate();
+  }
+
+  /**
+   * 게이트가 열리는 순간 역할을 미리 뽑아 **각자에게만** 보낸다 (카드 선공개).
+   *
+   * ★ 반드시 소켓 단위 send 다 — broadcast 에 실으면 연기자 명단이 방 전체에 샌다
+   *   (sendRoles 와 같은 규칙, protocol.ts 의 t:'role' 상자).
+   * ★ 명단은 storage 에 굽는다. 카운트다운·인트로 사이에 DO 가 쉬었다 깨거나
+   *   누가 새로고침해도 **같은 명단**을 다시 읽어야 한다.
+   * ★ 마감(GATHER_DEADLINE_MS)으로 열려 아직 안 온 사람이 있으면, 그 사람 몫은
+   *   접속 인사(welcome 경로)가 이 명단을 읽어 보낸다.
+   */
+  private async dealEarlyRoles(): Promise<void> {
+    const meta = this.meta;
+    if (!meta) return;
+    await this.ensurePendingActors();
+    if (!this.pendingActors) {
+      const humanIds = meta.seats.filter((s) => !s.is_bot).map((s) => s.id);
+      this.pendingActors = pickActors(humanIds, Math.random);
+      await this.ctx.storage.put(KEY_PENDING_ACTORS, this.pendingActors);
+    }
+    for (const ws of this.ctx.getWebSockets()) {
+      const snap = ws.deserializeAttachment() as PlayerSnapshot | null;
+      if (!snap) continue;
+      const role = this.earlyRole(snap.id);
+      if (role) this.send(ws, { t: 'role', role });
+    }
+  }
+
+  private async ensurePendingActors(): Promise<void> {
+    if (this.pendingActorsLoaded) return;
+    this.pendingActorsLoaded = true;
+    this.pendingActors = (await this.ctx.storage.get<string[]>(KEY_PENDING_ACTORS)) ?? null;
+  }
+
+  /** 미리 뽑은 명단에서의 이 좌석 역할. 명단이 없으면(라운지·판 열림 전) null */
+  private earlyRole(id: string): 'citizen' | 'actor' | null {
+    if (!this.pendingActors) return null;
+    return this.pendingActors.includes(id) ? 'actor' : 'citizen';
   }
 
   /**
@@ -1394,8 +1454,20 @@ export class RoomDO {
     const seatIds = meta.seats.map((s) => s.id);
     const humanIds = meta.seats.filter((s) => !s.is_bot).map((s) => s.id);
     // 전적 키는 판이 열리는 이 자리에서 발급한다 (RoundState.matchId 의 상자).
-    const round = startRound(seatIds, humanIds, now, Math.random, crypto.randomUUID());
+    // 연기자는 게이트가 열릴 때 이미 뽑아 카드로 나눠줬으면 그 명단을 그대로 쓴다.
+    await this.ensurePendingActors();
+    const round = startRound(
+      seatIds,
+      humanIds,
+      now,
+      Math.random,
+      crypto.randomUUID(),
+      this.pendingActors,
+    );
     if (!round) return;
+    // 명단은 판으로 넘어갔다 — 「한 판 더」는 새로 뽑아야 하므로 여기서 비운다.
+    this.pendingActors = null;
+    await this.ctx.storage.delete(KEY_PENDING_ACTORS);
 
     this.round = round;
     this.botVotes = {};
