@@ -597,6 +597,7 @@ const REVEAL_STEPS = 3;
 function RevealOverlay({ onLeave, onRematch }: { onLeave: () => void; onRematch: () => void }) {
   const reveal = useRoundtableStore((s) => s.reveal);
   const seats = useSeats();
+  const selfId = useWorldStore((s) => s.selfId);
   const [stage, setStage] = useState(0);
 
   useEffect(() => {
@@ -626,6 +627,15 @@ function RevealOverlay({ onLeave, onRematch }: { onLeave: () => void; onRematch:
       ? null
       : (reveal.identities.find((i) => i.id === reveal.nomineeId) ?? null);
   const nomineeRole = nominee ? identityRole(nominee) : null;
+
+  /**
+   * 내가 이겼는가 — 내 진영이 이긴 진영과 같으면 승리다 (§18.4). 전적의 won 과
+   * **같은 판정**이다 (lib/server/match.ts 의 buildWorldMatchRows: role === winner) —
+   * 여기서 다르게 판정하면 결과 화면과 기록이 서로 다른 말을 한다.
+   * 내 좌석이 identities 에 없으면(판 밖에서 구경) 아무것도 띄우지 않는다.
+   */
+  const mine = selfId ? (reveal.identities.find((i) => i.id === selfId) ?? null) : null;
+  const iWon = mine === null ? null : identityRole(mine) === reveal.winner;
 
   return (
     <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/80 p-6 backdrop-blur">
@@ -673,13 +683,24 @@ function RevealOverlay({ onLeave, onRematch }: { onLeave: () => void; onRematch:
           </p>
         </Layer>
 
-        {/* ③ 어느 편이 이겼는가 */}
+        {/* ③ 어느 편이 이겼는가 — 그리고 그게 **나의** 승패인가 */}
         <Layer show={stage >= 2}>
           <p className="mt-5 text-center">
             <span className="rounded-full border border-[#d4a373]/40 bg-[#d4a373]/10 px-5 py-2 text-[13px] font-black tracking-wide text-[#d4a373]">
               {WINNER_LABEL[reveal.winner]}
             </span>
           </p>
+          {iWon !== null ? (
+            <p
+              className={`mt-4 text-center text-2xl font-black tracking-tight ${
+                iWon
+                  ? 'text-[#d4a373] drop-shadow-[0_0_18px_rgba(212,163,115,0.5)]'
+                  : 'text-red-400'
+              }`}
+            >
+              {iWon ? '당신의 승리' : '당신의 패배'}
+            </p>
+          ) : null}
         </Layer>
 
         {/* ④ 표는 어떻게 갈렸는가 */}

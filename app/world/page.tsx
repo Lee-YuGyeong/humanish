@@ -31,6 +31,9 @@ import {
   subscribe as musicSubscribe,
 } from './music';
 import { useWorldStore } from './store';
+import { useQueryClient } from '@tanstack/react-query';
+
+import { matchHistoryKey, profileStatsKey } from '@/lib/queries/keys';
 import { roleCardOpen, useRoundtableStore } from './roundtable-store';
 import { setActiveRoom, clearActiveRoom } from './active-room';
 
@@ -224,6 +227,8 @@ export default function WorldPage() {
   const connRef = useRef<WorldConnection | null>(null);
   if (connRef.current === null) connRef.current = new WorldConnection();
   const conn = connRef.current;
+  /** 전적 캐시를 걷는 데만 쓴다 (onReveal). 서버 값 구독은 이 화면엔 없다 */
+  const qc = useQueryClient();
   /** 걷는 중에 뜨는 한 줄 입력 */
   const lineRef = useRef<HTMLInputElement>(null);
 
@@ -242,13 +247,20 @@ export default function WorldPage() {
       onRound: (round) => useRoundtableStore.getState().applyRound(round),
       onVoteProgress: (voted, total) => useRoundtableStore.getState().applyProgress(voted, total),
       onEliminated: (id) => useRoundtableStore.getState().applyEliminated(id),
-      onReveal: (reveal) => useRoundtableStore.getState().applyReveal(reveal),
+      onReveal: (reveal) => {
+        useRoundtableStore.getState().applyReveal(reveal);
+        // 이 판이 방금 전적에 적혔다 (워커 → /api/internal/world-match). 로비·기록
+        // 화면이 다음에 뜰 때 낡은 캐시(staleTime 60초)를 그대로 쓰지 않게 걷는다 —
+        // 지우기만 하고 다시 읽는 건 그 화면이 뜰 때다.
+        void qc.invalidateQueries({ queryKey: profileStatsKey });
+        void qc.invalidateQueries({ queryKey: matchHistoryKey });
+      },
       onRole: (role) => useRoundtableStore.getState().setMyRole(role),
       onError: (codeText) =>
         useWorldStore.getState().setStatus('error', errorMessage(codeText)),
       onClose: () => useWorldStore.getState().setStatus('error', '연결이 끊겼다'),
     }),
-    [],
+    [qc],
   );
 
   const enter = useCallback(
