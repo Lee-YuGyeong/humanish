@@ -66,6 +66,11 @@ interface RoundtableState {
   spotlightId: string | null;
   /** 확정된 지목 대상. defense 부터 채워진다. 지목이 없으면 끝까지 null */
   nomineeId: string | null;
+  /**
+   * 생사 투표가 부결돼 **지목부터 다시 한 횟수** (0이면 첫 바퀴).
+   * 화면이 vote 로 되돌아간 이유를 알리는 데만 쓴다 — 좌석과 무관한 수다 (I1).
+   */
+  revote: number;
   /** 표를 낸 **고유 좌석 수**. 서버가 묶어서 보낸다 — 로컬로 더하지 않는다 */
   voted: number;
   /** 전 좌석 수(사람+봇). 서버가 준 값 그대로다 */
@@ -129,6 +134,7 @@ const IDLE = {
   totalRounds: 0,
   spotlightId: null,
   nomineeId: null,
+  revote: 0,
   voted: 0,
   total: 0,
   eliminatedId: null,
@@ -154,6 +160,7 @@ export const useRoundtableStore = create<RoundtableState>((set) => ({
         totalRounds: round.totalRounds,
         spotlightId: round.spotlightId,
         nomineeId: round.nomineeId,
+        revote: round.revote,
         // 단계가 넘어갔으면 지난 단계의 선택·진행은 의미가 없다
         ...(changed ? { myVote: null, myVerdict: null, voted: 0, total: 0 } : null),
         // 한 판 더(rematch) — 새 판(topic)이 열리면 지난 판의 결과·처형 연출을 걷는다.

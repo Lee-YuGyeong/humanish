@@ -36,6 +36,8 @@ export interface RoundInfo {
   totalRounds: number;
   /** 확정된 지목 대상. defense 부터 채워진다 */
   nomineeId: string | null;
+  /** 생사 투표가 부결돼 지목부터 다시 한 횟수. 0이면 첫 바퀴다 */
+  revote: number;
 }
 
 /**
@@ -171,6 +173,8 @@ export class WorldConnection {
             round: msg.round,
             totalRounds: msg.totalRounds,
             nomineeId: msg.nomineeId,
+            // 나중에 붙은 필드다 — 구 워커는 안 보낸다 → 첫 바퀴로 읽는다
+            revote: msg.revote ?? 0,
           });
           break;
         case 'vote_progress':

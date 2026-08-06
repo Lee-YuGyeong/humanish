@@ -29,6 +29,7 @@
 
 import { useEffect, useMemo, useState } from 'react';
 
+import { VERDICT_MAX_REVOTES } from '@/lib/mp/constants';
 import type { RevealIdentity, RoundPhase, RoundRole, RoundWinner } from '@/lib/mp/protocol';
 import { seatColor } from '@/lib/mp/validate';
 import { useRoundtableStore } from './roundtable-store';
@@ -302,12 +303,26 @@ function VotePanel({ onVote }: { onVote: (targetId: string) => void }) {
   const myVote = useRoundtableStore((s) => s.myVote);
   const voted = useRoundtableStore((s) => s.voted);
   const total = useRoundtableStore((s) => s.total);
+  /**
+   * 부결로 되돌아온 바퀴인가 (0이면 첫 지목).
+   *
+   * ★ 이 한 줄이 없으면 방금 「반대 — 생존」을 고른 사람에게는 화면이 그냥 뒤로
+   *   튄 것으로 보인다. 실제로 그게 "재투표가 모달에서 멈췄다"로 보고됐다.
+   */
+  const revote = useRoundtableStore((s) => s.revote);
 
   return (
     <PanelShell>
+      {revote > 0 ? (
+        <p className="mb-2 text-[11px] font-bold text-[#d4a373]">
+          부결됐다 — 다시 지목한다 ({revote}/{VERDICT_MAX_REVOTES})
+        </p>
+      ) : null}
       <h2 className="text-sm font-bold text-neutral-100">AI 같은 사람을 한 명 지목하라</h2>
       <p className="mt-1 text-[11px] leading-relaxed text-neutral-500">
-        마감 전까지 몇 번이든 바꿀 수 있다. 자기 자신은 지목할 수 없다.
+        {revote > 0
+          ? '앞서 지목한 사람은 처형되지 않았다. 다른 사람을 골라도 된다.'
+          : '마감 전까지 몇 번이든 바꿀 수 있다. 자기 자신은 지목할 수 없다.'}
       </p>
 
       <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-3">

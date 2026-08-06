@@ -32,6 +32,7 @@ import {
 } from './music';
 import { useWorldStore } from './store';
 import { useRoundtableStore } from './roundtable-store';
+import { setActiveRoom, clearActiveRoom } from './active-room';
 
 const WorldScene = dynamic(() => import('./world-scene'), {
   ssr: false,
@@ -169,6 +170,13 @@ export default function WorldPage() {
   const [volumeHud, setVolumeHud] = useState(false);
   /** 헤더의 「현재 방에서 퇴장하기」를 눌렀다 — 실수 방지로 한 번 더 묻는다 */
   const [confirmLeave, setConfirmLeave] = useState(false);
+  /**
+   * 로비에서 「게임 시작」으로 넘어온 흐름인가 (`/world?code=`). 이때는 입장 패널
+   * (방 만들기·정원 카드)을 띄우지 않는다 — 이미 방이 정해졌으니 **로딩 표시**만
+   * 보이고 곧장 3D 월드로 들어간다. 라운지(코드 없이 /world 직접 방문)는 false 라
+   * 예전처럼 입장 패널이 뜬다.
+   */
+  const [gameFlow, setGameFlow] = useState(false);
 
   const status = useWorldStore((s) => s.status);
   const errorText = useWorldStore((s) => s.errorText);
@@ -233,7 +241,13 @@ export default function WorldPage() {
           maskId: t.self.mask_id,
         });
         conn.connect(t.ws_url, t.room.id, t.ticket, events);
+        // 이 방에 붙었다고 남긴다 — 뒤로가기·퇴장으로 나가도 로비가 여기로 되돌린다
+        // (CEO 결정 2026-08-06, active-room.ts). endGameToLobby 가 판 끝에 지운다.
+        setActiveRoom(t.room.code);
       } catch (e) {
+        // 재입장이 실패했다(방이 이미 삭제됐거나 코드가 틀렸다). 기록을 지워
+        // 로비가 죽은 방으로 무한히 되돌리지 않게 한다.
+        clearActiveRoom();
         useWorldStore.getState().setStatus('error', e instanceof Error ? e.message : String(e));
       } finally {
         setBusy(false);
@@ -263,6 +277,7 @@ export default function WorldPage() {
     const normalized = fromList?.replace(/\s+/g, '').toUpperCase() ?? '';
     if (!normalized) return;
     autoEntered.current = true;
+    setGameFlow(true); // 로비에서 넘어온 흐름 — 입장 패널 대신 로딩 표시를 띄운다
     setCode(normalized);
     void enter(normalized);
   }, [enter]);
@@ -430,6 +445,8 @@ export default function WorldPage() {
     setSceneReady(false);
     setComposing(false);
     setTicket(null);
+    // 입장 패널로 돌아가는 길이므로 게임 흐름 플래그를 내린다 — 안 내리면 로딩 표시에 갇힌다
+    setGameFlow(false);
     useWorldStore.getState().reset();
     useRoundtableStore.getState().reset();
   }, [conn]);
@@ -453,6 +470,9 @@ export default function WorldPage() {
         body: JSON.stringify({ room_id: roomId }),
       }).catch(() => {});
     }
+    // 판이 끝난 방이다 — 자동 재입장 기록을 지운다. 안 지우면 로비가 방금 접은
+    // 방으로 되돌린다 (active-room.ts, CEO 결정 2026-08-06).
+    clearActiveRoom();
     leave();
     router.push('/main');
   }, [ticket, leave, router]);
@@ -702,8 +722,37 @@ export default function WorldPage() {
         {live ? <StatusChip /> : null}
       </header>
 
-      {/* 입장 패널 */}
-      {!live ? (
+      {/*
+        로비에서 「게임 시작」으로 넘어온 흐름(gameFlow)에서는 입장 패널(방 만들기 카드)을
+        띄우지 않는다. 방은 이미 정해졌으니 로딩 표시만 보이고 곧장 월드로 들어간다 —
+        전원이 도착할 때까지의 "다른 인원 대기"는 월드 안의 스크린(warehouse ScreenWaiting)이
+        present/total 로 보여 준다.
+      */}
+      {!live && gameFlow ? (
+        <div className="absolute inset-0 z-30 flex flex-col items-center justify-center gap-3 bg-[#07050a] p-6 text-center">
+          {errorText ? (
+            <>
+              <p className="text-sm font-bold text-red-400">{errorText}</p>
+              <button
+                type="button"
+                onClick={() => router.push('/main')}
+                className="mt-2 rounded-lg bg-white/10 px-4 py-2 text-sm font-bold text-neutral-200 transition-colors hover:bg-white/20"
+              >
+                로비로 돌아가기
+              </button>
+            </>
+          ) : (
+            <>
+              <div className="h-9 w-9 animate-spin rounded-full border-2 border-white/15 border-t-[#d4a373]" />
+              <p className="text-sm font-bold text-neutral-200">로딩 중입니다…</p>
+              <p className="text-[12px] text-neutral-500">다른 인원의 로딩을 기다리는 중입니다</p>
+            </>
+          )}
+        </div>
+      ) : null}
+
+      {/* 입장 패널 — 코드 없이 /world 로 직접 온 라운지에서만 뜬다 */}
+      {!live && !gameFlow ? (
         <div className="absolute inset-0 flex items-center justify-center p-6">
           <div className="w-full max-w-sm rounded-2xl bg-black/70 p-6 ring-1 ring-white/10 backdrop-blur">
             <h2 className="text-sm font-bold text-neutral-200">방에 들어가기</h2>

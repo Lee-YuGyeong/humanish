@@ -32,12 +32,12 @@ import {
   stepRound,
   tallyNomination,
   voteProgress,
-  VERDICT_MAX_REVOTES,
   type RoundState,
   type Rng,
 } from '../../worker/src/roundtable';
 import type { RoundPhase } from '../../lib/mp/protocol';
 import {
+  VERDICT_MAX_REVOTES,
   ROUND_DEFENSE_MS,
   ROUND_FREECHAT_MS,
   ROUND_REVEAL_MS,
@@ -445,10 +445,12 @@ describe('resolveVerdict — 찬 과반만 처형, 동수는 생존', () => {
 });
 
 /*
- * 생사 재투표는 **찬성 과반**이어야 처형이 확정된다. 반대가 더 많거나 동수면
- * 표를 비우고 다시 받는다 — VERDICT_MAX_REVOTES 번까지 (사용자 결정 2026-08-06).
+ * 생사 투표는 **찬성 과반**이어야 처형이 확정된다. 반대가 더 많거나 동수면 부결이고,
+ * 그러면 **지목(vote)부터 다시** 한다 — VERDICT_MAX_REVOTES 번까지 (사용자 결정
+ * 2026-08-06). 같은 대상에게 찬반만 다시 물으면 화면에는 똑같은 모달이 반복될 뿐이라,
+ * 부결의 뜻("이 사람이 아니다")에 맞게 다른 사람을 고를 기회를 준다.
  */
-describe('verdict 재투표 — 찬성 과반이 나올 때까지 (사용자 결정 2026-08-06)', () => {
+describe('verdict 부결 — 지목부터 다시 (사용자 결정 2026-08-06)', () => {
   /** 지목까지 확정된 verdict 단계 판. c(봇)가 지목된다. */
   function atVerdict(): RoundState {
     const s = runTo(startRound(SEATS, HUMANS, 0, FIXED)!, 'vote');
@@ -470,37 +472,52 @@ describe('verdict 재투표 — 찬성 과반이 나올 때까지 (사용자 결
     expect(s.revoteCount).toBe(0);
   });
 
-  it('반대가 더 많으면 verdict 를 유지하고 표를 비운다', () => {
+  it('반대가 더 많으면 지목(vote)으로 돌아간다', () => {
     const s = atVerdict();
     castVerdict(s, 'a', false, s.phaseEndsAt - 1);
     castVerdict(s, 'b', false, s.phaseEndsAt - 1); // 반 2 · 찬 0
     const at = s.phaseEndsAt;
     expect(advance(s)).toBe(true);
-    expect(s.phase).toBe('verdict'); // reveal 로 안 간다
-    expect(s.phaseEndsAt).toBe(at + ROUND_VERDICT_MS); // 새 20초 창
-    expect(s.verdicts).toEqual({}); // 표를 새로 받는다
+    expect(s.phase).toBe('vote'); // reveal 로도, verdict 로도 안 간다
+    expect(s.phaseEndsAt).toBe(at + ROUND_VOTE_MS); // 새 지목 창
     expect(s.revoteCount).toBe(1);
     expect(s.verdictSettled).toBe(false); // 아직 확정 안 됨
   });
 
-  it('동수여도 재투표한다 — 확신 없이 처형하지 않는다', () => {
+  it('되돌아간 vote 는 첫 지목과 **같은 상태**다 — 지난 지목이 남지 않는다', () => {
+    const s = atVerdict();
+    castVerdict(s, 'a', false, s.phaseEndsAt - 1);
+    castVerdict(s, 'b', false, s.phaseEndsAt - 1);
+    advance(s);
+    expect(s.votes).toEqual({}); // 다른 사람을 고를 수 있어야 한다
+    expect(s.verdicts).toEqual({});
+    expect(s.nomineeId).toBeNull();
+    expect(s.nominationSettled).toBe(false); // 안 풀면 새 표가 집계되지 않는다
+    expect(s.spotlightId).toBeNull(); // 조명은 defense 에서만 (I1)
+  });
+
+  it('동수여도 다시 한다 — 확신 없이 처형하지 않는다', () => {
     const s = atVerdict();
     castVerdict(s, 'a', true, s.phaseEndsAt - 1);
     castVerdict(s, 'b', false, s.phaseEndsAt - 1); // 찬 1 · 반 1 동수
     expect(advance(s)).toBe(true);
-    expect(s.phase).toBe('verdict');
+    expect(s.phase).toBe('vote');
     expect(s.revoteCount).toBe(1);
   });
 
-  it('중간 창에서 과반이 나오면 그 창에서 확정한다', () => {
+  it('다시 돈 바퀴에서 **다른 사람**을 지목할 수 있다', () => {
     const s = atVerdict();
-    // 1창: 동수 → 재투표
-    castVerdict(s, 'a', true, s.phaseEndsAt - 1);
+    castVerdict(s, 'a', false, s.phaseEndsAt - 1);
     castVerdict(s, 'b', false, s.phaseEndsAt - 1);
-    advance(s);
-    expect(s.phase).toBe('verdict');
-    expect(s.revoteCount).toBe(1);
-    // 2창: 찬성 과반 → reveal
+    advance(s); // → vote (c 가 부결됐다)
+
+    castAll(s, { a: 'b', b: 'c' }); // 이번엔 a 가 b 를 찍는다
+    advance(s); // → defense
+    expect(s.phase).toBe('defense');
+    expect(s.nomineeId).not.toBe('c'); // 지난 지목에 묶이지 않는다
+    expect(s.spotlightId).toBe(s.nomineeId);
+
+    advance(s); // → verdict
     castVerdict(s, 'a', true, s.phaseEndsAt - 1);
     castVerdict(s, 'b', true, s.phaseEndsAt - 1);
     advance(s);
@@ -510,17 +527,22 @@ describe('verdict 재투표 — 찬성 과반이 나올 때까지 (사용자 결
 
   it('상한에 닿으면 생존으로 확정하고 reveal 로 간다 — 무한 반복 방지', () => {
     const s = atVerdict();
-    let windows = 0;
-    for (let i = 0; i < 20 && s.phase === 'verdict'; i += 1) {
-      windows += 1;
+    let rounds = 0;
+    for (let i = 0; i < 20 && s.phase !== 'reveal'; i += 1) {
+      rounds += 1;
       castVerdict(s, 'a', false, s.phaseEndsAt - 1);
       castVerdict(s, 'b', false, s.phaseEndsAt - 1); // 끝내 반대만
       advance(s);
+      if (s.phase !== 'vote') continue;
+      // 다시 지목 → 변론 → 생사. 같은 대상을 다시 찍어도 상한이 판을 끝낸다.
+      castAll(s, { a: 'c', b: 'c' });
+      advance(s); // → defense
+      advance(s); // → verdict
     }
     expect(s.phase).toBe('reveal');
     expect(s.executed).toBe(false); // 과반이 끝내 안 나오면 생존
     expect(s.winner).toBe('ai'); // 부결 → AI 승 (§18.4)
-    expect(windows).toBe(VERDICT_MAX_REVOTES + 1); // 최초 1창 + 재투표 상한
+    expect(rounds).toBe(VERDICT_MAX_REVOTES + 1); // 최초 1바퀴 + 상한
     expect(s.revoteCount).toBe(VERDICT_MAX_REVOTES);
   });
 });
@@ -599,25 +621,31 @@ function playRound(opts: {
   rng?: Rng;
 }): RoundState {
   const s = startRound(opts.seats ?? SEATS, opts.humans ?? HUMANS, 0, FIXED)!;
-  runTo(s, 'vote', opts.rng ?? FIXED);
-  for (const [voter, target] of Object.entries(opts.votes)) {
-    castVote(s, voter, target, s.phaseEndsAt - 1);
-  }
-  advance(s, opts.rng ?? FIXED);
+  const rng = opts.rng ?? FIXED;
+  runTo(s, 'vote', rng);
+
   /*
-   * ★ 반복문을 if 블록 **밖**에 둔다. 안에 넣으면 `s.phase === 'defense'` 로 좁혀진
-   *   타입이 블록 끝까지 남아서, TS 가 아래 `s.phase === 'verdict'` 를 "겹치지 않는
-   *   비교"(TS2367)로 막는다 — advance 가 s 를 제자리에서 바꾸는 걸 TS 는 모른다.
-   *   반복 조건이 이미 phase 를 보므로 밖으로 빼도 도는 횟수는 같다.
+   * 부결이면 **지목부터 다시** 돈다 (2026-08-06). 매 바퀴 같은 표를 다시 내므로:
+   *   · 찬성 과반이면 첫 바퀴에서 곧장 reveal
+   *   · 동수·부결이면 상한(VERDICT_MAX_REVOTES)까지 돌다 생존으로 끝난다
+   * 한 바퀴가 vote→defense→verdict 세 단계라 상한도 세 배로 잡는다.
+   *
+   * ★ 단계별 분기를 **반복문 안의 if/else if** 로 둔다. 예전처럼 `if (s.phase ===
+   *   'defense') …` 를 밖에 두면 그 블록에서 좁혀진 타입이 남아 TS 가 뒤의
+   *   `s.phase === 'verdict'` 를 "겹치지 않는 비교"(TS2367)로 막는다 —
+   *   advance 가 s 를 제자리에서 바꾸는 걸 TS 는 모르기 때문이다.
    */
-  if (s.phase === 'defense') advance(s); // → verdict
-  // 찬성 과반이 나올 때까지(또는 상한까지) 매 창에 같은 표를 다시 낸다 (2026-08-06 재투표).
-  // guilty 과반이면 첫 창에서 곧장 reveal 로 빠지고, 동수·부결이면 상한까지 돌다 생존으로 끝난다.
-  for (let i = 0; i < VERDICT_MAX_REVOTES + 2 && s.phase === 'verdict'; i += 1) {
-    for (const [voter, guilty] of Object.entries(opts.verdicts ?? {})) {
-      castVerdict(s, voter, guilty, s.phaseEndsAt - 1);
+  for (let i = 0; i < (VERDICT_MAX_REVOTES + 2) * 3 && s.phase !== 'reveal' && !s.done; i += 1) {
+    if (s.phase === 'vote') {
+      for (const [voter, target] of Object.entries(opts.votes)) {
+        castVote(s, voter, target, s.phaseEndsAt - 1);
+      }
+    } else if (s.phase === 'verdict') {
+      for (const [voter, guilty] of Object.entries(opts.verdicts ?? {})) {
+        castVerdict(s, voter, guilty, s.phaseEndsAt - 1);
+      }
     }
-    advance(s);
+    advance(s, rng);
   }
   expect(s.phase).toBe('reveal');
   return s;
@@ -683,11 +711,18 @@ describe('판 전체 — 집계가 결말로 이어진다', () => {
     expect(s.nomineeId).toBe('c');
     expect(s.nominationSettled).toBe(true);
 
-    // rng 를 바꿔 다시 굴려도 이미 확정된 지목은 안 바뀐다
+    // rng 를 바꿔 다시 굴려도 **이 바퀴의** 지목은 안 바뀐다
     const before = s.nomineeId;
     advance(s, rngOf(0.99)); // defense → verdict
-    advance(s, rngOf(0.99)); // verdict: 표가 없어 과반 불가 → 재투표(verdict 유지). 지목은 그대로여야 한다
+    expect(s.phase).toBe('verdict');
     expect(s.nomineeId).toBe(before);
+
+    // ★ 부결되면 지목이 통째로 비워지고 nominationSettled 도 풀린다 (2026-08-06) —
+    //   그건 "다시 굴러갔다"가 아니라 **다음 바퀴를 위해 새로 받는다**는 뜻이다.
+    advance(s, rngOf(0.99)); // verdict: 표가 없어 과반 불가 → vote 로 되돌아간다
+    expect(s.phase).toBe('vote');
+    expect(s.nomineeId).toBeNull();
+    expect(s.nominationSettled).toBe(false);
   });
 });
 
@@ -759,10 +794,18 @@ describe('haveAllVoted — vote 조기 종료 (I5)', () => {
  * └──────────────────────────────────────────────────────────────────────────┘
  */
 describe('I1 — reveal 이전에는 정체가 새지 않는다', () => {
-  it('roundSnapshot 의 필드는 정확히 이 일곱 개다 — 늘어나면 여기서 걸린다', () => {
+  /*
+   * ★ 이 목록을 늘릴 때 물어야 할 것은 "이 값이 정체인가"가 아니라 **"이걸 몇 판
+   *   모으면 봇을 골라낼 수 있나"** 다 (protocol.ts 의 I1 상자).
+   *
+   *   revote 는 2026-08-06 에 늘렸다. 방 전체에 **하나뿐인 수**이고 좌석·정체 어느
+   *   쪽과도 묶이지 않는다 — 부결이 몇 번 났는지는 모두가 같은 화면으로 이미 본다.
+   *   화면이 vote 로 되돌아간 이유를 알리는 데만 쓴다 (game-hud 의 VotePanel).
+   */
+  it('roundSnapshot 의 필드는 정확히 이 여덟 개다 — 늘어나면 여기서 걸린다', () => {
     const s = startRound(SEATS, HUMANS, 0, FIXED)!;
     expect(Object.keys(roundSnapshot(s)).sort()).toEqual(
-      ['endsAt', 'nomineeId', 'phase', 'round', 'spotlightId', 'topic', 'totalRounds'].sort(),
+      ['endsAt', 'nomineeId', 'phase', 'revote', 'round', 'spotlightId', 'topic', 'totalRounds'].sort(),
     );
   });
 
@@ -799,6 +842,10 @@ describe('I1 — reveal 이전에는 정체가 새지 않는다', () => {
     for (;;) {
       seen.push(roundSnapshot(s).nomineeId);
       phases.push(s.phase);
+      // 찬성 과반을 만들어 **한 바퀴로** 끝낸다. 부결되면 지목부터 다시 도는데
+      // (2026-08-06), 그때 지목이 null 로 돌아가는 건 아래 표와 다른 이야기다 —
+      // 그쪽은 「verdict 부결」 describe 가 따로 본다.
+      if (s.phase === 'verdict') castVerdictAll(s, true);
       if (!advance(s)) break;
     }
     for (let i = 0; i < phases.length; i += 1) {
@@ -963,12 +1010,12 @@ describe('revealSnapshot — 정체를 내보내는 유일한 함수', () => {
     advance(s); // → defense
     advance(s); // → verdict
     /*
-     * ★ verdict 에서 advance 한 번으로는 못 빠져나온다 (2026-08-06 재투표).
-     *   찬성 과반이 나야 곧장 reveal 이고, 아무도 안 내면 **상한까지 창이 다시 열린다.**
-     *   여기서는 평결을 아무도 안 내므로 상한까지 돌다 생존으로 끝난다 — 그걸 안 돌리면
-     *   phase 가 verdict 인 채로 revealSnapshot 이 null 을 준다. playRound 와 같은 모양이다.
+     * ★ verdict 에서 advance 한 번으로는 못 빠져나온다 (2026-08-06). 찬성 과반이 나야
+     *   reveal 이고, 부결이면 **지목부터 다시 돌면서 표가 통째로 비워진다** — 그러면
+     *   여기서 확인하려는 votes 자체가 사라진다. 그래서 과반을 만들어 한 바퀴로 끝낸다.
      */
-    for (let i = 0; i < VERDICT_MAX_REVOTES + 2 && s.phase === 'verdict'; i += 1) advance(s);
+    castVerdictAll(s, true);
+    advance(s); // → reveal
     expect(s.phase).toBe('reveal');
 
     const r = revealSnapshot(s)!;

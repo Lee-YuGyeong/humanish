@@ -14,6 +14,7 @@ import { Space_Grotesk } from "next/font/google";
 
 import { RequireLogin } from "@/components/require-login";
 import { Lobby } from "./lobby";
+import { WorldRejoin } from "./world-rejoin";
 
 /**
  * 라틴 전용이다. 한글은 layout.tsx 의 IBM Plex Sans KR 로 떨어진다
@@ -32,6 +33,8 @@ export default function MainPage() {
     <div className={space.variable}>
       {/* 로그인해야 들어온다 (SPEC §15-2-결정) */}
       <RequireLogin>
+        {/* 판 도중 나갔던 월드 방이 있으면 그리로 되돌린다 (CEO 결정 2026-08-06) */}
+        <WorldRejoin />
         <Lobby />
       </RequireLogin>
     </div>
