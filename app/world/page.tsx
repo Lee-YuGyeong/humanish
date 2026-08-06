@@ -149,6 +149,24 @@ export default function WorldPage() {
   const [busy, setBusy] = useState(false);
   const [ticket, setTicket] = useState<Ticket | null>(null);
   const [locked, setLocked] = useState(false);
+  /**
+   * 이 방에서 **한 번이라도 잠금을 잡은 적이 있나.**
+   *
+   * ┌─ 「화면을 클릭하면 계속」을 언제 띄우는가 (사용자 결정 2026-08-06) ────────┐
+   * │ 이 안내는 두 상황에서 같이 떴다:                                           │
+   * │   ① ESC 로 잠깐 멈춘 상태 — 안내가 필요하다. 왜 멈췄는지 알려줘야 한다.     │
+   * │   ② **막 들어온 순간** — 브라우저가 자동 잠금을 거절하면(다른 페이지에서    │
+   * │      넘어온 새 문서라 사용자 조작이 없다) 들어서자마자 이 문구가 뜬다.       │
+   * │                                                                          │
+   * │ ②는 "접속했는데 안내문부터 본다"라 걷어낸다. 잠금은 그대로 시도하고(대개    │
+   * │ 성공한다), 거절돼도 **아무 데나 클릭하면 조용히 잡힌다** — 클릭 경로는       │
+   * │ 그대로 살아 있으므로 동작이 줄지는 않는다.                                 │
+   * │                                                                          │
+   * │ 그래서 안내의 조건을 "지금 안 잠겼다"가 아니라 **"잡았다가 풀렸다"** 로      │
+   * │ 바꾼다. 그게 곧 ①이다.                                                    │
+   * └──────────────────────────────────────────────────────────────────────────┘
+   */
+  const [everLocked, setEverLocked] = useState(false);
   const [draft, setDraft] = useState('');
   /**
    * 캔버스가 실제로 DOM 에 붙었는가. `status === 'live'` 는 **welcome 이 왔다**는
@@ -220,6 +238,8 @@ export default function WorldPage() {
         conn.close();
         setSceneReady(false);
         setComposing(false);
+        // 새 방은 다시 "처음 접속"이다 — 들어서자마자 안내문이 뜨면 안 된다 (everLocked)
+        setEverLocked(false);
         useWorldStore.getState().reset();
         useRoundtableStore.getState().reset();
         useWorldStore.getState().setStatus('connecting');
@@ -367,6 +387,11 @@ export default function WorldPage() {
    *   이 효과가 그걸 곧바로 취소해 버린다 — 아무리 눌러도 안 열린다. 실제로
    *   브라우저에서 그렇게 나왔다. 그래서 직전 값과 비교해 **떨어지는 순간**만 잡는다.
    */
+  // 한 번 잡히면 이 방을 나갈 때까지 참이다 (everLocked 의 상자).
+  useEffect(() => {
+    if (locked) setEverLocked(true);
+  }, [locked]);
+
   const wasLocked = useRef(false);
   useEffect(() => {
     const justUnlocked = wasLocked.current && !locked;
@@ -445,6 +470,7 @@ export default function WorldPage() {
     setSceneReady(false);
     setComposing(false);
     setTicket(null);
+    setEverLocked(false);
     // 입장 패널로 돌아가는 길이므로 게임 흐름 플래그를 내린다 — 안 내리면 로딩 표시에 갇힌다
     setGameFlow(false);
     useWorldStore.getState().reset();
@@ -840,11 +866,15 @@ export default function WorldPage() {
           ) : null}
 
           {/*
-            잠깐 멈춤. ESC 를 눌렀거나 자동 잠금이 거절된 상태다.
+            잠깐 멈춤 — **ESC 로 잡았던 잠금이 풀린 상태에서만** 뜬다 (everLocked).
+            막 들어와 아직 한 번도 못 잡은 동안에는 아무것도 띄우지 않는다:
+            접속하자마자 안내문부터 보는 게 이상하고, 그때는 아무 데나 클릭하면
+            조용히 잠긴다 (사용자 결정 2026-08-06 — everLocked 의 상자).
+
             **pointer-events-none 이라 이 글자를 뚫고 캔버스가 클릭된다** — 그래서
             "클릭하면 계속"이 말 그대로 아무 데나 눌러도 동작한다.
           */}
-          {!locked && !composing && !uiOpen && !confirmLeave ? (
+          {everLocked && !locked && !composing && !uiOpen && !confirmLeave ? (
             <div className="pointer-events-none absolute inset-0 z-20 flex flex-col items-center justify-center gap-2">
               <p className="text-lg font-bold text-neutral-100 drop-shadow-[0_2px_12px_rgba(0,0,0,0.9)]">
                 화면을 클릭하면 계속
