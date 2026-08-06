@@ -1,0 +1,188 @@
+/*
+ * 게임 오버레이의 카드 언어 — 역할 카드 · 지목 투표 · 생사 투표 · 결과가 같은
+ * 겉모습(딜 입장 · 어두운 카드 바탕 · 액자선 · 광택)을 입는다. 소유: 원상 (/world)
+ *
+ * 색은 컴포넌트가 --rc(강조 색) CSS 변수로 꽂아 준다 — 역할 카드는 역할 색
+ * (game-hud 의 ROLE_CARD.color), 판 오버레이는 월드 금색(#d4a373)이다.
+ * 여기서 역할·단계별 분기를 만들지 않는다.
+ *
+ * ★ tailwind 의 animate-in 류를 쓰지 않는 이유는 game-hud 의 Layer 주석과 같다 —
+ *   그 플러그인이 이 저장소에 없다. 키프레임은 여기 직접 둔다.
+ */
+
+.backdrop {
+  pointer-events: none;
+  background: radial-gradient(ellipse at center, rgba(0, 0, 0, 0.5), rgba(0, 0, 0, 0.82));
+  animation: fadeIn 0.3s ease both;
+}
+
+/* 딜(입장)과 부유(대기)를 한 요소에 걸면 뒤가 앞을 덮어쓴다 — 겹은 둘로 나눈다 */
+.deal {
+  animation: deal 0.55s cubic-bezier(0.2, 1.35, 0.35, 1) both;
+}
+
+/* 카드의 몸통. card(역할)와 panel(판)이 같이 쓴다 — 갈리면 화면마다 다른 게임이 된다 */
+.chrome {
+  pointer-events: auto;
+  background:
+    radial-gradient(120% 60% at 50% 0%, color-mix(in srgb, var(--rc) 14%, transparent), transparent 60%),
+    linear-gradient(160deg, #17120c, #0a0806 65%);
+  border: 1px solid color-mix(in srgb, var(--rc) 55%, transparent);
+  box-shadow:
+    0 0 44px color-mix(in srgb, var(--rc) 22%, transparent),
+    0 24px 60px rgba(0, 0, 0, 0.6);
+}
+
+/* 역할 카드 — 자리 잡은 뒤 살짝 떠다닌다 */
+.card {
+  composes: chrome;
+  animation: float 3.4s ease-in-out 0.6s infinite alternate;
+}
+
+/* 판 오버레이(투표·찬반·결과) — 버튼을 눌러야 하므로 떠다니지 않는다 */
+.panel {
+  composes: chrome;
+}
+
+/* 안쪽 액자선 — 카드가 "인쇄물"처럼 읽히게 하는 한 줄 */
+.frame {
+  position: absolute;
+  inset: 7px;
+  border: 1px solid color-mix(in srgb, var(--rc) 25%, transparent);
+  border-radius: 0.75rem;
+  pointer-events: none;
+}
+
+/* 광택 한 번 — 딜이 끝나는 타이밍에 왼쪽에서 오른쪽으로 */
+.shine {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: linear-gradient(110deg, transparent 42%, rgba(255, 255, 255, 0.14) 50%, transparent 58%);
+  transform: translateX(-130%);
+  animation: shine 0.9s ease 0.55s 1 forwards;
+}
+
+.kicker {
+  font-size: 10px;
+  letter-spacing: 0.3em;
+  text-transform: uppercase;
+  color: #8a8378;
+}
+
+.emblem {
+  margin: 1.1rem auto 0;
+  display: flex;
+  width: 64px;
+  height: 64px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 9999px;
+  color: var(--rc);
+  border: 1px solid color-mix(in srgb, var(--rc) 50%, transparent);
+  background: radial-gradient(circle, color-mix(in srgb, var(--rc) 16%, transparent), transparent 70%);
+  box-shadow: 0 0 22px color-mix(in srgb, var(--rc) 30%, transparent);
+}
+
+.name {
+  margin-top: 0.9rem;
+  font-size: 1.9rem;
+  font-weight: 900;
+  letter-spacing: -0.02em;
+  color: var(--rc);
+  text-shadow: 0 0 24px color-mix(in srgb, var(--rc) 55%, transparent);
+}
+
+.tagline {
+  margin-top: 0.35rem;
+  font-size: 12px;
+  font-weight: 700;
+  color: #d6cfc2;
+}
+
+/* ── ◆ ── 장식 구분선 */
+.rule {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  margin: 1.1rem 0.4rem 0;
+  font-size: 9px;
+  color: color-mix(in srgb, var(--rc) 60%, transparent);
+}
+.rule::before,
+.rule::after {
+  content: '';
+  height: 1px;
+  flex: 1;
+}
+.rule::before {
+  background: linear-gradient(90deg, transparent, color-mix(in srgb, var(--rc) 40%, transparent));
+}
+.rule::after {
+  background: linear-gradient(270deg, transparent, color-mix(in srgb, var(--rc) 40%, transparent));
+}
+
+/* 문장마다 한 줄 — 문구는 game-hud 의 ROLE_CARD.lines 가 준다 */
+.lines {
+  margin-top: 0.9rem;
+  font-size: 12px;
+  line-height: 1.9;
+  color: #a89f90;
+}
+
+.confirm {
+  margin-top: 1.25rem;
+  width: 100%;
+  border-radius: 0.75rem;
+  padding: 0.8rem 1rem;
+  font-size: 0.9rem;
+  font-weight: 800;
+  color: #0a0806;
+  background: linear-gradient(180deg, color-mix(in srgb, var(--rc) 92%, white), var(--rc));
+  box-shadow: 0 6px 18px color-mix(in srgb, var(--rc) 35%, transparent);
+  transition:
+    transform 0.12s ease,
+    box-shadow 0.12s ease;
+}
+.confirm:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 8px 22px color-mix(in srgb, var(--rc) 45%, transparent);
+}
+.confirm:active {
+  transform: translateY(0);
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes deal {
+  from {
+    opacity: 0;
+    transform: translateY(70px) rotate(-7deg) scale(0.6);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) rotate(0) scale(1);
+  }
+}
+
+@keyframes float {
+  from {
+    transform: translateY(0);
+  }
+  to {
+    transform: translateY(-6px);
+  }
+}
+
+@keyframes shine {
+  to {
+    transform: translateX(130%);
+  }
+}

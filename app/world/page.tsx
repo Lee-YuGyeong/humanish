@@ -24,14 +24,14 @@ import { WORLD_SEAT_SLOTS, isMovementLocked, mayChat } from '@/lib/mp/constants'
 import { spawnFor } from '@/lib/mp/spawn';
 import type { Role } from '@/lib/game/types';
 import { WorldConnection, type WorldEvents } from './net/connection';
-import GameHud from './game-hud';
+import GameHud, { ROLE_CARD } from './game-hud';
 import {
   getVolume as getMusicVolume,
   setVolume as setMusicVolume,
   subscribe as musicSubscribe,
 } from './music';
 import { useWorldStore } from './store';
-import { useRoundtableStore } from './roundtable-store';
+import { roleCardOpen, useRoundtableStore } from './roundtable-store';
 import { setActiveRoom, clearActiveRoom } from './active-room';
 
 const WorldScene = dynamic(() => import('./world-scene'), {
@@ -349,7 +349,17 @@ export default function WorldPage() {
   const phase = useRoundtableStore((s) => s.phase);
   const nomineeId = useRoundtableStore((s) => s.nomineeId);
   const revealResult = useRoundtableStore((s) => s.reveal);
-  const uiOpen = live && (isMovementLocked(phase) || revealResult !== null);
+  /**
+   * 역할 카드가 떠 있는가 — 뜨는 조건은 roundtable-store 의 셀렉터 **하나**다
+   * (game-hud 의 RoleCard 와 같은 것을 본다). 카드에는 「확인」 버튼이 있어서
+   * topic 처럼 잠금이 없는 단계에도 커서를 돌려줘야 한다 — 안 돌려주면 커서가
+   * 없어 누를 수가 없다 (아래 상자의 좌석 카드와 같은 이유).
+   */
+  const cardOpen = useRoundtableStore(roleCardOpen);
+  const uiOpen = live && (isMovementLocked(phase) || revealResult !== null || cardOpen);
+  /** 카드에서 「확인」을 누른 뒤 머리말 밑에 남는 내 역할 (§18.2 — 내 것만 안다) */
+  const myRole = useRoundtableStore((s) => s.myRole);
+  const roleAck = useRoundtableStore((s) => s.roleAck);
 
   /**
    * 지금 내가 말할 수 있는가. 워커의 채팅 게이트와 **같은 함수**로 판정한다 (I1) —
@@ -743,6 +753,19 @@ export default function WorldPage() {
               {ticket.role ? ` · ${ROLE_LABEL[ticket.role]}` : ''}
             </p>
           ) : null}
+          {/*
+            역할 카드에서 「확인」을 누르면 카드 대신 여기 한 줄이 남는다.
+            이름·색은 카드(ROLE_CARD)와 같은 것을 읽는다 — 두 군데 적으면 갈린다.
+            myRole 은 t:'role' 로 **내 것만** 온 값이라 새는 게 없다 (§18.2).
+          */}
+          {myRole && roleAck ? (
+            <p className="mt-0.5 font-mono text-[11px] text-neutral-500">
+              내 역할 ·{' '}
+              <span className={`font-bold ${ROLE_CARD[myRole].accent}`}>
+                {ROLE_CARD[myRole].name}
+              </span>
+            </p>
+          ) : null}
         </div>
         {/* 소리는 걸으면서 M · − + 로 맞춘다 (판 없음) */}
         {live ? <StatusChip /> : null}
@@ -960,8 +983,10 @@ export default function WorldPage() {
                 ★ 단 하나 예외가 최후변론이다 — 지목된 본인은 이 구간에도 말할 수 있고
                   (mayChat), 말할 수 있다는 걸 모르면 침묵한다. **침묵한 지목자 = 사람**
                   이 되면 이 단계가 통째로 정체 판별기가 된다 (I1).
+                ★ 역할 카드가 떠서 열린 uiOpen 은 뺀다 — topic·speak 은 말이 열린
+                  단계라 canSpeak 이 참인데, 그때 이 문구가 뜨면 거짓말이 된다.
               */
-              canSpeak ? (
+              canSpeak && !cardOpen ? (
                 <p className="rounded-full border border-amber-500/40 bg-black/70 px-5 py-2.5 text-[12px] text-amber-200 backdrop-blur">
                   <span className="font-bold">Enter</span> 로 최후변론
                 </p>

@@ -32,7 +32,8 @@ import { useEffect, useMemo, useState } from 'react';
 import { VERDICT_MAX_REVOTES } from '@/lib/mp/constants';
 import type { RevealIdentity, RoundPhase, RoundRole, RoundWinner } from '@/lib/mp/protocol';
 import { seatColor } from '@/lib/mp/validate';
-import { useRoundtableStore } from './roundtable-store';
+import cardStyles from './role-card.module.css';
+import { roleCardOpen, useRoundtableStore } from './roundtable-store';
 import { useWorldStore } from './store';
 
 /* ─────────────────────────────── 말 ─────────────────────────────── */
@@ -64,7 +65,7 @@ const WINNER_LABEL: Record<RoundWinner, string> = {
   actor: '연기자 승리',
 };
 
-/** reveal 정체 표기. 이 라벨 밖에서 role 을 화면에 적지 않는다 (역할 안내는 RoleBanner 하나) */
+/** reveal 정체 표기. 남의 role 을 화면에 적는 곳은 여기뿐이다 (내 역할 안내는 ROLE_CARD) */
 const ROLE_TAG: Record<RoundRole, { label: string; className: string }> = {
   ai: { label: 'AI', className: 'text-emerald-400' },
   actor: { label: '연기자', className: 'text-[#d4a373]' },
@@ -184,9 +185,140 @@ export default function GameHud({
           단계만 보고 띄우면 정체가 오기 전에 빈 표가 한 번 번쩍인다.
       */}
       {reveal ? <RevealOverlay onLeave={onLeave} onRematch={onRematch} /> : null}
+      {/* 카드는 결과(z-50) 아래·투표 패널(z-40) 위 — 확인 전에는 카드가 먼저다 */}
+      <RoleCard />
     </>
   );
 }
+
+/* ─────────────────────────────── 역할 카드 ─────────────────────────────── */
+
+/**
+ * 역할별 화면 문구. **내 화면에만 있는 로컬 값이다** — myRole 은 t:'role' 로 내 것만
+ * 왔고(§18.2), 봇 좌석에는 소켓이 없어 카드 자체가 갈 곳이 없다(AI 역할은 서버가
+ * 봇 좌석에 무조건 'ai' 로 배정한다 — seatRole). 그래서 시민에게 카드가 떠도 새는 게
+ * 없다: "카드 내용"은 각자 자기 것만 본다.
+ *
+ * · lines 는 **문장마다 한 줄씩** 그린다 (사용자 결정 2026-08-06).
+ * · color 는 role-card.module.css 가 --rc 변수로 받아 테두리·광채·버튼을 물들인다.
+ *   시민을 emerald 로 두지 않는 이유: reveal 정체 표기(ROLE_TAG)에서 emerald 는
+ *   AI 의 색이다 — 같은 색을 시민 카드에 쓰면 결과 화면에서 색이 거짓말을 한다.
+ * ★ export 는 page.tsx 의 머리말 역할 줄(확인 뒤 방코드 밑에 남는 한 줄)이 같은
+ *   이름·색을 쓰기 위해서다 — 문구를 두 군데 적으면 반드시 갈린다.
+ */
+export const ROLE_CARD: Record<
+  'citizen' | 'actor',
+  { name: string; tagline: string; lines: string[]; accent: string; color: string }
+> = {
+  citizen: {
+    name: '일반 시민',
+    tagline: '사람들 틈에 AI 가 숨어 있다',
+    lines: [
+      '대화를 나누며 AI 같은 사람을 찾아내 지목하라.',
+      '진짜 AI 를 처형하면 시민 진영이 이긴다.',
+    ],
+    accent: 'text-sky-300',
+    color: '#7dd3fc',
+  },
+  actor: {
+    name: '연기자',
+    tagline: 'AI 인 척하는 스파이',
+    lines: [
+      'AI 인 척 연기해서 지목을 받아내라.',
+      '당신이 지목되면 연기자 진영이 이긴다.',
+      '다른 연기자가 누구인지는 당신도 모른다.',
+    ],
+    accent: 'text-[#d4a373]',
+    color: '#d4a373',
+  },
+};
+
+/**
+ * 내 역할 카드 — 게이트가 열리는 순간(전원 집결, 카운트다운 시작) 딜되어 들어온다
+ * (역할이 그때 t:'role' 로 온다 — room-do 의 dealEarlyRoles). 「확인」을 누르면
+ * 사라지고, 그 뒤로는 왼쪽 상단 머리말(방코드·이름 줄) 밑에 역할 한 줄이 남는다.
+ *
+ * · 뜨는 조건은 roleCardOpen **하나**다 — page.tsx 가 같은 셀렉터로 커서를 돌려준다.
+ * · z-[45]: 확인을 미뤄 투표 단계(z-40)까지 끌고 와도 카드가 먼저 보인다. 결과(z-50)가
+ *   오면 roleCardOpen 이 false 라 알아서 걷힌다.
+ * · 연출(딜·광택·부유)은 role-card.module.css 에 있다. 카드를 읽는 동안 내 아바타가
+ *   서 있는 건 채팅 입력·ESC 멈춤과 같은 "가만히 서 있는 사람"이다 (I1).
+ */
+function RoleCard() {
+  const open = useRoundtableStore(roleCardOpen);
+  const myRole = useRoundtableStore((s) => s.myRole);
+  const ackRole = useRoundtableStore((s) => s.ackRole);
+
+  if (!open || myRole === null) return null;
+  const card = ROLE_CARD[myRole];
+
+  return (
+    <div
+      className={`pointer-events-none absolute inset-0 z-[45] flex items-center justify-center p-6 ${cardStyles.backdrop}`}
+    >
+      <div className={cardStyles.deal}>
+        <div
+          className={`${cardStyles.card} relative w-[19rem] overflow-hidden rounded-2xl px-6 pb-6 pt-5 text-center`}
+          style={{ '--rc': card.color } as React.CSSProperties}
+        >
+          <div aria-hidden className={cardStyles.frame} />
+          <div aria-hidden className={cardStyles.shine} />
+
+          <p className={cardStyles.kicker}>Secret Role — 당신의 역할</p>
+          <div className={cardStyles.emblem} aria-hidden>
+            {myRole === 'actor' ? <MaskIcon /> : <EyeIcon />}
+          </div>
+          <p className={cardStyles.name}>{card.name}</p>
+          <p className={cardStyles.tagline}>{card.tagline}</p>
+          <div className={cardStyles.rule} aria-hidden>
+            ◆
+          </div>
+          <div className={cardStyles.lines}>
+            {card.lines.map((line) => (
+              <p key={line}>{line}</p>
+            ))}
+          </div>
+          <button type="button" onClick={ackRole} className={cardStyles.confirm}>
+            확인
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/** 연기자 — 가면. 카드 문장(AI 인 척)의 그림 버전이다 */
+function MaskIcon() {
+  return (
+    <svg width="32" height="32" viewBox="0 0 24 24" fill="none" aria-hidden>
+      <path
+        d="M3 6.5C6 5.3 9 4.8 12 4.8s6 .5 9 1.7c0 5.5-2.6 10.7-6.7 10.7-1.5 0-2.3-.9-2.3-.9s-.8.9-2.3.9C5.6 17.2 3 12 3 6.5Z"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        strokeLinejoin="round"
+      />
+      <ellipse cx="8.6" cy="10" rx="1.5" ry="1.1" fill="currentColor" />
+      <ellipse cx="15.4" cy="10" rx="1.5" ry="1.1" fill="currentColor" />
+    </svg>
+  );
+}
+
+/** 시민 — 감시하는 눈. 찾아내는 쪽의 그림이다 */
+function EyeIcon() {
+  return (
+    <svg width="32" height="32" viewBox="0 0 24 24" fill="none" aria-hidden>
+      <path
+        d="M2.5 12S6 6.2 12 6.2 21.5 12 21.5 12 18 17.8 12 17.8 2.5 12 2.5 12Z"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        strokeLinejoin="round"
+      />
+      <circle cx="12" cy="12" r="2.6" stroke="currentColor" strokeWidth="1.5" />
+      <circle cx="12" cy="12" r="0.9" fill="currentColor" />
+    </svg>
+  );
+}
+
 
 /* ─────────────────────────────── 상단 진행 HUD ─────────────────────────────── */
 
@@ -201,21 +333,11 @@ function PhaseHud() {
   const endsAt = useRoundtableStore((s) => s.endsAt);
   const round = useRoundtableStore((s) => s.round);
   const totalRounds = useRoundtableStore((s) => s.totalRounds);
-  const myRole = useRoundtableStore((s) => s.myRole);
   const left = useRemainingSec(endsAt);
 
   if (phase === 'idle') return null;
 
   const hint = PHASE_HINT[phase];
-  /**
-   * 연기자 안내 (§18.2). **내 화면에만 있는 로컬 값이다** — myRole 은 t:'role' 로
-   * 내 것만 왔다. 시민에게는 아무것도 띄우지 않는다: "안내가 안 뜨는 동안 = 시민"은
-   * 자기 화면 안에서만 성립하는 사실이라 새는 게 없다.
-   */
-  const actorHint =
-    myRole === 'actor' && phase !== 'reveal' && phase !== 'ended'
-      ? '당신은 연기자다 — AI 인 척해서 지목을 받아라'
-      : null;
 
   return (
     <div className="pointer-events-none absolute left-1/2 top-5 z-30 flex -translate-x-1/2 flex-col items-center gap-1.5">
@@ -249,12 +371,6 @@ function PhaseHud() {
       {hint ? (
         <p className="text-[11px] text-neutral-400 drop-shadow-[0_1px_6px_rgba(0,0,0,0.9)]">
           {hint}
-        </p>
-      ) : null}
-
-      {actorHint ? (
-        <p className="text-[11px] font-bold text-[#d4a373] drop-shadow-[0_1px_6px_rgba(0,0,0,0.9)]">
-          {actorHint}
         </p>
       ) : null}
     </div>
@@ -312,20 +428,25 @@ function VotePanel({ onVote }: { onVote: (targetId: string) => void }) {
   const revote = useRoundtableStore((s) => s.revote);
 
   return (
-    <PanelShell>
+    <PanelShell kicker="Nomination — 지목 투표">
       {revote > 0 ? (
-        <p className="mb-2 text-[11px] font-bold text-[#d4a373]">
+        <p className="mt-3 text-center text-[11px] font-bold text-[#d4a373]">
           부결됐다 — 다시 지목한다 ({revote}/{VERDICT_MAX_REVOTES})
         </p>
       ) : null}
-      <h2 className="text-sm font-bold text-neutral-100">AI 같은 사람을 한 명 지목하라</h2>
-      <p className="mt-1 text-[11px] leading-relaxed text-neutral-500">
+      <h2 className="mt-3 text-center text-base font-black tracking-tight text-neutral-100">
+        AI 같은 사람을 한 명 지목하라
+      </h2>
+      <p className="mt-1 text-center text-[11px] leading-relaxed text-neutral-500">
         {revote > 0
           ? '앞서 지목한 사람은 처형되지 않았다. 다른 사람을 골라도 된다.'
           : '마감 전까지 몇 번이든 바꿀 수 있다. 자기 자신은 지목할 수 없다.'}
       </p>
+      <div className={cardStyles.rule} aria-hidden>
+        ◆
+      </div>
 
-      <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-3">
+      <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-3">
         {seats.map((s) => {
           const picked = myVote === s.id;
           return (
@@ -335,10 +456,10 @@ function VotePanel({ onVote }: { onVote: (targetId: string) => void }) {
               disabled={s.isSelf}
               title={s.isSelf ? '자기 자신은 지목할 수 없다' : undefined}
               onClick={() => onVote(s.id)}
-              className={`flex items-center gap-2 rounded-xl px-3 py-2.5 text-left transition-colors disabled:cursor-not-allowed disabled:opacity-40 ${
+              className={`flex items-center gap-2 rounded-xl px-3 py-2.5 text-left transition-all disabled:cursor-not-allowed disabled:opacity-40 ${
                 picked
-                  ? 'bg-[#d4a373]/20 ring-2 ring-[#d4a373]'
-                  : 'bg-white/5 ring-1 ring-white/10 hover:bg-white/10'
+                  ? 'bg-[#d4a373]/20 ring-2 ring-[#d4a373] shadow-[0_0_16px_rgba(212,163,115,0.3)]'
+                  : 'bg-white/[0.04] ring-1 ring-[#d4a373]/15 hover:bg-[#d4a373]/10 hover:ring-[#d4a373]/40'
               }`}
             >
               <span
@@ -406,29 +527,32 @@ function VerdictPanel({ onVerdict }: { onVerdict: (guilty: boolean) => void }) {
   const isNominee = nominee?.isSelf === true;
 
   return (
-    <PanelShell>
-      <h2 className="text-sm font-bold text-neutral-100">
+    <PanelShell kicker="Judgment — 생사 투표">
+      <h2 className="mt-3 text-center text-base font-black tracking-tight text-neutral-100">
         <span className="text-[#d4a373]">{nominee?.nickname ?? '지목된 사람'}</span> 을(를)
         처형할 것인가
       </h2>
-      <p className="mt-1 text-[11px] leading-relaxed text-neutral-500">
+      <p className="mt-1 text-center text-[11px] leading-relaxed text-neutral-500">
         찬성이 과반일 때만 처형된다. 동수면 살아남는다.
       </p>
+      <div className={cardStyles.rule} aria-hidden>
+        ◆
+      </div>
 
       {isNominee ? (
-        <p className="mt-4 rounded-xl bg-white/5 px-4 py-3 text-[12px] leading-relaxed text-neutral-400 ring-1 ring-white/10">
+        <p className="mt-3 rounded-xl bg-white/5 px-4 py-3 text-center text-[12px] leading-relaxed text-neutral-400 ring-1 ring-white/10">
           당신이 지목됐다. <span className="text-neutral-200">당신은 투표할 수 없다.</span>{' '}
           결과를 기다려라.
         </p>
       ) : (
-        <div className="mt-4 grid grid-cols-2 gap-2">
+        <div className="mt-3 grid grid-cols-2 gap-2">
           <button
             type="button"
             onClick={() => onVerdict(true)}
-            className={`rounded-xl px-4 py-3 text-sm font-bold transition-colors ${
+            className={`rounded-xl px-4 py-3.5 text-sm font-black transition-all ${
               myVerdict === true
-                ? 'bg-red-500/90 text-black'
-                : 'bg-white/5 text-neutral-200 ring-1 ring-white/10 hover:bg-red-500/20'
+                ? 'bg-red-500/90 text-black shadow-[0_0_20px_rgba(239,68,68,0.4)]'
+                : 'bg-white/[0.04] text-neutral-200 ring-1 ring-red-500/25 hover:bg-red-500/15 hover:ring-red-500/60'
             }`}
           >
             찬성 — 처형
@@ -436,10 +560,10 @@ function VerdictPanel({ onVerdict }: { onVerdict: (guilty: boolean) => void }) {
           <button
             type="button"
             onClick={() => onVerdict(false)}
-            className={`rounded-xl px-4 py-3 text-sm font-bold transition-colors ${
+            className={`rounded-xl px-4 py-3.5 text-sm font-black transition-all ${
               myVerdict === false
-                ? 'bg-amber-500/90 text-black'
-                : 'bg-white/5 text-neutral-200 ring-1 ring-white/10 hover:bg-amber-500/20'
+                ? 'bg-amber-400/90 text-black shadow-[0_0_20px_rgba(251,191,36,0.4)]'
+                : 'bg-white/[0.04] text-neutral-200 ring-1 ring-amber-400/25 hover:bg-amber-400/15 hover:ring-amber-400/60'
             }`}
           >
             반대 — 생존
@@ -448,7 +572,7 @@ function VerdictPanel({ onVerdict }: { onVerdict: (guilty: boolean) => void }) {
       )}
 
       {!isNominee && myVerdict === null ? (
-        <p className="mt-3 text-[11px] text-neutral-600">아직 고르지 않았다</p>
+        <p className="mt-3 text-center text-[11px] text-neutral-600">아직 고르지 않았다</p>
       ) : null}
     </PanelShell>
   );
@@ -505,8 +629,21 @@ function RevealOverlay({ onLeave, onRematch }: { onLeave: () => void; onRematch:
 
   return (
     <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/80 p-6 backdrop-blur">
-      <div className="max-h-full w-full max-w-lg overflow-y-auto rounded-2xl bg-black/70 p-6 ring-1 ring-white/10">
-        {/* ① 처형됐는가 */}
+      {/*
+        같은 카드 언어(panel)를 입는다. 광택(shine)은 뺐다 — 결과는 한 겹씩 열리는
+        것 자체가 연출이라, 위로 번쩍이는 게 하나 더 있으면 시선이 갈린다.
+        스크롤은 안쪽 div 가 맡는다 — panel 에 직접 걸면 액자선(frame)이 내용을
+        따라 흘러내린다.
+      */}
+      <div className={`${cardStyles.deal} max-h-full w-full max-w-lg`}>
+        <div
+          className={`${cardStyles.panel} relative flex max-h-full flex-col overflow-hidden rounded-2xl`}
+          style={{ '--rc': '#d4a373' } as React.CSSProperties}
+        >
+          <div aria-hidden className={cardStyles.frame} />
+          <div className="overflow-y-auto p-6">
+            <p className={`${cardStyles.kicker} mb-4 text-center`}>Result — 판의 결말</p>
+            {/* ① 처형됐는가 */}
         <p className="text-center text-xl font-black tracking-tight text-neutral-100">
           {reveal.executed ? (
             <>
@@ -624,6 +761,8 @@ function RevealOverlay({ onLeave, onRematch }: { onLeave: () => void; onRematch:
             </div>
           </div>
         </Layer>
+          </div>
+        </div>
       </div>
     </div>
   );
@@ -644,18 +783,27 @@ function Layer({ show, children }: { show: boolean; children: React.ReactNode })
 /* ─────────────────────────────── 껍데기 ─────────────────────────────── */
 
 /**
- * 투표·찬반이 공유하는 판. 화면 가운데에 뜬다.
+ * 투표·찬반이 공유하는 판. 화면 가운데에 역할 카드와 같은 카드 언어로 뜬다
+ * (role-card.module.css 의 panel — 딜 입장 · 액자선 · 광택. --rc 는 월드 금색).
  *
  * ★ 바깥은 `pointer-events-none` 이고 **안쪽 카드만** 클릭을 받는다. 그래야
  *   판 바깥을 누른 클릭이 캔버스로 흘러가고, page.tsx 의 "캔버스를 직접 누른
  *   것만 잠금" 규칙이 그대로 산다(그 규칙은 지금 uiOpen 동안 꺼져 있지만,
  *   경계를 흐려 놓으면 다음에 되살릴 때 또 같은 사고가 난다).
  */
-function PanelShell({ children }: { children: React.ReactNode }) {
+function PanelShell({ kicker, children }: { kicker: string; children: React.ReactNode }) {
   return (
     <div className="pointer-events-none absolute inset-0 z-40 flex items-center justify-center p-6">
-      <div className="pointer-events-auto w-full max-w-md rounded-2xl bg-black/80 p-6 ring-1 ring-white/10 backdrop-blur">
-        {children}
+      <div className={`${cardStyles.deal} w-full max-w-md`}>
+        <div
+          className={`${cardStyles.panel} relative w-full overflow-hidden rounded-2xl p-6`}
+          style={{ '--rc': '#d4a373' } as React.CSSProperties}
+        >
+          <div aria-hidden className={cardStyles.frame} />
+          <div aria-hidden className={cardStyles.shine} />
+          <p className={`${cardStyles.kicker} text-center`}>{kicker}</p>
+          {children}
+        </div>
       </div>
     </div>
   );

@@ -90,6 +90,13 @@ interface RoundtableState {
    * 판이 열리기 전(idle)·역할이 아직 안 온 동안은 null.
    */
   myRole: 'citizen' | 'actor' | null;
+  /**
+   * 역할 카드의 「확인」을 눌렀는가 — 내 화면에만 있는 로컬 값이다. 누르기 전에는
+   * 카드(RoleCard)가 떠 있고, 누르면 왼쪽 상단 머리말 밑의 역할 한 줄로 바뀐다
+   * (page.tsx 헤더). myRole 이 걷히는 자리(새 판 topic · reset)에서 **반드시 같이**
+   * false 로 돌린다 — 안 돌리면 다음 판의 카드가 아예 안 뜬다.
+   */
+  roleAck: boolean;
 
   // ── 액션 ──────────────────────────────────────────────────────────────────
   /**
@@ -117,6 +124,8 @@ interface RoundtableState {
   setMyVerdict(guilty: boolean | null): void;
   /** 내 역할 반영 (page.tsx 의 onRole) */
   setMyRole(role: 'citizen' | 'actor'): void;
+  /** 역할 카드의 「확인」 — 카드를 걷고 왼쪽 라벨로 넘어간다 */
+  ackRole(): void;
   /** 방을 옮기거나 판이 끝나면 부른다. **지난 판의 정체가 새 방으로 새면 안 된다** */
   reset(): void;
 }
@@ -142,6 +151,7 @@ const IDLE = {
   myVote: null,
   myVerdict: null,
   myRole: null,
+  roleAck: false,
 };
 
 export const useRoundtableStore = create<RoundtableState>((set) => ({
@@ -167,7 +177,14 @@ export const useRoundtableStore = create<RoundtableState>((set) => ({
         // 여기 말고는 안 걷는다: ended 뒤에도 reveal 은 남아 있어야 한다(결과를 읽는 중).
         // myRole 도 같이 걷는다 — 새 역할(t:'role')은 round 브로드캐스트 **뒤에** 온다
         // (room-do 의 sendRoles 순서). 안 걷으면 새 역할이 오기 전 지난 역할이 보인다.
-        ...(round.phase === 'topic' ? { reveal: null, eliminatedId: null, myRole: null } : null),
+        // roleAck 도 같이 걷는다 — 새 판에서는 카드부터 다시 봐야 한다.
+        // ★ 단 **idle 에서 온 첫 topic 은 예외다** — 역할은 게이트가 열릴 때 먼저
+        //   왔다(카드 선공개, 2026-08-06). 여기서 걷으면 방금 확인한 카드가 판이
+        //   열리는 순간 한 번 더 뜬다. 걷는 건 ended·reveal 에서 오는 topic(한 판 더)뿐.
+        ...(round.phase === 'topic' ? { reveal: null, eliminatedId: null } : null),
+        ...(round.phase === 'topic' && s.phase !== 'idle'
+          ? { myRole: null, roleAck: false }
+          : null),
       };
     }),
 
@@ -183,5 +200,21 @@ export const useRoundtableStore = create<RoundtableState>((set) => ({
 
   setMyRole: (myRole) => set({ myRole }),
 
+  ackRole: () => set({ roleAck: true }),
+
   reset: () => set({ ...IDLE }),
 }));
+
+/**
+ * 역할 카드가 지금 떠 있는가 — 역할은 받았는데 아직 「확인」 전이다.
+ *
+ * ★ 셀렉터를 여기 하나만 둔다. page.tsx(커서를 돌려줘야 한다)와 game-hud.tsx
+ *   (카드를 그린다)가 **같은 조건**을 봐야 하기 때문이다 — 한쪽에 조건을 복붙하면
+ *   커서 없이 카드만 뜨거나, 카드 없이 커서만 풀린 화면이 된다.
+ * ★ idle 을 막지 않는다 — 역할은 게이트가 열릴 때(전원 집결, 카운트다운 시작)
+ *   오고, 그때 단계는 아직 idle 이다. 카드가 뜨는 순간이 바로 거기다 (2026-08-06).
+ * ★ reveal 뒤에는 안 띄운다 — 정체가 전부 공개된 마당에 내 역할 카드는 소음이다.
+ */
+export function roleCardOpen(s: RoundtableState): boolean {
+  return s.myRole !== null && !s.roleAck && s.reveal === null && s.phase !== 'ended';
+}
