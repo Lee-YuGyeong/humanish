@@ -47,6 +47,7 @@ import {
   SOCKET_TIMEOUT_MS,
   SWEEP_ALARM_MS,
   VOTE_PROGRESS_INTERVAL_MS,
+  WORLD_SEAT_SLOTS,
   isChatLocked,
   mayMove,
   mayChat,
@@ -365,7 +366,9 @@ export class RoomDO {
     }
 
     // ⑦ 상태 구성 → accept → 명부 교환
-    const start = spawnFor(ticket.seat, meta.capacity);
+    // 좌석 원은 **정원이 아니라 WORLD_SEAT_SLOTS 로** 나눈다 — 사람이 8자리를 다
+    // 채우면 AI 가 9번에 서기 때문이다 (lib/mp/constants.ts 의 상자).
+    const start = spawnFor(ticket.seat, WORLD_SEAT_SLOTS);
     const snapshot: PlayerSnapshot = {
       id: ticket.pid,
       seat: ticket.seat,
@@ -1100,7 +1103,7 @@ export class RoomDO {
       .map((s) =>
         createBot(
           { id: s.id, seat: s.seat, nickname: s.nickname, maskId: s.mask_id },
-          meta.capacity,
+          WORLD_SEAT_SLOTS,
           now,
           poses.get(s.id),
         ),
@@ -1642,7 +1645,7 @@ export class RoomDO {
         kept.push(
           createBot(
             { id: s.id, seat: s.seat, nickname: s.nickname, maskId: s.mask_id },
-            fresh.capacity,
+            WORLD_SEAT_SLOTS,
             now,
           ),
         );
@@ -1747,7 +1750,7 @@ export class RoomDO {
         // 없으면 스폰 자리. 봇도 접속 전에는 정확히 같은 스폰 자리에 서 있다.
         const known = live.get(seat.id) ?? this.lastPose.get(seat.id);
         if (known) return known;
-        const start = spawnFor(seat.seat, meta.capacity);
+        const start = spawnFor(seat.seat, WORLD_SEAT_SLOTS);
         return {
           id: seat.id,
           seat: seat.seat,

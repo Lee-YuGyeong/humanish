@@ -20,7 +20,7 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 
-import { isMovementLocked, mayChat } from '@/lib/mp/constants';
+import { WORLD_SEAT_SLOTS, isMovementLocked, mayChat } from '@/lib/mp/constants';
 import { spawnFor } from '@/lib/mp/spawn';
 import type { Role } from '@/lib/game/types';
 import { WorldConnection, type WorldEvents } from './net/connection';
@@ -123,18 +123,15 @@ function requestLock(tries = 3, delayMs = 1400, waitTries = CANVAS_WAIT_TRIES): 
   }
 }
 
-/**
- * 새 방 정원 선택지. **lib/server/room.ts 의 MIN/MAX/DEFAULT_ROOM_CAPACITY 와 같은
- * 값이어야 한다** — 서버 모듈은 클라이언트로 못 가져오니 여기 복사본을 둔다
- * (app/main/lobby.tsx 가 같은 이유로 같은 복사본을 갖고 있다).
+/*
+ * 정원 선택은 없앴다 (2026-08-06 결정). 모든 방이 **사람 8자리 + 시작할 때 AI 1대**라
+ * 고를 것이 없다 — 서버가 정한다 (lib/game/rules.ts 의 MAX_HUMANS_PER_ROOM).
+ * 화면마다 두던 정원 범위 복사본도 같이 사라졌다.
  */
-const ROOM_CAPACITIES = [3, 4, 5, 6, 7, 8] as const;
-const DEFAULT_CAPACITY = 5;
 
 export default function WorldPage() {
   const router = useRouter();
   const [code, setCode] = useState('');
-  const [capacity, setCapacity] = useState<number>(DEFAULT_CAPACITY);
   /** 새 방 이름 — **이 이름이 곧 입장 코드다** (lib/server/room.ts codeFromName). 비우면 랜덤 4자 */
   const [newName, setNewName] = useState('');
   const [busy, setBusy] = useState(false);
@@ -211,7 +208,6 @@ export default function WorldPage() {
         const room = roomCode
           ? await postJson<{ room: { id: string } }>('/api/room/join', { code: roomCode.toUpperCase() })
           : await postJson<{ room: { id: string } }>('/api/room', {
-              capacity,
               // 이름을 지었으면 그 이름이 곧 입장 코드가 된다. 겹치면 409 가 그대로 뜬다.
               ...(trimmedName ? { name: trimmedName } : null),
             });
@@ -231,8 +227,8 @@ export default function WorldPage() {
         setBusy(false);
       }
     },
-    // capacity·newName 이 바뀌면 enter 도 바뀐다 — 자동 입장 효과는 ref 가드가 재진입을 막는다
-    [conn, events, capacity, newName],
+    // newName 이 바뀌면 enter 도 바뀐다 — 자동 입장 효과는 ref 가드가 재진입을 막는다
+    [conn, events, newName],
   );
 
   useEffect(() => () => conn.close(), [conn]);
@@ -437,7 +433,9 @@ export default function WorldPage() {
   }, [confirmLeave]);
 
   const spawn = useMemo(
-    () => (ticket ? spawnFor(ticket.self.seat, ticket.room.capacity) : { x: 0, z: 0 }),
+    // 워커와 **같은 값으로** 나눠야 내 자리와 남이 보는 내 자리가 맞는다
+    // (lib/mp/constants.ts 의 WORLD_SEAT_SLOTS 상자).
+    () => (ticket ? spawnFor(ticket.self.seat, WORLD_SEAT_SLOTS) : { x: 0, z: 0 }),
     [ticket],
   );
 
@@ -647,7 +645,8 @@ export default function WorldPage() {
           </h1>
           {ticket ? (
             <p className="mt-1 font-mono text-[11px] text-neutral-500">
-              {ticket.room.code} · {ticket.self.nickname} · {ticket.room.capacity}인
+              {/* 정원은 **사람** 수다. 시작하면 여기에 AI 1대가 더 붙는다 (§15-3 — 수는 공개, 자리는 비밀) */}
+              {ticket.room.code} · {ticket.self.nickname} · 사람 {ticket.room.capacity}
               {ticket.role ? ` · ${ROLE_LABEL[ticket.role]}` : ''}
             </p>
           ) : null}
@@ -683,32 +682,13 @@ export default function WorldPage() {
               </button>
             </div>
 
-            {/* 새 방의 정원. 코드로 들어갈 때는 안 쓴다 — 그 방의 정원은 만든 사람이 정했다 */}
-            <div className="mt-4 flex items-center gap-1.5">
-              <span className="mr-1 text-[11px] text-neutral-500">정원</span>
-              {ROOM_CAPACITIES.map((n) => (
-                <button
-                  key={n}
-                  type="button"
-                  onClick={() => setCapacity(n)}
-                  className={`h-8 w-8 rounded-lg font-mono text-[13px] transition-colors ${
-                    capacity === n
-                      ? 'bg-amber-500/90 font-bold text-black'
-                      : 'bg-white/5 text-neutral-300 ring-1 ring-white/10 hover:bg-white/10'
-                  }`}
-                >
-                  {n}
-                </button>
-              ))}
-            </div>
-
             {/* 새 방 이름 — **이 이름이 곧 입장 코드다.** 겹치면 서버가 409 로 거절한다 */}
             <input
               value={newName}
               onChange={(e) => setNewName(e.target.value.slice(0, 20))}
               maxLength={20}
               placeholder="새 방 이름 (비우면 랜덤 코드)"
-              className="mt-3 w-full rounded-lg bg-white/5 px-3 py-2 text-sm text-neutral-100 ring-1 ring-white/15 outline-none placeholder:text-neutral-600 focus:ring-amber-500/50"
+              className="mt-4 w-full rounded-lg bg-white/5 px-3 py-2 text-sm text-neutral-100 ring-1 ring-white/15 outline-none placeholder:text-neutral-600 focus:ring-amber-500/50"
             />
             <button
               type="button"

@@ -75,6 +75,7 @@ import {
   useRoomDispatch,
   useRoomUi,
 } from '@/lib/store/room';
+import { MIN_HUMANS_TO_START } from '@/lib/game/rules';
 import type { Phase, PublicPlayer, Question, Role, Room } from '@/lib/game/types';
 
 const PHASE_LABEL: Record<Phase, string> = {
@@ -565,17 +566,18 @@ function Panel({
             <RuleRow
               icon={<UserPlusIcon className="h-3.5 w-3.5" />}
               label="정원"
-              value={`최대 ${room.capacity}자리. 실제 자리는 시작할 때 정해진다`}
+              value={`사람 ${room.capacity}자리. ${MIN_HUMANS_TO_START}명부터 전원 준비되면 시작한다`}
             />
             {/*
-              이제 AI 수는 공개다 (§15-3). 다만 대기실 문구가 "빈자리를 채운다"고
-              말하면 **빈칸을 세면 AI 수가 나온다**는 잘못된 셈법을 가르치게 된다 —
-              AI 수는 빈자리가 아니라 모인 사람 수가 정한다 (§18.1).
+              AI 수는 공개다 (§15-3). 2026-08-06 부터 어느 방이든 1대라 감출 것이
+              없다 — 금지되는 건 그 수를 **자리와 묶는 것**이다.
+              "빈자리를 채운다"고 쓰지 않는다: 빈칸을 세면 AI 수가 나온다는 잘못된
+              셈법을 가르치게 되고, 이제는 그 셈이 아예 틀렸다.
             */}
             <RuleRow
               icon={<ChipIcon className="h-3.5 w-3.5" />}
               label="AI"
-              value="시작할 때 자리에 섞인다. 몇인지는 그때 알려준다"
+              value="시작할 때 1명이 자리에 섞인다. 어느 자리인지는 끝까지 숨긴다"
             />
             {/*
               연기자 수는 **끝까지 숨긴다** (§18.2). 0명일 수도 있다는 가능성이

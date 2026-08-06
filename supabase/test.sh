@@ -357,24 +357,38 @@ psql -q -c "update rooms set phase='reveal' where id='$R';"
 check "reveal 이후 votes가 보인다"      "t" "$(psql -tAq -c "set role anon; select count(*) > 0 from votes;")"
 
 echo ""
-echo "── 정원 3~8 (SPEC §17.6) ──"
+echo "── 정원 = 사람 8 + AI 1 (SPEC §17.6, 2026-08-06 결정) ──"
 # ★ 이 블록은 방을 새로 만든다. 위의 "rooms 조회 (코드로 방 찾기)"가 방 개수를 세므로
 #   반드시 그 뒤에 둔다. 코드는 4자 대문자이고 TSTA·TSTB와 겹치지 않아야 한다.
-check "default_room_capacity()는 5"     "5" "$(q "select default_room_capacity();")"
+#
+# 화면에서 정원 칸을 없앴다 — 이제 이 기본값이 **모든 새 방의 정원**이다.
+check "default_room_capacity()는 8"     "8" "$(q "select default_room_capacity();")"
 
 CAPD="$(q "select room_id from create_room('CAPD');")"
-check "정원을 안 주면 5"                "5" "$(q "select capacity from rooms where id='$CAPD';")"
+check "정원을 안 주면 8"                "8" "$(q "select capacity from rooms where id='$CAPD';")"
 
 CAPH="$(q "select room_id from create_room('CAPH', 8);")"
 check "정원 8로 만들면 capacity=8"      "8" "$(q "select capacity from rooms where id='$CAPH';")"
 check "room_capacity(방)는 그 방 정원"   "8" "$(q "select room_capacity('$CAPH');")"
-q "select fill_with_bots('$CAPH');" >/dev/null
-check "정원 8인 방은 8명까지 찬다"       "8" "$(q "select count(*) from players where room_id='$CAPH';")"
-check "정원 8인 방의 최대 seat은 8"      "8" "$(q "select max(seat) from players where room_id='$CAPH';")"
+# ★ 빈 자리를 전부 채우지 않는다. **딱 1대다** — 방장 혼자 있는 방이면 2명이 된다.
+check "AI는 한 대만 앉는다"              "1" "$(q "select fill_with_bots('$CAPH');")"
+check "방장 + AI = 2명"                 "2" "$(q "select count(*) from players where room_id='$CAPH';")"
+check "AI 자리는 정원 안이다"            "t" "$(q "select bool_and(seat between 1 and 8) from players where room_id='$CAPH';")"
+# 두 번 불러도 늘지 않는다 (시작 연타·재시도).
+check "다시 불러도 안 늘어난다"          "0" "$(q "select fill_with_bots('$CAPH');")"
+
+# 사람이 정원을 다 채운 방 — AI는 **정원 밖 다음 번호**를 쓴다. 여기서 자리가 없다고
+# 물러서면 그 판은 찾을 것이 없는 판이 된다.
+CAPF="$(q "select room_id from create_room('CAPF', 3);")"
+q "select * from join_room('CAPF');" >/dev/null
+q "select * from join_room('CAPF');" >/dev/null
+check "사람이 정원 3을 채웠다"           "3" "$(q "select count(*) from players where room_id='$CAPF';")"
+check "꽉 찬 방에도 AI가 앉는다"         "1" "$(q "select fill_with_bots('$CAPF');")"
+check "AI는 정원 밖 4번에 앉는다"        "4" "$(q "select seat from players where room_id='$CAPF' and is_bot;")"
 
 CAPL="$(q "select room_id from create_room('CAPL', 3);")"
-q "select fill_with_bots('$CAPL');" >/dev/null
-check "정원 3인 방은 3명에서 멈춘다"     "3" "$(q "select count(*) from players where room_id='$CAPL';")"
+q "select * from join_room('CAPL');" >/dev/null
+q "select * from join_room('CAPL');" >/dev/null
 check "정원 3인 방에는 더 못 들어간다"   "denied" "$(denied_if "select * from join_room('CAPL');" '꽉 찼다')"
 
 # 체크 제약(23514)이 아니라 P0001로 튀어야 한다. 그래야 사용자에게 보여줄 문장이 된다.
@@ -382,9 +396,11 @@ check "정원 2는 거절된다"               "denied" "$(denied_if "select * f
 check "정원 9는 거절된다"               "denied" "$(denied_if "select * from create_room('CAPX', 9);" '정원은 3~8명이다')"
 check "거절된 방은 남지 않는다"          "0" "$(q "select count(*) from rooms where code in ('CAPN','CAPX');")"
 
-# seat 상한은 정원의 최댓값인 8이다. 방별 상한은 pick_free_seat이 지킨다.
-check "seat 9는 제약에 걸린다"          "denied" \
-  "$(denied_if "insert into players (room_id,nickname,mask_id,seat) values ('$CAPL','익명9','m9',9);" 'players_seat_check')"
+# ★ seat 상한은 9다 — 사람 8 + AI 1. 8이면 사람이 꽉 찬 방에서 AI 자리를 만들다 죽는다.
+check "seat 9는 AI 자리라 들어간다"      "9" \
+  "$(q "insert into players (room_id,nickname,mask_id,seat) values ('$CAPD','익명9','m9',9) returning seat;")"
+check "seat 10은 제약에 걸린다"          "denied" \
+  "$(denied_if "insert into players (room_id,nickname,mask_id,seat) values ('$CAPD','익명10','m10',10);" 'players_seat_check')"
 check "capacity 9인 방은 만들 수 없다"   "denied" \
   "$(denied_if "insert into rooms (code,capacity) values ('CAPZ',9);" 'rooms_capacity_check')"
 
@@ -413,7 +429,7 @@ check "없는 방에 또 나가도 조용하다"      "t" "$(q "select room_dele
 LV_B="$(q "select room_id from create_room('LEVB', 5);")"
 LV_BH="$(q "select id from players where room_id='$LV_B';")"
 q "select fill_with_bots('$LV_B');" >/dev/null
-check "봇으로 5자리가 찼다"             "5" "$(q "select count(*) from players where room_id='$LV_B';")"
+check "방장 + 봇 = 2명"                 "2" "$(q "select count(*) from players where room_id='$LV_B';")"
 check "봇만 남아도 방은 사라진다 (I5)"   "t" "$(q "select room_deleted from leave_room('$LV_B','$LV_BH');")"
 check "봇도 같이 사라진다"              "0" "$(q "select count(*) from players where room_id='$LV_B';")"
 

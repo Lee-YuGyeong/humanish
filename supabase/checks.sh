@@ -55,6 +55,19 @@ schema_checks() {
   check "rooms에 capacity 컬럼이 있다 (§17.6)" "1" \
     "$(q "select count(*) from information_schema.columns where table_name='rooms' and column_name='capacity';")"
 
+  # ── 자리 수 = 사람 정원 + AI 1 (2026-08-06 결정) ──────────────────────────
+  # 새 방은 전부 사람 8자리다. 화면에 고르는 칸이 없어서 여기 기본값이 곧 모든 방의
+  # 정원이 된다 — 5로 남아 있으면 8명이 모인 방이 조용히 3명을 못 받는다.
+  check "새 방 정원 기본값이 8이다" "8" "$(q "select default_room_capacity();")"
+
+  # ★ 좌석 상한이 9여야 한다. 8이면 사람이 정원을 채운 방에서 AI 자리를 만들 때
+  #   23514(check 위반)로 죽는다 — 그 판은 AI 없이 시작되거나 아예 시작이 실패한다.
+  #   rooms.capacity(=사람 8)와 **다른 수**라 둘을 같이 본다.
+  check "players.seat 이 1~9다 (AI 한 자리)" "t" \
+    "$(q "select (d like '%>= 1%' and d like '%<= 9%')
+            from (select pg_get_constraintdef(oid) d from pg_constraint
+                   where conname = 'players_seat_check') t;")"
+
   # 방 제목. 없으면 방 만들기가 42703(그런 컬럼 없음)으로 죽는다.
   check "rooms에 name 컬럼이 있다" "1" \
     "$(q "select count(*) from information_schema.columns where table_name='rooms' and column_name='name';")"

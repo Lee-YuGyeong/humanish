@@ -14,8 +14,10 @@
  * │     않는다 (lib/server/lobby-lines.ts).                                 │
  * └────────────────────────────────────────────────────────────────────────┘
  *
- * ★ 좌석은 <ul>/<li> 로 정원만큼 그린다 (정원 3~8, §17.6). 규칙·문구 목록에는
- *   리스트 태그를 쓰지 않는다 — 좌석 수를 세는 검사가 그것까지 세게 된다.
+ * ★ 좌석은 <ul>/<li> 로 정원만큼 그린다 — **사람 자리만이다** (2026-08-06 결정:
+ *   사람 8 + 시작할 때 AI 1). AI 자리는 여기 그리지 않는다: 대기방에 AI 칸을 미리
+ *   세워 두면 시작 전에 "저기가 AI" 라고 손가락질하는 꼴이다 (I1).
+ *   규칙·문구 목록에는 리스트 태그를 쓰지 않는다 — 좌석 수를 세는 검사가 그것까지 센다.
  */
 
 import { useRouter } from "next/navigation";
@@ -23,6 +25,7 @@ import { useEffect, useState } from "react";
 
 import { AccountName, TopBar } from "@/components/top-bar";
 import type { MeResponse } from "@/lib/api/room";
+import { MIN_HUMANS_TO_START, START_BLOCK_MESSAGE, startBlock } from "@/lib/game/rules";
 import { useProfile } from "@/lib/queries/auth";
 import type { PublicPlayer, Room } from "@/lib/game/types";
 import {
@@ -93,6 +96,16 @@ export function RoomLobby({
   const start = useStartWorld(code, room.id);
   const busy = useRoomUi(selectIsBusy);
   const starting = useRoomUi(selectIsPending(REQUEST.start));
+
+  /*
+   * 지금 시작할 수 있나 (2026-08-06 결정 — 사람 2~8명 + 전원 준비).
+   *
+   * ★ 서버와 **같은 함수**를 본다 (lib/game/rules.ts). 여기서 따로 세면 눌리는데
+   *   409 로 거절당하거나, 눌리지 않는데 서버는 받아주는 상태가 생긴다.
+   * ★ players 는 public_players 라 **사람만 온다** (대기방에는 아직 AI 가 없다).
+   *   AI 는 시작 순간에 붙는다 — 그래서 여기 세는 수가 곧 사람 수다.
+   */
+  const blocked = startBlock(players);
 
   /*
    * 나가기. **링크가 아니라 버튼이어야 한다** — 자리를 실제로 빼는 쓰기이기 때문이다.
@@ -285,26 +298,43 @@ export function RoomLobby({
             </div>
 
             {/*
-              ★ "몇 명 더 필요합니다"라고 쓰지 않는다. 정원을 다 채우지 않아도
-                시작할 수 있고, 남은 자리가 어떻게 되는지는 대기실에서 말하지 않는다 (I1).
+              ★ 정원을 다 채우지 않아도 시작할 수 있다. 남은 자리가 어떻게 되는지는
+                대기실에서 말하지 않는다 (I1) — 이제 남은 자리와 AI 수는 무관하다.
+
+              ★ 못 누를 때는 **이유를 적는다.** 회색 버튼만 두면 방장은 자기 화면이
+                고장 난 줄 안다. 문구는 서버 거절 문구와 같은 곳에서 온다
+                (START_BLOCK_MESSAGE) — 두 군데로 갈리면 눌러 보고 나서야 다른 말을
+                듣게 된다.
             */}
             {me.is_host ? (
-              <button
-                type="button"
-                className={styles.btnAccent}
-                style={{ width: "100%", padding: "0.85rem" }}
-                disabled={busy}
-                onClick={() => start.run()}
-              >
-                {starting ? "시작하는 중…" : "게임 시작"} <PlayIcon />
-              </button>
+              <>
+                <button
+                  type="button"
+                  className={styles.btnAccent}
+                  style={{ width: "100%", padding: "0.85rem" }}
+                  disabled={busy || blocked !== null}
+                  onClick={() => start.run()}
+                >
+                  {starting ? "시작하는 중…" : "게임 시작"} <PlayIcon />
+                </button>
+                {blocked && (
+                  <p
+                    className="mt-2 text-center text-[0.6rem]"
+                    style={{ color: "var(--muted)" }}
+                    aria-live="polite"
+                  >
+                    {START_BLOCK_MESSAGE[blocked]}
+                  </p>
+                )}
+              </>
             ) : (
               <p
                 className="flex items-center justify-center gap-2 py-3 text-center text-[0.65rem]"
                 style={{ color: "var(--muted)" }}
               >
                 <span className={`${styles.dot} ${styles.blink}`} />
-                방장이 시작하기를 기다리는 중…
+                {/* 방장이 왜 안 누르는지가 여기서도 보여야 한다 — 대개 내가 안 눌렀다 */}
+                {blocked ? START_BLOCK_MESSAGE[blocked] : "방장이 시작하기를 기다리는 중…"}
               </p>
             )}
 
@@ -477,8 +507,10 @@ function SeatGrid({
 /* ─────────────────────────────── 규칙 ─────────────────────────────── */
 
 /**
- * 방 규칙. 문구는 SPEC 을 따른다 — 시안의 "5명 (인간 4명 + AI 1명)"은 쓰지 않는다.
- * 정원은 방마다 다르고(§17.6), AI가 몇인지는 **시작해야** 알려준다 (§15-3).
+ * 방 규칙.
+ *
+ * ★ AI 수를 여기 적어도 된다 (§15-3 — **수는 공개, 자리는 비밀**). 2026-08-06 부터
+ *   어느 방이든 1대라 감출 것 자체가 없다. 금지되는 건 그 수를 **자리와 묶는 것**이다.
  */
 function RulePanel({ capacity }: { capacity: number }) {
   return (
@@ -497,7 +529,10 @@ function RulePanel({ capacity }: { capacity: number }) {
         </span>
         <div>
           <div className={`${styles.label} mb-1`}>정원</div>
-          <div className="text-[0.82rem]">{capacity}자리</div>
+          <div className="text-[0.82rem]">사람 {capacity}자리</div>
+          <div className="mt-1 text-[0.75rem]" style={{ color: "var(--muted)" }}>
+            {MIN_HUMANS_TO_START}명부터 시작할 수 있다 — 전원이 준비를 눌렀을 때.
+          </div>
         </div>
       </div>
 
@@ -506,10 +541,10 @@ function RulePanel({ capacity }: { capacity: number }) {
           <UserPlusIcon />
         </span>
         <div>
-          <div className={`${styles.label} mb-1`}>빈자리</div>
+          <div className={`${styles.label} mb-1`}>AI</div>
           <div className="text-[0.82rem]">
-            시작할 때 AI가 채운다.{" "}
-            <span style={{ color: "var(--muted)" }}>몇인지는 시작하면 알려준다.</span>
+            시작할 때 1명이 합류한다.{" "}
+            <span style={{ color: "var(--muted)" }}>빈자리는 그대로 빈자리다.</span>
           </div>
         </div>
       </div>

@@ -12,16 +12,18 @@
 -- │ supabase-js는 PostgREST라 raw SQL을 못 보낸다. RPC로 부른다.           │
 -- └───────────────────────────────────────────────────────────────────────┘
 
--- 정원을 안 고르고 방을 만들 때 쓰는 기본값. lib/server/room.ts의 DEFAULT_ROOM_CAPACITY와
--- 같아야 한다. 하한 3 · 상한 8은 rooms.capacity 체크 제약이 진짜 기준이다.
+-- 방의 사람 정원. 2026-08-06 부터 **고를 수 없다** — 화면에서 정원 칸을 없앴고
+-- 모든 방이 이 값으로 만들어진다 (lib/game/rules.ts 의 MAX_HUMANS_PER_ROOM).
+-- p_capacity 인자는 남겨 두었다: 옛 호출(psql·검사 스크립트)이 그대로 돌아야 한다.
+-- AI 는 이 수에 안 들어간다 — 자리는 사람 정원 + 1 이다 (players.seat check 1~9).
 create or replace function default_room_capacity() returns int
-language sql immutable as $$ select 5 $$;
+language sql immutable as $$ select 8 $$;
 
 -- ★ 옛 room_capacity()(인자 없음)를 먼저 지운다. create or replace로는 인자 목록을
 --   바꿀 수 없고, 남겨두면 이름이 겹쳐 아래 revoke 줄이 어느 쪽인지 모호해진다.
 drop function if exists room_capacity();
 
--- 그 방의 정원. 정원은 이제 상수가 아니라 방마다 다르다 (SPEC §17.6, rooms.capacity 3~8).
+-- 그 방의 **사람** 정원. 옛 방이 3~5 로 남아 있어 상수로 접지 않는다 (SPEC §17.6).
 -- rooms를 읽어야 하므로 security definer다. 값이 바뀔 수 있으니 immutable이 아니라 stable.
 create or replace function room_capacity(p_room_id uuid) returns int
 language sql
@@ -35,6 +37,8 @@ as $$ select capacity from rooms where id = p_room_id $$;
 ------------------------------------------------------------------------------
 -- ★ 순서대로 채우지 않는다. 앞자리부터 채우면 나중에 들어온 봇이 늘 뒷자리·뒷번호에
 --   몰려서, seat만 보고 봇을 골라낼 수 있다 (I1).
+-- ★ 사람 정원(1..capacity) 안에서만 고른다. AI 전용인 정원 밖 자리는 여기 오지 않는다 —
+--   그 자리는 fill_with_bots 가 따로 잡는다.
 create or replace function pick_free_seat(p_room_id uuid)
 returns int
 language sql
@@ -92,6 +96,7 @@ begin
 
   -- rooms.capacity 체크 제약이 이미 막지만, 제약 위반은 23514로 튀어서 사용자에게
   -- 보여줄 문장이 안 된다. lib/server/room.ts가 P0001만 400으로 바꾼다.
+  -- 화면에는 고르는 칸이 없다 — 여기 오는 값은 언제나 default_room_capacity() 다.
   if v_cap < 3 or v_cap > 8 then
     raise exception '정원은 3~8명이다' using errcode = 'P0001';
   end if;
@@ -275,11 +280,19 @@ end;
 $$;
 
 ------------------------------------------------------------------------------
--- 빈 자리를 봇으로 채운다 — SPEC §17.4
+-- AI 자리를 만든다 — SPEC §17.4, 2026-08-06 결정
 ------------------------------------------------------------------------------
+-- ┌─ **딱 1대다** (2026-08-06) ────────────────────────────────────────────────┐
+-- │ 예전에는 빈 자리를 정원까지 전부 봇으로 채웠다. 그러면 사람이 적은 방일수록 │
+-- │ 봇이 많아져 아무나 찍어도 맞는 판이 되고, 사람이 정원을 채운 방에는 봇이    │
+-- │ 아예 없어 찾을 것이 없었다. 이제 자리 수는 **사람 수 + 1** 이다.           │
+-- │                                                                           │
+-- │ 자리는 pick_free_seat 이 사람 정원 안에서 무작위로 고른다 — 봇이 늘 뒷번호에│
+-- │ 서면 그것부터 표식이다 (I1). 사람이 정원을 다 채워 빈 자리가 없으면 그때만  │
+-- │ **정원 밖 다음 번호**(최대 9, players.seat check)를 쓴다.                   │
+-- │ 어차피 바로 뒤에 shuffle_seats 가 전원의 자리를 1..N 으로 다시 섞는다.      │
+-- └───────────────────────────────────────────────────────────────────────────┘
 -- 몇 명을 채웠는지는 클라이언트에 알리지 않는다. 반환값은 서버만 본다.
--- 자리는 pick_free_seat이 무작위로 고르므로 봇이 뒷자리에 몰리지 않는다.
--- pick_free_seat이 null을 줄 때까지 도는 구조라, 정원을 방에서 읽게 된 뒤에도 그대로 맞는다.
 create or replace function fill_with_bots(p_room_id uuid)
 returns int
 language plpgsql
@@ -292,15 +305,21 @@ declare
 begin
   perform 1 from rooms where id = p_room_id for update;
 
-  loop
-    v_seat := pick_free_seat(p_room_id);
-    exit when v_seat is null;
+  -- 이미 봇이 있으면 더 만들지 않는다 (연타·재시도 대비). 시작은 한 번뿐이다.
+  if exists (select 1 from players where room_id = p_room_id and is_bot) then
+    return 0;
+  end if;
 
-    insert into players (room_id, nickname, mask_id, seat, is_bot)
-    values (p_room_id, '익명' || v_seat, 'mask-' || lpad(v_seat::text, 2, '0'), v_seat, true);
+  v_seat := pick_free_seat(p_room_id);
+  if v_seat is null then
+    -- 사람이 정원을 다 채웠다 → 정원 밖 한 자리. 상한은 players_seat_check(1~9)다.
+    select coalesce(max(seat), 0) + 1 into v_seat from players where room_id = p_room_id;
+  end if;
 
-    v_count := v_count + 1;
-  end loop;
+  insert into players (room_id, nickname, mask_id, seat, is_bot)
+  values (p_room_id, '익명' || v_seat, 'mask-' || lpad(v_seat::text, 2, '0'), v_seat, true);
+
+  v_count := 1;
 
   return v_count;
 end;

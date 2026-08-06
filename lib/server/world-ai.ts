@@ -22,16 +22,23 @@
 
 import { getServiceClient } from '@/lib/server/supabase';
 import { ApiError } from '@/lib/server/auth';
+import { AI_SEATS_PER_ROUND, MAX_SEATS_PER_ROOM } from '@/lib/game/rules';
 
 /*
- * 월드 AI 수 상한(WORLD_AI_COUNT=2)은 2026-08-05 에 없앴다 — **빈 좌석은 전부 AI 가
- * 채운다** (2D 의 fill_with_bots 와 같은 그림). 대신 한꺼번에 서지 않고 joinDelayMs
- * 간격으로 하나씩 걸어 들어온다 (아래 상자).
+ * ┌─ AI 는 **딱 1대다** (2026-08-06 결정) ────────────────────────────────────┐
+ * │ 2026-08-05 에는 "빈 좌석을 정원까지 전부 AI 가 채운다"였다 (2D 의            │
+ * │ fill_with_bots 와 같은 그림). 그러면 사람이 적은 방일수록 AI 가 많아져       │
+ * │ 아무나 찍어도 맞는 판이 되고, 반대로 사람이 정원을 채운 방에는 AI 가 아예    │
+ * │ 없었다 — 찾을 것이 없는 판이다.                                            │
+ * │                                                                          │
+ * │ 이제 자리 수는 **사람 수 + 1** 이다. 사람 8명이 꽉 찬 방이면 AI 는 9번       │
+ * │ 자리에 선다 (정원 밖 자리 — lib/mp/constants.ts 의 WORLD_SEAT_SLOTS).       │
+ * │ 수는 lib/game/rules.ts 의 AI_SEATS_PER_ROUND 하나에서 온다.                │
+ * └──────────────────────────────────────────────────────────────────────────┘
  *
  * "봇끼리 떠들기 시작하지 않나"는 수와 무관하게 워커에서 막혀 있다 —
  * 봇→봇 대꾸는 maybeChain 이 상한(BOT_CHAIN_MAX)을 세고 사람 발화가 와야 풀리며,
  * 자발 발화는 직전 발화가 자기 것이면 차례를 쉰다 (room-do.ts tick ①의 자답 가드).
- * 봇이 많아진 방에서 발화 밀도가 이상하면 저 둘부터 실측할 것.
  */
 
 /*
@@ -118,13 +125,12 @@ async function stableUuid(roomId: string, seat: number): Promise<string> {
  *
  * 방 id 해시로 정하므로 **조회 때마다 같다** — buildWorldRoster 는 상태가 없어서,
  * 랜덤을 그냥 쓰면 워커가 명부를 읽을 때마다 AI 가 나타났다 사라진다.
- * 첫 AI 는 45초~2분, 둘째는 2분30초~5분(기존 그대로), 셋째부터는 90초 간격의
- * 1분짜리 창(5~6분, 6분30초~7분30초, …) — 사람이 코드를 받고 들어오는 속도쯤이고,
- * 정원 10인 방도 15분 안에 다 찬다.
+ * 첫 AI 는 45초~2분 — 사람이 코드를 받고 들어오는 속도쯤이다.
  *
- * ★ 창끼리 겹치지 않아 **순번이 클수록 반드시 늦다** — buildWorldRoster 의 루프가
- *   "첫 미도착에서 break" 하는 근거다. 창을 겹치게 고치면 뒷 순번이 먼저 도착해
- *   AI 가 조회마다 늘었다 줄었다 한다.
+ * ★ AI 가 1대가 된 뒤로 실제로 쓰이는 건 ordinal 0 뿐이다 (AI_SEATS_PER_ROUND).
+ *   뒤 순번의 창을 남겨 두는 이유는 그 수를 다시 늘릴 때 여기가 아니라 상수 하나만
+ *   고치면 되게 하려는 것이다. 창끼리 겹치지 않아 **순번이 클수록 반드시 늦고**,
+ *   그게 buildWorldRoster 의 "첫 미도착에서 break" 가 서는 근거다.
  */
 async function joinDelayMs(roomId: string, ordinal: number): Promise<number> {
   const data = new TextEncoder().encode(`${roomId}:world-ai-join:${ordinal}`);
@@ -208,7 +214,7 @@ export async function buildWorldRoster(roomId: string): Promise<WorldRoster | nu
      */
     const started = room.world_started_at != null;
     /*
-     * ┌─ 월드 AI 는 **지금 최대 자리 다음 번호부터** 선다 (2026-08-04 결정) ────────┐
+     * ┌─ 월드 AI 는 **지금 최대 자리 다음 번호에** 선다 (2026-08-04 결정) ─────────┐
      * │ 예전엔 1번부터 빈 자리를 채웠다. 그런데 DB 의 자리 배정(pick_free_seat)은   │
      * │ 월드 AI 를 모르고 무작위로 고르므로, 사람이 AI 가 서 있던 자리를 받을 수     │
      * │ 있었다. 그러면 AI 가 옆 자리로 밀리는데 id 가 순번 기반이라 그대로였고,      │
@@ -219,15 +225,17 @@ export async function buildWorldRoster(roomId: string): Promise<WorldRoster | nu
      * │ · 그래도 사람이 AI 자리를 받으면(무작위니까 가능하다) 다음 조회에서 AI 가    │
      * │   더 위로 민다. id 를 자리에 묶었으므로(stableUuid) 그 이동은 player_left    │
      * │   + player_joined 로 방송된다 — 조용히 닉네임만 바뀌는 일은 없다.            │
-     * │ · 위 번호가 모자라면 AI 는 그만큼 덜 선다. 이 규칙의 대가다.                 │
+     * │ · 사람이 8자리를 다 채웠으면 AI 는 **정원 밖 9번**에 선다. 좌석 원을 9칸으로│
+     * │   나누는 이유가 이것이다 (lib/mp/constants.ts 의 WORLD_SEAT_SLOTS).         │
      * └────────────────────────────────────────────────────────────────────────────┘
      */
     const maxTaken = seats.reduce((m, s) => Math.max(m, s.seat), 0);
     let added = 0;
-    // 정원까지 전부 채운다 (2026-08-05 결정 — 2D 의 fill_with_bots 와 같은 그림).
-    // 단, 위 상자의 규칙대로 **지금 최대 자리 위쪽만** 채우므로, 사람 자리가 높으면
-    // AI 는 그만큼 덜 선다 — 아래 빈 번호를 채우는 순간 익명N 중복이 되살아난다.
-    for (let seat = maxTaken + 1; seat <= room.capacity; seat += 1) {
+    // AI 는 딱 1대다 (위 상자). 자리 상한은 room.capacity 가 아니라 **정원 + AI** 다 —
+    // 사람이 꽉 찬 방에서 AI 가 사라지지 않게 하려면 정원 밖 한 자리가 필요하다.
+    for (let i = 0; i < AI_SEATS_PER_ROUND; i += 1) {
+      const seat = maxTaken + 1 + i;
+      if (seat > MAX_SEATS_PER_ROOM) break;
       // 아직 합류 시각 전이면 여기서 끝 — 뒤 순번은 더 늦게 온다 (joinDelayMs 단조 증가).
       // 시작된 방은 지연을 따지지 않는다 (위 2026-08-06 상자).
       if (!started && age < (await joinDelayMs(roomId, added))) break;

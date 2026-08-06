@@ -10,18 +10,14 @@ import { getServiceClient } from '@/lib/server/supabase';
 import { ApiError } from '@/lib/server/auth';
 import type { Phase, PublicPlayer, Room } from '@/lib/game/types';
 
-/**
- * 방 정원의 범위. supabase/functions/room.sql의 default_room_capacity()·room_capacity(),
- * rooms.capacity check, players.seat check와 같아야 한다.
- *
- * 하한이 3인 이유: 사람이 2명 이상일 때만 스파이가 생기고(SPEC §8), 그보다 작으면
- * 투표가 의미를 잃는다. 정원 2인 방은 봇 1 + 사람 1이라 고를 것이 하나뿐이다.
- * 상한이 8인 이유: 좌석 화면이 8칸 기준으로 그려져 있다.
+/*
+ * 정원 범위(MIN/MAX/DEFAULT_ROOM_CAPACITY)는 2026-08-06 에 없앴다.
+ * **방마다 고르지 않는다** — 사람 정원은 전부 8이고, 그 값은 SQL 의
+ * default_room_capacity() 하나에서 온다 (supabase/functions/room.sql).
+ * 화면이 알아야 할 수는 lib/game/rules.ts 의 MAX_HUMANS_PER_ROOM 이다 —
+ * 그쪽은 순수 모듈이라 클라이언트도 그대로 읽는다(여기는 service role 키를 쥐고
+ * 있어 못 간다). 정원 복사본이 화면마다 흩어져 있던 문제가 같이 사라졌다.
  */
-export const MIN_ROOM_CAPACITY = 3;
-export const MAX_ROOM_CAPACITY = 8;
-/** 아무것도 고르지 않았을 때의 정원. SQL의 default_room_capacity()와 같은 값이다. */
-export const DEFAULT_ROOM_CAPACITY = 5;
 
 /**
  * 방 제목 길이 상한. rooms.name 체크 제약(1~20)과 같아야 한다.
@@ -112,18 +108,13 @@ function normalizeCode(code: string): string {
   return code.normalize('NFC').replace(/\s+/g, '').toUpperCase();
 }
 
-/**
- * 시작에 필요한 최소 인원(사람만). 정원 하한 3의 근거를 **실제로 강제하는** 값이다.
- *
- * ★ 이게 없으면 방장 혼자서도 시작 버튼이 눌린다. 그 판은 게임이 아니다 —
- *   사람이 1명이면 assignRoles가 스파이를 배정하지 않고(SPEC §8), 남은 자리가 전부
- *   봇이라 **아무나 찍어도 정답**이다. 정원 하한을 3으로 잡은 이유(§17.6)가
- *   "사람 2명이 들어올 여지"였는데, 여지만 만들고 강제하지 않으면 아무 의미가 없다.
- *
- *   advance_phase의 lobby 분기에도 같은 검사가 있다. 이 라우트를 우회할 수 없게
- *   두 겹으로 둔 것이다 (supabase/functions/advance_phase.sql).
+/*
+ * 시작 조건(사람 2~8명 + 전원 준비)은 lib/game/rules.ts 의 startBlock 하나다.
+ * 화면의 시작 버튼과 시작 라우트가 **같은 함수**를 본다 — 여기 상수로 두면
+ * 클라이언트가 못 읽어서 화면 쪽에 복사본이 생긴다.
+ * advance_phase 의 lobby 분기에도 "사람 2명" 검사가 남아 있다(두 겹). 준비 상태는
+ * 거기서 못 본다 — shuffle_seats 가 is_ready 를 지운 뒤에 불리기 때문이다.
  */
-export const MIN_HUMANS_TO_START = 2;
 
 /** 4자 대문자 코드. I·O·0·1처럼 헷갈리는 글자는 뺀다. */
 const CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ';
@@ -215,7 +206,10 @@ function toResult(row: SeatRow, room: Room): JoinResult {
  * 방을 만들고 만든 사람을 방장으로 앉힌다.
  * 코드가 겹치면 다른 코드로 CODE_RETRY_LIMIT회까지 다시 시도한다 (SPEC §16.4, §14.4).
  *
- * @param capacity 3~8. 생략하면 SQL 쪽 기본값(DEFAULT_ROOM_CAPACITY)이 들어간다.
+ * ★ 정원은 인자로 받지 않는다 (2026-08-06 결정). p_capacity 에 null 을 주면 SQL 이
+ *   default_room_capacity()(=사람 8)를 쓴다 — 방마다 다른 정원이 사라졌으므로
+ *   "고른 값이 범위 밖" 이라는 갈래도 같이 사라졌다.
+ *
  * @param name     방 제목. 생략하거나 공백뿐이면 이름 없는 방이 된다(null).
  * @param userId   만든 사람의 계정 (SPEC §15-2-결정). **라우트가 쿠키 세션에서
  *                 되찾은 값이어야 한다** — 클라이언트가 보낸 값을 그대로 넘기면
@@ -223,19 +217,10 @@ function toResult(row: SeatRow, room: Room): JoinResult {
  *                 null이어도 방은 만들어진다. 계정은 입장 조건이 아니다.
  */
 export async function createRoom(
-  capacity?: number,
   name?: unknown,
   userId?: string | null,
 ): Promise<JoinResult> {
   const db = getServiceClient();
-
-  // 범위는 rooms.capacity check로도 막히지만 그건 23514라 500으로 보인다.
-  // 사용자가 고른 값이 틀린 것이니 400으로 돌려준다.
-  if (capacity !== undefined) {
-    if (!Number.isInteger(capacity) || capacity < MIN_ROOM_CAPACITY || capacity > MAX_ROOM_CAPACITY) {
-      throw new ApiError(400, `정원은 ${MIN_ROOM_CAPACITY}~${MAX_ROOM_CAPACITY} 사이의 정수다`);
-    }
-  }
 
   // 코드 재시도 루프 **밖에서** 한 번만 다듬는다. 안에서 하면 같은 400을 5번 던진다.
   const roomName = normalizeRoomName(name);
@@ -248,7 +233,7 @@ export async function createRoom(
   if (roomName) {
     const { data, error } = await db.rpc('create_room', {
       p_code: codeFromName(roomName),
-      p_capacity: capacity ?? null,
+      p_capacity: null,
       p_name: roomName,
       p_user_id: userId ?? null,
     });
@@ -268,7 +253,7 @@ export async function createRoom(
     // p_capacity가 null이면 SQL이 default_room_capacity()를 쓴다.
     const { data, error } = await db.rpc('create_room', {
       p_code: code,
-      p_capacity: capacity ?? null,
+      p_capacity: null,
       p_name: roomName,
       p_user_id: userId ?? null,
     });
@@ -353,7 +338,10 @@ export async function leaveRoom(roomId: string, playerId: string): Promise<Leave
 }
 
 /**
- * 빈 자리를 봇으로 채운다. lobby → question 직전에 한 번 부른다.
+ * AI 자리를 만든다 — **딱 1대다** (2026-08-06 결정). lobby → question 직전에 한 번 부른다.
+ *
+ * 자리 수는 사람 수 + 1 이 된다. 빈 자리를 정원까지 전부 채우던 시절의 이름을
+ * 그대로 쓰는 이유는 SQL 함수 이름(fill_with_bots)이 그것이기 때문이다.
  *
  * **몇 명을 채웠는지는 클라이언트에 절대 알리지 않는다 (I1).** 반환값은 서버 로그용이다.
  * 자리는 무작위로 고른다 — 순서대로 채우면 봇이 늘 뒷자리에 몰려 seat만 보고 골라낼 수
@@ -474,21 +462,18 @@ const PLAYING_ROOM_LIMIT = 20;
  *   방 여러 개를 한꺼번에 세는 건 방 필터 없는 쿼리라 I10 위반이다. 그래서 service role
  *   서버가 세어서 숫자만 내려보낸다.
  *
- * ┌─ ★ 시작한 방도 싣는다. 대신 세는 방법을 바꾼다 (I1) ──────────────────────┐
+ * ┌─ ★ 시작한 방도 싣는다. 대신 세는 방법을 바꾼다 ───────────────────────────┐
  * │ 예전에는 lobby인 방만 내려보냈다. 이유는 "정원 − 표시 인원 = 봇 수"가       │
  * │ 새기 때문이었다 (SPEC §17.6).                                              │
  * │                                                                           │
- * │ 그 구멍을 목록에서 빼는 대신 **숫자를 바꿔 막는다.** 시작한 방은 사람이     │
- * │ 아니라 **앉아 있는 전부**(봇 포함)를 센다. 시작한 방은 fill_with_bots 가    │
- * │ 자리를 다 채웠으므로 언제나 '정원/정원'이고, 거기서 빼면 0이다 — 뺄 것이    │
- * │ 없으니 샐 것도 없다. 화면에도 이쪽이 사실이다: 5자리가 다 찬 방을 '3/5'로   │
- * │ 그리는 게 오히려 거짓말이었다.                                             │
+ * │ **그 구멍은 2026-08-06 에 규칙 자체가 없앴다.** AI 는 어느 방이든 1대이고   │
+ * │ 그 수는 공개다 (§15-3 — 수는 공개, 자리는 비밀). 역산해서 알아낼 것이 없다. │
  * │                                                                           │
- * │ lobby 는 반대로 **사람만** 세야 한다. "lobby면 아직 봇이 없다"로는 부족하다 │
- * │ — /api/room/start 는 fillWithBots 를 먼저 커밋하고 몇 번의 왕복 뒤에        │
- * │ advance_phase 를 부른다. 그 사이 방은 아직 lobby인데 봇은 이미 앉아 있어서, │
- * │ 3초 폴링이 하필 그 틈에 걸리면 줄이 '2/5'에서 '5/5'로 바뀌는 게 보이고      │
- * │ 그 차이가 곧 봇 수다. 조건 하나로 그 창을 없앤다.                          │
+ * │ 그래도 세는 방법은 그대로 둔다. 시작한 방은 **앉아 있는 전부**(AI 포함),    │
+ * │ lobby 는 **사람만**이다. 이유가 새는 것에서 정확함으로 바뀌었을 뿐이다 —    │
+ * │ 시작한 방의 '3/8' 은 실제로 세 자리가 찼다는 뜻이고, lobby 에서 봇을 세면   │
+ * │ /api/room/start 가 fillWithBots 를 커밋하고 advance_phase 를 부르기 전       │
+ * │ 그 짧은 틈에 3초 폴링이 걸려 인원이 혼자 +1 되는 것으로 보인다.             │
  * └───────────────────────────────────────────────────────────────────────────┘
  *
  * 순서는 **대기 중인 방이 먼저, 게임 중인 방이 뒤**다. 들어갈 수 있는 방이 위에 와야

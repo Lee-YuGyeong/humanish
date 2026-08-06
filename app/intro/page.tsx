@@ -44,9 +44,9 @@ const space = Space_Grotesk({
 /**
  * 한 판이 짜이는 순서. 숫자표 대신 **자리를 그려서** 보여준다.
  *
- * ★ 예시는 **사람 5명이 모인 방**이다. 자리 수는 모인 사람 수마다 다르므로
- *   그림 하나로 다 담을 수 없어 하나만 그리고 "예"라고 밝힌다.
- *   그림에 붙은 5와 2는 규칙이 아니라 그 줄의 값이다 (SPEC §18.1 인원표).
+ * ★ 예시는 **사람 5명이 모인 방**이다. 사람 수는 2~8 사이라 그림 하나로 다 담을 수
+ *   없어 하나만 그리고 "예"라고 밝힌다. 5는 규칙이 아니라 그 줄의 값이다.
+ *   **AI 1대는 규칙이다** (2026-08-06 결정) — 사람이 몇이든 딱 한 대다.
  */
 const HUMANS_IN_EXAMPLE = 5;
 
@@ -55,20 +55,20 @@ type Seat = "human" | "ai" | "unknown" | "plus";
 
 const seatsOf = (n: number, kind: Seat): Seat[] => Array.from({ length: n }, () => kind);
 
-/** 이 예시에서 AI가 몇 대 붙는지. 사람 수마다 정해져 있다 (SPEC §18.1) */
-const AI_IN_EXAMPLE = 2;
+/** AI는 사람이 몇이든 1대다 (2026-08-06 결정 — lib/game/rules.ts 의 AI_SEATS_PER_ROUND) */
+const AI_IN_EXAMPLE = 1;
 
 const setup: { index: string; title: string; body: string; seats: Seat[] }[] = [
   {
     index: "01",
     title: "방을 만들고 사람이 모인다",
-    body: `모인 사람 수에 따라 자리 수가 정해진다. ${HUMANS_IN_EXAMPLE}명이 모인 방을 예로 든다.`,
+    body: `사람은 8자리까지 들어온다. 2명만 모이면 시작할 수 있다 — ${HUMANS_IN_EXAMPLE}명이 모인 방을 예로 든다.`,
     seats: seatsOf(HUMANS_IN_EXAMPLE, "human"),
   },
   {
     index: "02",
     title: "시작하면 AI가 섞여 앉는다",
-    body: "사람인 척하며 사람들 사이에 앉는다. 몇 대인지는 시작할 때 알려준다.",
+    body: "사람인 척하며 사람들 사이에 앉는다. 언제나 한 대이고, 어느 자리인지만 숨긴다.",
     seats: [...seatsOf(HUMANS_IN_EXAMPLE, "human"), "plus", ...seatsOf(AI_IN_EXAMPLE, "ai")],
   },
   {
@@ -293,7 +293,7 @@ export default function IntroPage() {
             <div className="flex flex-wrap items-baseline justify-between gap-3 border-b border-white/[0.06] px-7 py-5">
               <p className="text-[0.6rem] uppercase tracking-[0.3em] text-[#00ff66]">How It Works</p>
               <p className="text-[0.7rem] text-[#555]">
-                예: 정원을 {HUMANS_IN_EXAMPLE}명으로 만든 방
+                예: 사람 {HUMANS_IN_EXAMPLE}명이 모인 방
               </p>
             </div>
 

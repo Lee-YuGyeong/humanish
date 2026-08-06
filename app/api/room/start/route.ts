@@ -3,8 +3,11 @@
  *
  * POST /api/room/start  { room_id }  →  { room }
  *
- * 방장만 부를 수 있다. 순서가 중요하다.
- *   1. 빈 자리를 봇으로 채운다 (SPEC §17.4)
+ * 방장만 부를 수 있다. 시작 조건은 **사람 2~8명이 전부 준비 완료**다
+ * (lib/game/rules.ts 의 startBlock — 화면의 시작 버튼도 같은 함수를 본다).
+ *
+ * 그다음 순서가 중요하다.
+ *   1. AI 자리를 하나 만든다 (SPEC §17.4, 2026-08-06 — 딱 1대다)
  *   2. 전원의 자리·닉네임·가면을 다시 섞는다 (SPEC §15-3-결정)
  *   3. 역할을 배정해 player_roles에 넣는다 — assignRoles는 TS라 DB가 못 부른다 (SPEC §8)
  *   4. advance_phase로 lobby → question
@@ -12,9 +15,9 @@
  * 4번은 player_roles가 없으면 거절한다. 그래서 이 라우트를 거치지 않고는 시작할 수 없다.
  */
 
-import { assignRoles } from '@/lib/game/rules';
+import { START_BLOCK_MESSAGE, assignRoles, startBlock } from '@/lib/game/rules';
 import { advancePhase } from '@/lib/server/phase';
-import { MIN_HUMANS_TO_START, ROOM_COLUMNS, fillWithBots, shuffleSeats } from '@/lib/server/room';
+import { ROOM_COLUMNS, fillWithBots, shuffleSeats } from '@/lib/server/room';
 import { getServiceClient } from '@/lib/server/supabase';
 import { ApiError, apiError, readJson, requirePlayer } from '@/lib/server/auth';
 
@@ -43,24 +46,27 @@ export async function POST(req: Request): Promise<Response> {
     // 2D 상태머신을 겹쳐 돌리면 월드 판 위로 question 전환이 덮친다.
     if (room.world_started_at) throw new ApiError(409, '월드로 시작된 방이다');
 
-    // 0. 사람이 둘 이상인가 (SPEC §8, §17.6).
+    // 0. 사람 2~8명 · 전원 준비 완료인가 (2026-08-06 결정, lib/game/rules.ts).
     //
     //    ★ fillWithBots **앞**이어야 한다. 뒤에 두면 거절하기 전에 봇이 이미 앉아버리고,
-    //      그 방은 lobby인데 정원이 찬 이상한 상태로 남는다.
+    //      그 방은 lobby인데 자리가 하나 늘어난 이상한 상태로 남는다.
+    //    ★ 준비 상태는 **여기서만** 볼 수 있다. 바로 아래 shuffleSeats 가 is_ready 를
+    //      지우므로(§15-3-결정) advance_phase 는 이 조건을 다시 검사하지 못한다.
     //
-    //    혼자 시작하면 스파이가 배정되지 않고(사람 2명 이상 조건) 나머지가 전부 봇이라
-    //    아무나 찍어도 정답이다. 게임의 절반(스파이)과 나머지 절반(추리)이 같이 죽는다.
-    const { count: humans, error: humansErr } = await db
+    //    혼자 시작하면 연기자가 배정되지 않고(사람 2명 이상 조건) 나머지가 AI라
+    //    아무나 찍어도 정답이다. 게임의 절반(연기)과 나머지 절반(추리)이 같이 죽는다.
+    //    is_bot = false 만 센다 (I5) — 봇을 세면 준비하지 않는 자리 때문에 영영 못 연다.
+    const { data: humans, error: humansErr } = await db
       .from('players')
-      .select('id', { count: 'exact', head: true })
+      .select('is_ready')
       .eq('room_id', roomId)
       .eq('is_bot', false);
-    if (humansErr) throw new ApiError(500, `참가자 수 조회 실패: ${humansErr.message}`);
-    if ((humans ?? 0) < MIN_HUMANS_TO_START) {
-      throw new ApiError(409, `사람이 ${MIN_HUMANS_TO_START}명 이상이어야 시작할 수 있다`);
-    }
+    if (humansErr) throw new ApiError(500, `참가자 조회 실패: ${humansErr.message}`);
 
-    // 1. 빈 자리를 봇으로.
+    const blocked = startBlock(humans as { is_ready: boolean }[]);
+    if (blocked) throw new ApiError(409, START_BLOCK_MESSAGE[blocked]);
+
+    // 1. AI 자리 하나 (딱 1대 — supabase/functions/room.sql 의 fill_with_bots).
     await fillWithBots(roomId);
 
     // 2. 전원의 자리·닉네임·가면을 다시 섞는다 (SPEC §15-3-결정).

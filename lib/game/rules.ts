@@ -11,6 +11,67 @@
 
 import type { Role } from '@/lib/game/types';
 
+/* ─────────────────────────── 방 정원 · 시작 조건 ─────────────────────────── */
+
+/**
+ * 한 방에 앉을 수 있는 **사람** 수 (2026-08-06 결정 — 방마다 고르던 정원을 없앴다).
+ *
+ * ★ 예전에는 방을 만들 때 3~8 중에서 골랐고, 그 값이 rooms.capacity 였다. 고르는
+ *   칸을 없앴으므로 모든 방이 같은 값이다 — rooms.capacity 는 그대로 두되(옛 방이
+ *   5로 남아 있다) 새 방은 전부 이 값으로 만든다 (supabase/functions/room.sql 의
+ *   default_room_capacity).
+ */
+export const MAX_HUMANS_PER_ROOM = 8;
+
+/**
+ * 시작에 필요한 최소 인원(사람만).
+ *
+ * 사람이 1명이면 assignRoles 가 연기자를 배정하지 않고(아래), 나머지가 AI라
+ * **아무나 찍어도 정답**이다. 게임의 절반(연기)과 나머지 절반(추리)이 같이 죽는다.
+ */
+export const MIN_HUMANS_TO_START = 2;
+
+/**
+ * 시작할 때 합류하는 AI 수 (2026-08-06 결정 — **딱 1대다**).
+ *
+ * 예전에는 "빈 자리를 전부 AI가 채운다"였다. 그러면 사람이 적은 방일수록 AI가 많아져
+ * 아무나 찍어도 맞는 판이 되고, 사람이 꽉 찬 방에는 AI가 아예 없었다.
+ * 이제 자리 수는 **사람 수 + 1** 이다 — 최대 8 + 1 = 9.
+ */
+export const AI_SEATS_PER_ROUND = 1;
+
+/** 한 방의 자리 상한 = 사람 8 + AI 1. 좌석 번호는 1..9 다 (players.seat check). */
+export const MAX_SEATS_PER_ROOM = MAX_HUMANS_PER_ROOM + AI_SEATS_PER_ROUND;
+
+/** 시작을 막는 이유. null 이면 지금 시작할 수 있다. */
+export type StartBlock = 'too_few' | 'too_many' | 'not_ready';
+
+/**
+ * 지금 시작할 수 있나 (2026-08-06 결정 — **사람 2~8명 + 전원 준비 완료**).
+ *
+ * 화면(시작 버튼)과 서버(시작 라우트)가 **같은 함수**를 본다. 한쪽만 고치면
+ * 눌리는데 거절당하거나, 눌리지 않는데 서버는 받아주는 상태가 된다.
+ *
+ * ★ 방장도 사람이라 준비를 눌러야 한다. "모두"에 예외를 두면 화면에 뜬 준비 표시와
+ *   실제 조건이 어긋난다 — 남들은 방장이 왜 안 눌러도 되는지 알 방법이 없다.
+ * ★ **사람만 넘긴다.** AI를 세면 시작 자체가 막힌다 (I5 와 같은 이유).
+ *
+ * @param humans 사람 좌석의 준비 상태. 봇·AI 좌석은 넣지 않는다.
+ */
+export function startBlock(humans: { is_ready: boolean }[]): StartBlock | null {
+  if (humans.length < MIN_HUMANS_TO_START) return 'too_few';
+  if (humans.length > MAX_HUMANS_PER_ROOM) return 'too_many';
+  if (humans.some((h) => !h.is_ready)) return 'not_ready';
+  return null;
+}
+
+/** 거절 문구. 서버 응답과 화면 안내가 같은 말을 하도록 여기 하나만 둔다. */
+export const START_BLOCK_MESSAGE: Record<StartBlock, string> = {
+  too_few: `사람이 ${MIN_HUMANS_TO_START}명 이상이어야 시작할 수 있다`,
+  too_many: `사람은 ${MAX_HUMANS_PER_ROOM}명까지다`,
+  not_ready: '아직 준비하지 않은 사람이 있다',
+};
+
 /**
  * seat 순서대로의 역할 배열을 반환한다. 입력과 길이가 같다.
  * 규칙: 봇 자리는 전부 'ai'. 사람이 2명 이상이면 그중 1명만 'spy', 나머지 'citizen'.

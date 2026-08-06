@@ -23,7 +23,10 @@ create table if not exists rooms (
   -- 하한 3: 정원 2면 사람 1 + 봇 1이라 스파이가 배정되지 않는다 (SPEC §8).
   -- 상한 8: 좌석 그리드가 8칸 기준이다. 기술적 한계가 아니다.
   -- 만든 뒤에는 바뀌지 않는다. 좌석·역할이 이미 이 수를 전제로 배정돼 있다.
-  capacity      int  not null default 5 check (capacity between 3 and 8),
+  -- 사람 정원. 2026-08-06 부터 **방마다 고르지 않는다** — 전부 8 이다
+  -- (lib/game/rules.ts 의 MAX_HUMANS_PER_ROOM). 옛 방이 3~5 로 남아 있어
+  -- 컬럼과 하한은 그대로 둔다. AI 는 여기 안 센다 — 자리는 8 + 1 = 9 까지다.
+  capacity      int  not null default 8 check (capacity between 3 and 8),
   -- 방 제목. 만들 때만 정하고 이후 바뀌지 않는다 (정원과 같은 취급).
   --
   -- ★ null 과 '' 을 구분하지 않는다 — 제약이 빈 문자열을 아예 막는다. "이름 없음"은
@@ -56,8 +59,8 @@ create table if not exists rooms (
   -- 월드 게임이 시작된 시각. null 이면 아직 대기방이다 (2026-08-06 결정).
   -- ★ phase 는 그대로 'lobby' 다 — 월드 판은 DB 상태머신이 아니라 워커가 돌린다
   --   (worker/src/room-do.ts). 이 값은 시작 신호 하나다: 대기방 화면이 rooms 구독으로
-  --   이 값을 보고 /world 로 이동하고(components/room-lobby.tsx), 월드 AI 채움이
-  --   이 값 뒤로는 지연 없이 정원까지 찬다 (lib/server/world-ai.ts).
+  --   이 값을 보고 /world 로 이동하고(components/room-lobby.tsx), 월드 AI 1대가
+  --   이 값 뒤로는 지연 없이 곧장 선다 (lib/server/world-ai.ts).
   world_started_at timestamptz,
   created_at    timestamptz not null default now()
 );
@@ -69,7 +72,7 @@ alter table rooms add column if not exists roster_seq int not null default 0;
 -- 고치지 않으므로(파일 상단 참고) 컬럼과 제약을 따로 붙인다.
 -- drop constraint를 먼저 하는 이유: 이 파일을 다시 돌릴 때 같은 이름이 이미 있으면
 -- add constraint가 42710으로 죽는다. if not exists 형태가 제약에는 없다.
-alter table rooms add column if not exists capacity int not null default 5;
+alter table rooms add column if not exists capacity int not null default 8;
 alter table rooms drop constraint if exists rooms_capacity_check;
 alter table rooms add constraint rooms_capacity_check check (capacity between 3 and 8);
 
@@ -99,9 +102,11 @@ create table if not exists players (
   room_id    uuid not null references rooms(id) on delete cascade,
   nickname   text not null,
   mask_id    text not null,
-  -- 1 ~ rooms.capacity. 제약은 방마다 다를 수 없으므로 상한만 정원 최댓값인 8로 잡는다.
-  -- 방별 상한은 pick_free_seat()이 room_capacity(room_id)로 지킨다 (SPEC §17.6).
-  seat       int  not null check (seat between 1 and 8),
+  -- 1 ~ 9. 사람은 정원(8)까지, **AI 는 그 위 한 자리를 더 쓴다** (2026-08-06 결정 —
+  -- 자리 수 = 사람 수 + 1). 사람이 8자리를 다 채운 방에서 AI 가 설 곳이 없으면
+  -- 찾을 것이 없는 판이 되므로 정원 밖 9번을 열어 둔다.
+  -- 사람 쪽 상한은 pick_free_seat()이 room_capacity(room_id)로 지킨다 (SPEC §17.6).
+  seat       int  not null check (seat between 1 and 9),
   -- ★ 클라이언트에 절대 내려가지 않는다 (I1). public_players 뷰를 거친다.
   is_bot     boolean not null default false,
   connected  boolean not null default true,
@@ -117,10 +122,11 @@ create table if not exists players (
 alter table players add column if not exists token text not null
   default encode(gen_random_bytes(32), 'hex');
 
--- 좌석 상한을 5에서 8로 넓혔다. 인라인 check의 자동 이름은 <테이블>_<컬럼>_check라
--- players_seat_check다. 옛 DB에는 1~5짜리가 남아 있으므로 갈아끼운다.
+-- 좌석 상한을 넓혀 왔다: 5 → 8 (정원) → **9** (2026-08-06, AI 한 자리).
+-- 인라인 check의 자동 이름은 <테이블>_<컬럼>_check라 players_seat_check다.
+-- 옛 DB에는 좁은 것이 남아 있으므로 갈아끼운다. 컬럼 정의의 주석과 같은 값이어야 한다.
 alter table players drop constraint if exists players_seat_check;
-alter table players add constraint players_seat_check check (seat between 1 and 8);
+alter table players add constraint players_seat_check check (seat between 1 and 9);
 
 -- ★ (room_id, seat) 유니크를 **지연 가능**으로 바꾼다 (SPEC §15-3-결정).
 --

@@ -7,16 +7,17 @@
  * │ 서버와 주고받는 부분은 예전 page.tsx 그대로다. 껍데기(창고 케이스 →     │
  * │ 취조실 콘솔)만 바꿨다:                                                  │
  * │   GET  /api/room                 목록. phase='lobby'인 방만 온다        │
- * │   POST /api/room  { capacity }   방 만들기. 정원 2~8*, 기본 5 (§17.6)   │
- * │   * UI 표기만 2~8. 서버 하한은 아직 3 — MIN_CAPACITY 주석 참고           │
+ * │   POST /api/room  { name? }      방 만들기. 정원은 **안 보낸다** —      │
+ * │   2026-08-06 결정: 모든 방이 사람 8자리 + 시작할 때 AI 1대다.           │
  * │   POST /api/room/join  { code }  입장. 201 신규 · 200 재입장 둘 다 성공  │
  * │ supabase 를 직접 부르지 않는다 (I9). 목록에 room_id 는 오지 않는다 —    │
  * │ 이동도 입장도 code 로 한다. 봇 수·봇 자리를 유추하게 하는 값은 어떤     │
  * │ 형태로도 화면에 올리지 않는다 (I1).                                     │
  * └────────────────────────────────────────────────────────────────────────┘
  *
- * ★ 시안에 있으나 **뒷받침할 데이터가 없는 자리**(접속자 수 · 모드 · 라운드 시간 ·
- *   비공개 코드 · 검색 필터)는 지우지 않고 남겼다.
+ * ★ 시안에 있으나 **뒷받침할 데이터가 없는 자리**(접속자 수 · 라운드 시간 ·
+ *   비공개 코드 · 검색 필터)는 지우지 않고 남겼다. **모드는 지웠다** —
+ *   2026-08-06 결정: 고를 것이 없는 칸을 화면에 두지 않는다.
  *   레이아웃이 완성됐을 때의 모습을 잃지 않기 위해서다. 눌러도 아무 일이 없는 칸은
  *   disabled 로 둔다 — 화면에 붙여뒀던 MOCK 배지는 뗐다.
  *
@@ -26,8 +27,9 @@
  *   **사람이 2명 이상인 방만 적힌다** — 혼자 만든 방은 봇만 있어서 아무나 찍어도
  *   맞기 때문이다. 그래서 판수가 실제로 논 횟수보다 적을 수 있다.
  *
- * ★ 시안의 "5명 중 AI 1명" · "AI 2명" 같은 모드 설명은 그대로 옮기지 않았다.
- *   정원은 방마다 2~8이고(UI 표기) 서버가 받는 값은 capacity 하나뿐이다.
+ * ★ 정원을 고르는 칸도 없앴다 (2026-08-06). 모든 방이 같은 판이다 —
+ *   사람 8자리, 2명부터 전원 준비되면 시작, 시작하는 순간 AI 1대가 붙는다.
+ *   서버가 POST /api/room 에서 받는 값은 이제 이름 하나뿐이다.
  */
 
 import Link from "next/link";
@@ -38,19 +40,6 @@ import { signOut } from "@/lib/auth";
 import type { Phase } from "@/lib/game/types";
 import { useInvalidateAuthUser, useProfile, useProfileStats } from "@/lib/queries/auth";
 import styles from "./lobby.module.css";
-
-/**
- * 정원 범위. lib/server/room.ts 의 MIN/MAX/DEFAULT_ROOM_CAPACITY 와 같은 값이어야 한다.
- * 그 모듈은 service role 키를 쥐고 있어 클라이언트 번들에 넣을 수 없어서 여기 다시 적는다.
- * 어긋나도 서버가 400으로 막지만, 그러면 고를 수 없는 칸이 화면에 생긴다 (SPEC §17.6).
- *
- * ⚠️ 임시 불일치(2026-07): CEO 결정으로 UI 표기만 하한 2로 먼저 내렸다. 서버·DB 하한은
- *    아직 3이라 **2로 방을 만들면 POST /api/room 이 400으로 거절한다.** 백엔드(§17.6 규칙·
- *    스파이 배정)는 다음에 논의해 맞춘다. 그때 lib/server/room.ts 의 MIN 도 2로 내린다.
- */
-const MIN_CAPACITY = 2;
-const MAX_CAPACITY = 8;
-const DEFAULT_CAPACITY = 5;
 
 /**
  * 방 제목 길이 상한. lib/server/room.ts 의 MAX_ROOM_NAME_LEN 과 같아야 한다.
@@ -88,18 +77,6 @@ function roomLabel(room: OpenRoom): string {
 }
 
 /**
- * 방의 모드.
- *
- * ★ **서버에 그런 값이 없다** — rooms 에 모드 컬럼이 없어서 지금은 전부 '표준' 하나다.
- *   그래서 「모드」로 정렬해도 눈에 띄게 달라지지 않는다: 비교값이 전부 같고 Array.sort 가
- *   안정 정렬이라 들어온 순서가 그대로 남는다. 정렬 자체는 제대로 걸려 있어서,
- *   컬럼이 생기는 날 **여기 한 줄만** 고치면 목록 표시와 정렬이 같이 살아난다.
- */
-function modeOf(_room: OpenRoom): string {
-  return "표준";
-}
-
-/**
  * 정렬 기준. **목록 머리의 열 이름이 곧 버튼이다** — 따로 「정렬」 드롭다운을 두지 않는다.
  * 고르는 곳과 결과가 보이는 곳이 같은 자리에 있어야 무엇이 걸려 있는지 헷갈리지 않는다.
  *
@@ -108,7 +85,7 @@ function modeOf(_room: OpenRoom): string {
  * ★ 「상태」에도 버튼이 없다. 아래 sortRooms 가 **어떤 기준에서도 항상** 적용하므로
  *   고를 것이 없다.
  */
-type SortKey = "order" | "title" | "mode" | "players";
+type SortKey = "order" | "title" | "players";
 /** 목록 머리에서 실제로 누를 수 있는 열. 'order'는 버튼이 없어 빠진다. */
 type SortableCol = Exclude<SortKey, "order">;
 type SortDir = "asc" | "desc";
@@ -123,7 +100,6 @@ interface Sort {
  */
 const FIRST_DIR: Record<SortableCol, SortDir> = {
   title: "asc",
-  mode: "asc",
   players: "desc",
 };
 
@@ -153,9 +129,6 @@ function sortRooms(rooms: OpenRoom[], { key, dir }: Sort): OpenRoom[] {
       case "title":
         // 한글·영문·숫자가 섞인다. numeric을 켜야 '방 10'이 '방 9' 뒤에 온다.
         return sign * roomLabel(a).localeCompare(roomLabel(b), "ko", { numeric: true });
-      case "mode":
-        // 지금은 값이 하나뿐이라 늘 0이다 — 그러면 안정 정렬이 앞의 순서를 지킨다 (modeOf).
-        return sign * modeOf(a).localeCompare(modeOf(b), "ko");
       case "players":
         return sign * (a.players - b.players);
       default:
@@ -218,7 +191,6 @@ export function Lobby() {
   const [joinError, setJoinError] = useState<string | null>(null);
   const [createError, setCreateError] = useState<string | null>(null);
 
-  const [tab, setTab] = useState<"list" | "create">("list");
   const [query, setQuery] = useState("");
   const [sort, setSort] = useState<Sort>(DEFAULT_SORT);
   /**
@@ -226,7 +198,8 @@ export function Lobby() {
    * CreatePanel 은 목록 화면에서 아예 언마운트되므로 initialName 이 갈 때마다 새로 읽힌다.
    */
   const [seedName, setSeedName] = useState("");
-  const [capacity, setCapacity] = useState(DEFAULT_CAPACITY);
+  /** 방 만들기 팝업. 「코드로 입장」과 같은 모양의 모달이다 (2026-08-06) */
+  const [createOpen, setCreateOpen] = useState(false);
   const [codeOpen, setCodeOpen] = useState(false);
   const [code, setCode] = useState("");
 
@@ -267,9 +240,11 @@ export function Lobby() {
       const res = await fetch("/api/room", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify(trimmed ? { capacity, name: trimmed } : { capacity }),
+        // 정원은 안 싣는다 — 서버가 정한다 (2026-08-06). 이름만 있으면 된다.
+        body: JSON.stringify(trimmed ? { name: trimmed } : {}),
       });
       if (!res.ok) {
+        // 팝업은 열어 둔다. 닫아 버리면 고쳐 칠 이름이 사라진다.
         setCreateError(await errorOf(res, "방을 만들지 못했다"));
         return;
       }
@@ -282,7 +257,7 @@ export function Lobby() {
     } finally {
       setBusy(false);
     }
-  }, [capacity, router]);
+  }, [router]);
 
   /**
    * 코드로 입장. 목록의 줄도 이 길을 쓴다 — /room/{code}로 그냥 이동하면 자리가
@@ -352,30 +327,15 @@ export function Lobby() {
 
         <main className={`${styles.scroll} flex flex-1 flex-col overflow-y-auto`}>
           {/*
-            ── 머리 ────────────────────────────────────────────────────
-            탭은 없다. 목록이 기본 화면이라 이름표를 달아 봐야 건너갈 곳 없는 탭
-            하나만 남는다. **목록 화면에는 이 띠 자체를 두지 않는다** — 버튼 한 개를
-            얹자고 빈 줄을 하나 세우는 꼴이었다. 목록의 도구는 목록이 직접 이고 있다
-            (RoomListPanel 의 도구 띠). 여기 남는 건 만들기 화면의 되돌아가는 길뿐이다.
+            ── 화면은 목록 하나다 (2026-08-06) ──────────────────────────
+            예전에는 「방 만들기」가 목록을 통째로 갈아치우는 두 번째 화면이었고,
+            그 위에 되돌아가는 띠를 따로 세워야 했다. 물어보는 것이 이름 하나로
+            줄어든 지금 그건 **한 칸을 받자고 화면을 떠나는 꼴**이다.
+            그래서 「코드로 입장」과 같은 모양의 팝업으로 바꿨다 — 둘 다 방으로
+            들어가는 짧은 물음이라 같은 모양이어야 헷갈리지 않는다.
           */}
-          {tab === "create" && (
-            <div
-              className="shrink-0 border-b px-5 pt-5 sm:px-8"
-              style={{ borderColor: "var(--border)" }}
-            >
-              <div className="flex items-center justify-between pb-1">
-                {/* 탭이 아니라 되돌아가는 길이다 — 이게 없으면 만들기 화면에 갇힌다 */}
-                <button type="button" className={styles.tab} onClick={() => setTab("list")}>
-                  ← 방 목록
-                </button>
-                <span className={`${styles.tab} ${styles.tabOn}`}>방 만들기</span>
-              </div>
-            </div>
-          )}
-
-          {tab === "list" ? (
-            <RoomListPanel
-              rooms={rooms}
+          <RoomListPanel
+            rooms={rooms}
               visible={visible}
               query={query}
               busy={busy}
@@ -389,27 +349,28 @@ export function Lobby() {
               onSort={(col) => setSort((cur) => nextSort(cur, col))}
               onRetry={() => void loadRooms()}
               onEnter={(c) => void enterRoom(c)}
-              onCreate={(seed) => {
-                setSeedName(seed ?? "");
-                setTab("create");
-              }}
-              onOpenCode={() => {
-                setJoinError(null);
-                setCodeOpen(true);
-              }}
-            />
-          ) : (
-            <CreatePanel
-              capacity={capacity}
-              busy={busy}
-              error={createError}
-              initialName={seedName}
-              onCapacity={setCapacity}
-              onSubmit={(name) => void createRoom(name)}
-            />
-          )}
+            onCreate={(seed) => {
+              setSeedName(seed ?? "");
+              setCreateError(null);
+              setCreateOpen(true);
+            }}
+            onOpenCode={() => {
+              setJoinError(null);
+              setCodeOpen(true);
+            }}
+          />
         </main>
       </div>
+
+      {createOpen && (
+        <CreateDialog
+          busy={busy}
+          error={createError}
+          initialName={seedName}
+          onClose={() => setCreateOpen(false)}
+          onSubmit={(name) => void createRoom(name)}
+        />
+      )}
 
       {codeOpen && (
         <CodeDialog
@@ -896,7 +857,8 @@ function RoomListPanel({
           <div className={styles.label}>번호</div>
           {/* 이름 없는 방만 코드가 이 칸을 물려받는다 (RoomRow) */}
           <SortHeader label="제목" col="title" sort={sort} onSort={onSort} />
-          <SortHeader label="모드" col="mode" sort={sort} onSort={onSort} />
+          {/* 「모드」 열은 2026-08-06 에 지웠다 — 값이 하나뿐이라 정렬해도 아무 일이
+              일어나지 않는 버튼이었다. 방마다 다른 것은 제목·상태·인원뿐이다 */}
           <div className={styles.label}>상태</div>
           <SortHeader label="인원" col="players" sort={sort} onSort={onSort} />
         </div>
@@ -1055,11 +1017,6 @@ function RoomRow({
         </span>
       </span>
 
-      {/* 표시와 정렬이 같은 곳을 본다 — modeOf 하나만 고치면 둘 다 따라온다 */}
-      <span>
-        <span className={styles.tag}>{modeOf(room)}</span>
-      </span>
-
       {/* 상태. 색만으로 말하지 않는다 — 글자를 같이 적어야 색을 못 가리는 사람도 읽는다 */}
       <span>
         <span className={`${styles.tag} ${playing ? "" : styles.tagGreen}`}>
@@ -1082,7 +1039,6 @@ function RoomRowSkeleton() {
     <div aria-hidden className={`${styles.roomRow} animate-pulse`}>
       <div className="h-3 w-4" style={{ background: "var(--surface3)" }} />
       <div className="h-4 w-32" style={{ background: "var(--surface3)" }} />
-      <div className="h-3 w-10" style={{ background: "var(--surface3)" }} />
       <div className="h-3 w-12" style={{ background: "var(--surface3)" }} />
       <div className="h-3 w-10" style={{ background: "var(--surface3)" }} />
     </div>
@@ -1092,273 +1048,130 @@ function RoomRowSkeleton() {
 /* ───────────────────────────── 방 만들기 ───────────────────────────── */
 
 /**
- * 시안의 방 만들기 콘솔을 그대로 살렸다. 모드·공개 설정·라운드 시간·방 이름은
- * 화면 안에서 진짜로 반응한다(클라이언트 상태) — 시안처럼 "만져지는" 느낌을 준다.
+ * 방 만들기 팝업 — **「코드로 입장」(CodeDialog)과 같은 모양이다.**
  *
- * ★ 다만 서버가 실제로 받는 값은 capacity 하나뿐이다 (POST /api/room, §17.6).
- *   나머지는 아직 저장할 곳이 없어 **화면 미리보기**다. 그래서 하단에 그 사실을
- *   한 줄로 정직하게 남긴다 — 동작하지 않는 걸 동작하는 척 두는 게 제일 나쁘다.
- *   정원 하한은 UI 표기 기준 2다 (MIN_CAPACITY). 서버 하한은 아직 3이라 2는 임시로
- *   거절되니, 백엔드가 맞춰질 때까지 유의한다.
+ * ┌─ 왜 화면이 아니라 팝업인가 (2026-08-06) ──────────────────────────────────┐
+ * │ 시안의 방 만들기는 설정 콘솔이었다: 참가 인원 눈금 · 게임 모드 · 공개 설정 · │
+ * │ 라운드 시간이 두 열로 깔린 **두 번째 화면**이었고, 목록으로 돌아가는 띠를    │
+ * │ 그 위에 따로 세워야 했다. 그런데 그중 서버에 닿는 값은 인원 하나뿐이었고     │
+ * │ 나머지 셋은 저장할 곳이 없어 화면 안에서만 반응했다.                        │
+ * │                                                                          │
+ * │ 넷을 차례로 뺐다 — 인원은 고를 값이 아니게 됐고(사람 8자리 고정 + 시작할 때  │
+ * │ AI 1대), 모드는 값이 하나뿐이었고, 공개 설정은 **비공개를 골라도 방이 목록에 │
+ * │ 그대로 뜨는** 칸이었으며(입장 코드도 저장되지 않았다), 라운드 시간도 같은    │
+ * │ 이유로 나갔다. 고르면 지켜지는 줄 아는 설정이 화면에 있는 게 제일 나쁘다.    │
+ * │                                                                          │
+ * │ 남은 물음이 이름 한 칸이라, 그걸 받자고 화면을 떠날 이유가 없어졌다.        │
+ * │ 「코드로 입장」과 **같은 껍데기를 쓴다** — 둘 다 "짧게 한 줄 받고 방으로     │
+ * │ 들어간다"는 같은 일이라, 모양이 다르면 그 자체가 헷갈릴 거리가 된다.        │
+ * │ 고칠 때도 둘을 나란히 놓고 같이 고친다.                                    │
+ * └──────────────────────────────────────────────────────────────────────────┘
+ *
+ * ★ 규칙(인원 · AI 수 · 시작 조건)을 여기 적지 않는다. /intro 규칙 카드와 대기방의
+ *   「방 규칙」이 같은 말을 더 정확한 자리에서 한다 — 세 군데로 갈리면 문구가 어긋난다.
  */
-
-type Mode = "std" | "spd" | "hrd";
-
-const MODE_TABS: { key: Mode; label: string; desc: string }[] = [
-  {
-    key: "std",
-    label: "표준",
-    desc: "기본 진행. 공통 질문 2라운드 → 지목 질문 → 자유 채팅 → 투표 순으로 흐른다.",
-  },
-  { key: "spd", label: "스피드", desc: "짧게 끊는 진행. 직관과 순발력으로 빠르게 가려낸다." },
-  { key: "hrd", label: "하드", desc: "길게 파고드는 진행. 답을 더 촘촘히 검증하는 판이다." },
-];
-
-const ROUND_TIMES = [3, 7, 10, 15];
-
-/** 비공개 코드 미리보기용. 표시만 하는 값이라 UI 랜덤을 써도 규칙에 걸리지 않는다 (lib/game 밖) */
-function randomCode(): string {
-  const pool = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
-  let out = "";
-  for (let i = 0; i < 6; i += 1) out += pool[Math.floor(Math.random() * pool.length)];
-  return out;
-}
-
-function CreatePanel({
-  capacity,
+function CreateDialog({
   busy,
   error,
   initialName,
-  onCapacity,
+  onClose,
   onSubmit,
 }: {
-  capacity: number;
   busy: boolean;
   error: string | null;
   /** 목록에서 찾다 못 찾고 넘어왔을 때 그 찾던 말. 없으면 빈 칸으로 연다. */
   initialName: string;
-  onCapacity: (n: number) => void;
+  onClose: () => void;
   /** @param name 방 제목. 비었으면 이름 없는 방이 된다 */
   onSubmit: (name: string) => void;
 }) {
-  // ★ name 만 서버로 간다. 아래 넷(모드 · 공개 설정 · 입장 코드 · 라운드 시간)은
-  //   아직 뒷받침할 데이터가 없어서 화면 안에서만 산다 (파일 머리말의 MOCK 설명).
+  // 이 팝업의 상태는 이것 하나다. 서버로 가는 값도 이것 하나다 (POST /api/room).
   const [name, setName] = useState(initialName);
-  const [mode, setMode] = useState<Mode>("std");
-  const [isPrivate, setIsPrivate] = useState(false);
-  const [entryCode, setEntryCode] = useState("");
-  const [roundTime, setRoundTime] = useState(7);
 
-  const modeDesc = MODE_TABS.find((m) => m.key === mode)?.desc ?? "";
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      // 만드는 중에 닫으면 방은 생겼는데 화면은 안 넘어간다 (CodeDialog 와 같은 이유).
+      if (e.key === "Escape" && !busy) onClose();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [busy, onClose]);
 
   return (
-    /*
-      ★ 폭을 제한하지 않는다. 예전에는 max-w-860 이라 넓은 화면에서 오른쪽이 통째로
-        비었다. 두 열이 화면 끝까지 차고, 만들기 버튼은 아래에 붙은 띠로 내려간다 —
-        그래야 "설정판 + 실행 바"로 읽히고 빈 구석이 남지 않는다.
-    */
-    <div className="flex flex-1 flex-col">
-      <div className="flex-1 px-5 py-6 sm:px-8">
-        {/* items-stretch(기본) — 두 열이 같은 높이로 끝난다. 한쪽만 짧으면 그 아래가 빈다 */}
-        <div className="grid gap-5 xl:grid-cols-2">
-          {/* ── 왼쪽 ─────────────────────────────────────────────── */}
-          <div className="flex h-full flex-col gap-5">
-            <div className={`${styles.panel} p-5`}>
-              <div className={`${styles.label} mb-3`}>방 이름</div>
-              <input
-                className={styles.field}
-                type="text"
-                value={name}
-                maxLength={MAX_ROOM_NAME_LEN}
-                // 라벨이 이미 "방 이름"이라, 여기에는 화면으로 알 수 없는 것만 적는다 —
-                // 비워도 되고, 그러면 방이 코드로 불린다는 사실.
-                placeholder="비우면 코드로 부른다"
-                onChange={(e) => setName(e.target.value)}
-              />
-              <div className="mt-1.5 text-right">
-                <span className={styles.label}>
-                  {name.length} / {MAX_ROOM_NAME_LEN}
-                </span>
-              </div>
-            </div>
-
-            <div className={`${styles.panel} p-5`}>
-              <div className={`${styles.label} mb-3`}>게임 모드</div>
-              <div className="flex gap-2.5">
-                {MODE_TABS.map((m) => (
-                  <button
-                    key={m.key}
-                    type="button"
-                    className={`${styles.tog} ${mode === m.key ? styles.togOn : ""}`}
-                    aria-pressed={mode === m.key}
-                    onClick={() => setMode(m.key)}
-                  >
-                    {m.label}
-                  </button>
-                ))}
-              </div>
-              <div className={`${styles.inset} mt-3 px-3 py-3`}>
-                <p className="text-[0.77rem] font-light leading-[1.8]" style={{ color: "var(--muted)" }}>
-                  {modeDesc}
-                </p>
-              </div>
-            </div>
-
-            {/* 왼쪽 열의 마지막 카드가 남은 높이를 먹는다 — 두 열이 같은 바닥에서 끝난다 */}
-            <div className={`${styles.panel} flex flex-1 flex-col p-5`}>
-              <div className={`${styles.label} mb-3`}>공개 설정</div>
-              <div className="flex gap-2.5">
-                <button
-                  type="button"
-                  className={`${styles.tog} ${!isPrivate ? styles.togOn : ""}`}
-                  aria-pressed={!isPrivate}
-                  onClick={() => setIsPrivate(false)}
-                >
-                  공개
-                </button>
-                <button
-                  type="button"
-                  className={`${styles.tog} ${isPrivate ? styles.togOn : ""}`}
-                  aria-pressed={isPrivate}
-                  onClick={() => setIsPrivate(true)}
-                >
-                  비공개
-                </button>
-              </div>
-
-              {isPrivate ? (
-                <div className="mt-4">
-                  <div className={`${styles.label} mb-1.5`}>입장 코드</div>
-                  <div className="flex">
-                    <input
-                      className={`${styles.field} ${styles.mono}`}
-                      type="text"
-                      value={entryCode}
-                      maxLength={8}
-                      placeholder="코드"
-                      onChange={(e) =>
-                        setEntryCode(e.target.value.replace(/\s/g, "").toUpperCase().slice(0, 8))
-                      }
-                      style={{ flex: 1, letterSpacing: "0.2em" }}
-                    />
-                    <button
-                      type="button"
-                      onClick={() => setEntryCode(randomCode())}
-                      className="shrink-0 cursor-pointer border px-4 text-[0.79rem] uppercase tracking-[0.15em]"
-                      style={{
-                        background: "var(--surface3)",
-                        borderColor: "var(--border2)",
-                        borderLeft: "none",
-                        color: "var(--muted)",
-                      }}
-                    >
-                      랜덤
-                    </button>
-                  </div>
-                </div>
-              ) : null}
-            </div>
+    <div
+      className={styles.overlay}
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="create-dialog-title"
+      onMouseDown={(e) => {
+        if (e.target === e.currentTarget && !busy) onClose();
+      }}
+    >
+      <div className={styles.modal}>
+        <div className="mb-6 flex items-start justify-between gap-4">
+          <div>
+            <div className={`${styles.label} mb-2`}>새 방</div>
+            <h3 id="create-dialog-title" className="text-[1.1rem] font-bold tracking-tight">
+              방 만들기
+            </h3>
           </div>
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="닫기"
+            className="cursor-pointer border-none bg-transparent"
+            style={{ color: "var(--muted)" }}
+          >
+            <CloseIcon />
+          </button>
+        </div>
 
-          {/* ── 오른쪽 ───────────────────────────────────────────── */}
-          <div className="flex h-full flex-col gap-5">
-            <div className={`${styles.panel} p-5`}>
-              <div className="mb-3 flex items-baseline justify-between">
-                <span className={styles.label}>참가 인원</span>
-                <span className={styles.mono}>
-                  <span className="text-[1.5rem] font-bold tracking-tight">{capacity}</span>
-                  <span className="ml-1 text-[0.8rem]" style={{ color: "var(--muted)" }}>
-                    명
-                  </span>
-                </span>
-              </div>
-              {/* 여기만 진짜다. POST /api/room 이 받는 유일한 값 (§17.6) */}
-              <input
-                className={styles.range}
-                type="range"
-                min={MIN_CAPACITY}
-                max={MAX_CAPACITY}
-                value={capacity}
-                disabled={busy}
-                aria-label="참가 인원"
-                onChange={(e) => onCapacity(Number(e.target.value))}
-              />
-              <div className="mt-2 flex justify-between">
-                <span className={styles.label}>{MIN_CAPACITY}명</span>
-                <span className={styles.label}>{MAX_CAPACITY}명</span>
-              </div>
-            </div>
-
-            {/* 오른쪽 열의 마지막 카드가 남은 높이를 먹는다 — 열이 아래 띠까지 닿는다 */}
-            <div className={`${styles.panel} flex flex-1 flex-col p-5`}>
-              <div className={`${styles.label} mb-3`}>라운드 시간</div>
-              <div className="flex gap-2.5">
-                {ROUND_TIMES.map((t) => (
-                  <button
-                    key={t}
-                    type="button"
-                    className={`${styles.tog} ${t === roundTime ? styles.togOn : ""}`}
-                    aria-pressed={t === roundTime}
-                    onClick={() => setRoundTime(t)}
-                  >
-                    {t}분
-                  </button>
-                ))}
-              </div>
-            </div>
-          </div>
+        {/*
+          ★ styles.mono 를 붙이지 않는다. 옆의 코드 칸과 다른 점이 이것 하나다 —
+            저쪽은 코드(대문자)를 가지런히 세워야 하지만 여기는 사람이 쓴 말이라
+            등폭으로 두면 자간만 벌어진다.
+        */}
+        <input
+          className={styles.field}
+          type="text"
+          value={name}
+          maxLength={MAX_ROOM_NAME_LEN}
+          // 라벨이 이미 "방 만들기"라, 여기에는 화면으로 알 수 없는 것만 적는다 —
+          // 비워도 된다는 것과, 그때 무슨 일이 일어나는가(코드를 대신 뽑는다).
+          // ★ 지은 이름은 그대로 입장 코드가 된다 (lib/server/room.ts 의 codeFromName).
+          //   그 사실은 글로 설명하지 않는다 — 방에 들어가면 머리말의 「코드 복사」가
+          //   그 값을 그대로 들고 있어서, 한 번 보면 설명보다 빨리 안다.
+          placeholder="비우면 랜덤으로 만들어진다"
+          aria-label="방 이름"
+          autoFocus
+          onKeyDown={(e) => {
+            // 한 칸짜리 폼이다. 치고 나서 마우스로 버튼을 찾아가게 두지 않는다.
+            if (e.key === "Enter" && !busy) onSubmit(name);
+          }}
+          onChange={(e) => setName(e.target.value)}
+          style={{ fontSize: "1.02rem" }}
+        />
+        <div className="mb-4 mt-1.5 text-right">
+          <span className={styles.label}>
+            {name.length} / {MAX_ROOM_NAME_LEN}
+          </span>
         </div>
 
         {error && (
-          <p
-            role="alert"
-            className="mt-5 px-4 py-3 text-[0.81rem]"
-            style={{ border: "1px solid rgba(255,59,48,0.3)", background: "var(--red-dim)", color: "var(--red)" }}
-          >
+          <p role="alert" className="mb-3 text-[0.79rem]" style={{ color: "var(--red)" }}>
             {error}
           </p>
         )}
-      </div>
 
-      {/*
-        실행 띠. 스크롤해도 바닥에 붙어 있어야 "지금 이 설정으로 연다"가 항상 손에 닿는다.
-        패널 안이 아니라 패널 폭 전체를 쓴다 — 시안의 바닥 바와 같은 자리다.
-      */}
-      <div
-        className="sticky bottom-0 border-t px-5 py-4 sm:px-8"
-        style={{ borderColor: "var(--border)", background: "var(--bg2)" }}
-      >
-        <div className="flex flex-wrap items-center justify-between gap-4">
-          {/*
-            자리·정체 이야기는 여기서 길게 하지 않는다. /intro 와 방 안의 「방 규칙」이
-            같은 말을 더 정확하게 한다 — 세 군데로 갈리면 문구가 서로 어긋난다.
-
-            둘째 줄은 정직성 표시다. **이름이 목록에서 빠졌다** — 이제 진짜로 저장된다.
-            여기 목록과 실제 동작이 어긋나면 이 표시 자체가 거짓말이 되므로,
-            값을 서버에 잇는 순간 같이 고친다.
-          */}
-          <p className="text-[0.77rem] font-light leading-[1.9]" style={{ color: "var(--muted)" }}>
-            역할은 시작할 때 무작위로 배정된다. 누가 AI인지는 아무도 알 수 없다.
-            <br />
-            <span style={{ color: "var(--dim)" }}>
-              모드·시간·공개 설정은 미리보기다 — 지금 방에 반영되는 값은 이름과 인원이다.
-            </span>
-          </p>
-          <button
-            type="button"
-            className={styles.btnAccent}
-            style={{ padding: "0.9rem 2.8rem", fontSize: "0.79rem" }}
-            disabled={busy}
-            onClick={() => onSubmit(name)}
-          >
-            {/*
-              ★ 버튼에 정원을 적지 않는다. 바로 위 눈금이 이미 그 숫자를 크게 들고
-                있어서 같은 값이 두 번 나오고, 무엇보다 여기서 알려줄 것은 **무엇이
-                일어나는가**(방이 만들어진다)이지 몇 자리인가가 아니다.
-            */}
-            {busy ? "만드는 중…" : "방 만들기"} <ArrowIcon />
-          </button>
-        </div>
+        <button
+          type="button"
+          className={styles.btnAccent}
+          style={{ width: "100%", padding: "0.85rem" }}
+          disabled={busy}
+          onClick={() => onSubmit(name)}
+        >
+          {busy ? "만드는 중…" : "방 만들기"} <ArrowIcon />
+        </button>
       </div>
     </div>
   );

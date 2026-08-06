@@ -159,15 +159,23 @@ async function main() {
   const b = new Jar('B');
 
   // 1) 방을 만들고 둘이 들어간 뒤 게임을 시작한다.
-  //    시작해야 빈자리가 봇으로 채워진다 (POST /api/room/start).
-  //    ★ 이 수가 곧 명부의 길이다 — welcome 은 접속 여부와 무관하게 전 좌석을 담는다.
-  const ROOM_CAPACITY = 5;
-  const created = await a.post('/api/room', { capacity: ROOM_CAPACITY });
+  //    시작해야 AI 자리가 생긴다 (POST /api/room/start — 2026-08-06 부터 **1대**다).
+  //    ★ 명부의 길이는 정원이 아니라 **사람 + AI** 다 — welcome 은 접속 여부와
+  //      무관하게 전 좌석을 담는다. 여기서는 사람 둘 + AI 하나 = 3이다.
+  const HUMANS = 2;
+  const AI_SEATS = 1;
+  const SEATS = HUMANS + AI_SEATS;
+  const created = await a.post('/api/room');
   const roomId = created.room.id;
   const code = created.room.code;
   console.log(`  방 ${code} (${roomId})`);
 
   await b.post('/api/room/join', { code });
+
+  // ★ 2026-08-06 부터 **전원이 준비를 눌러야** 시작된다 (lib/game/rules.ts 의 startBlock).
+  //   빠뜨리면 아래 start 가 409 로 떨어지고 검증이 통째로 멈춘다 — 실제로 그렇게 걸렸다.
+  await a.post('/api/lobby/ready', { room_id: roomId, ready: true });
+  await b.post('/api/lobby/ready', { room_id: roomId, ready: true });
   await a.post('/api/room/start', { room_id: roomId });
 
   const ticketA = await a.post('/api/world/ticket', { room_id: roomId });
@@ -186,12 +194,12 @@ async function main() {
      *   welcome 이 **접속한 사람 + 봇 전부**였으므로, 방에 제일 먼저 들어가면
      *   명부에 있는 id 가 전부 봇이었다. 첫 프레임만 보면 정답이 나왔다 (I1).
      *
-     *   지금 명부는 **좌석 명단**이다: 정원 5면 아직 아무도 안 붙어도 5명이다.
+     *   지금 명부는 **좌석 명단**이다: 자리가 셋이면 아직 아무도 안 붙어도 3명이다.
      *   미접속 사람은 마지막 자세(없으면 spawnFor 자리)로 들어가고, 봇 좌석과
      *   필드 모양이 완전히 같다. 그래서 "명부에 있다"로는 아무것도 못 가른다.
      */
-    if (welcomeA.players.length !== ROOM_CAPACITY) {
-      throw new Error(`명부가 ${welcomeA.players.length}명이다 (전 좌석 ${ROOM_CAPACITY}을 기대)`);
+    if (welcomeA.players.length !== SEATS) {
+      throw new Error(`명부가 ${welcomeA.players.length}명이다 (전 좌석 ${SEATS}을 기대)`);
     }
     // 본인도 명부에 들어 있어야 한다. 본인만 빠지면 "빠진 자리 = 나"가 아니라
     // 남의 화면에서 내 자리가 통째로 비어 보인다 (아바타가 안 그려진다).

@@ -394,9 +394,17 @@ describe('대기실에서 말하기 (SPEC §15-3-결정)', () => {
 });
 
 describe('★ 시작 버튼', () => {
+  /**
+   * 전원이 준비를 누른 명단. 2026-08-06 부터 **그래야만 시작할 수 있다**
+   * (lib/game/rules.ts 의 startBlock — 화면과 서버가 같은 함수를 본다).
+   */
+  const ALL_READY = PLAYERS.map((p) => ({ ...p, is_ready: true }));
+
   it('「게임 시작」은 월드 시작이다 — 2D 시작(/api/room/start)을 부르지 않는다', async () => {
     // 2026-08-06 결정. 대기방의 시작은 world_started_at 만 찍는다 —
     // 2D 상태머신(fillWithBots · 역할 배정 · phase 전환)은 타지 않는다.
+    db.fetchRoster.mockResolvedValue(ALL_READY);
+
     renderRoom();
     fireEvent.click(await screen.findByRole('button', { name: /게임 시작/ }));
 
@@ -407,6 +415,7 @@ describe('★ 시작 버튼', () => {
   it('연타해도 요청은 한 번만 나간다', async () => {
     // 서버 쪽도 멱등이지만(start-world 의 is null 조건), 화면에서 먼저 막는 편이
     // 요청 하나를 아낀다 — 스토어의 pending 게이트가 막는다 (reducer.ts).
+    db.fetchRoster.mockResolvedValue(ALL_READY);
     api.startWorld.mockImplementation(() => new Promise(() => {})); // 끝나지 않는 요청
 
     renderRoom();
@@ -417,6 +426,35 @@ describe('★ 시작 버튼', () => {
     fireEvent.click(button);
 
     await waitFor(() => expect(api.startWorld).toHaveBeenCalledTimes(1));
+  });
+
+  /*
+   * ── 시작 조건 (2026-08-06 결정: 사람 2~8명 + 전원 준비) ──────────────────
+   * 화면에서 먼저 막는 이유는 요청을 아끼려는 게 아니라 **이유를 보여주기** 위해서다.
+   * 서버도 같은 함수로 거절하므로(start-world 라우트) 여기만 뚫려도 판은 안 열린다.
+   */
+  it('한 명이라도 준비를 안 했으면 눌리지 않는다', async () => {
+    // 기본 PLAYERS 는 p1(나·방장)이 준비 전이다.
+    renderRoom();
+    const button = await screen.findByRole('button', { name: /게임 시작/ });
+
+    expect(button).toBeDisabled();
+    fireEvent.click(button);
+    expect(api.startWorld).not.toHaveBeenCalled();
+  });
+
+  it('왜 못 누르는지 화면에 적는다', async () => {
+    renderRoom();
+    expect(await screen.findByText(/아직 준비하지 않은 사람이 있다/)).toBeTruthy();
+  });
+
+  it('혼자면 전원이 준비해도 눌리지 않는다 — 사람 2명부터다', async () => {
+    // 혼자 시작하면 연기자가 없고 나머지가 AI라 아무나 찍어도 정답이 된다.
+    db.fetchRoster.mockResolvedValue([ALL_READY[0]]);
+
+    renderRoom();
+    expect(await screen.findByRole('button', { name: /게임 시작/ })).toBeDisabled();
+    expect(await screen.findByText(/2명 이상이어야/)).toBeTruthy();
   });
 });
 

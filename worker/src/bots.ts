@@ -289,13 +289,17 @@ function randomPoint(gather: boolean): { x: number; z: number } {
 // 쓴다 — 봇만 다른 자리에서 시작하면 그것부터 표식이 된다 (I1).
 export { spawnFor };
 
+/**
+ * @param slots 좌석 원을 몇 등분하는가. **방 정원이 아니라 WORLD_SEAT_SLOTS 다** —
+ *              사람과 봇이 같은 값을 써야 자리가 겹치지 않는다 (lib/mp/constants.ts).
+ */
 export function createBot(
   seed: { id: string; seat: number; nickname: string; maskId: string },
-  capacity: number,
+  slots: number,
   now: number,
   pose?: BotPose,
 ): BotState {
-  const raw = pose ?? { ...spawnFor(seed.seat, capacity), heading: 0 };
+  const raw = pose ?? { ...spawnFor(seed.seat, slots), heading: 0 };
   // 좌석 원(spawnFor)이 가구와 겹칠 수 있고, 저장된 좌표는 가구를 옮기기 전 것일 수 있다.
   // 가구 안에서 시작하면 첫 틱에 튕겨 나가는 게 보인다 — 여기서 미리 밀어낸다.
   const pushed = resolveCollisions(raw.x, raw.z, 0, BOT_STEP_UP);

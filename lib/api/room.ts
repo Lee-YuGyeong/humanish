@@ -168,9 +168,8 @@ export function advancePhase(roomId: string, expectedSeq: number): Promise<Advan
  *   접는다 — 결과는 같지만 요청만 봐서는 "이름을 비웠다"와 "안 보냈다"가 구분되지
  *   않는다. 보내는 쪽에서 정리해 둔다.
  */
-export function createRoom(capacity?: number, name?: string): Promise<RoomAndPlayer> {
-  const body: { capacity?: number; name?: string } = {};
-  if (capacity != null) body.capacity = capacity;
+export function createRoom(name?: string): Promise<RoomAndPlayer> {
+  const body: { name?: string } = {};
   const trimmed = name?.trim();
   if (trimmed) body.name = trimmed;
   return postJson<RoomAndPlayer>('/api/room', body);

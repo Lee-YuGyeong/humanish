@@ -1,10 +1,12 @@
 /**
  * 방 만들기 · 대기 중인 방 목록. 소유: A (SPEC §13-1)
  *
- * POST /api/room  { capacity?, name? }  →  { room, player }   (201)
- * GET  /api/room                        →  { rooms: { code, name, capacity, players, created_at, phase }[] }
+ * POST /api/room  { name? }  →  { room, player }   (201)
+ * GET  /api/room             →  { rooms: { code, name, capacity, players, created_at, phase }[] }
  *
- * 정원은 3~8에서 고르고 생략하면 5다. 범위 밖이면 400 (lib/server/room.ts).
+ * 정원은 **받지 않는다** (2026-08-06 결정). 모든 방이 사람 8자리이고, 시작할 때
+ * AI 1대가 붙는다 (lib/game/rules.ts). 옛 클라이언트가 capacity 를 실어 보내도
+ * 조용히 무시된다 — 400 으로 막으면 배포 순서만으로 방 만들기가 죽는다.
  * 제목은 1~20자. 생략하거나 공백뿐이면 이름 없는 방(null)이 되고 화면이 코드로 부른다.
  * 목록에는 시작한 방도 들어간다(phase로 구분). 대기 방이 앞, 게임 중인 방이 뒤다.
  * 상태에 따라 **세는 대상이 다르다** — 이유는 listOpenRooms의 주석에 있다 (I1, SPEC §17.6).
@@ -20,16 +22,15 @@ import { apiError, currentUser, setPlayerCookie } from '@/lib/server/auth';
 export const dynamic = 'force-dynamic';
 
 interface Body {
-  capacity?: number;
   name?: unknown;
 }
 
 /**
- * 본문에서 정원과 제목을 꺼낸다.
+ * 본문에서 제목을 꺼낸다.
  *
- * 본문 없이 POST하는 호출자가 있어서(정원을 기본값으로 두는 경우) readJson을 그대로
- * 쓰지 않는다 — 그건 본문이 JSON이 아니면 400을 던진다. 값 검증은 createRoom이 한다
- * (정원 범위 · 제목 길이와 정화 모두 lib/server/room.ts).
+ * 본문 없이 POST하는 호출자가 있어서(이름 없는 방) readJson을 그대로 쓰지 않는다 —
+ * 그건 본문이 JSON이 아니면 400을 던진다. 값 검증은 createRoom이 한다
+ * (제목 길이와 정화 모두 lib/server/room.ts).
  */
 async function readBody(req: Request): Promise<Body> {
   if (req.headers.get('content-length') === '0') return {};
@@ -42,10 +43,10 @@ async function readBody(req: Request): Promise<Body> {
 
 export async function POST(req: Request): Promise<Response> {
   try {
-    const { capacity, name } = await readBody(req);
+    const { name } = await readBody(req);
     // 계정은 쿠키 세션에서 되찾는다. 본문의 값을 쓰지 않는다 (SPEC §15-2-결정, I9).
     const user = await currentUser();
-    const { room, player, token } = await createRoom(capacity, name, user?.id ?? null);
+    const { room, player, token } = await createRoom(name, user?.id ?? null);
     await setPlayerCookie(room.id, token);
     return Response.json({ room, player }, { status: 201 });
   } catch (e) {

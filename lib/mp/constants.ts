@@ -121,8 +121,24 @@ export const GAME_MSG_MIN_INTERVAL_MS = 200;
 export const MAX_WS_MESSAGE_LEN = 64 * 1024;
 export const MAX_GAME_MESSAGE_LEN = 512;
 
-/** 방 정원 상한. rooms.capacity check(3~8) · players.seat check와 같은 값이다. */
+/** 방 정원 = **사람** 8명. rooms.capacity · lib/game/rules.ts 의 MAX_HUMANS_PER_ROOM 과 같다. */
 export const ROOM_MAX_PLAYERS = 8;
+
+/**
+ * 좌석 원의 칸 수 = 사람 8 + AI 1 (2026-08-06 결정).
+ *
+ * ┌─ 왜 room.capacity 가 아니라 상수인가 ─────────────────────────────────────┐
+ * │ spawnFor(seat, n)는 원을 n등분한다. 사람이 8자리를 다 채우면 AI는 9번      │
+ * │ 자리에 서는데(lib/server/world-ai.ts), n=8로 나누면 9번의 각도가 1번과     │
+ * │ 정확히 같아져 **AI가 사람 위에 겹쳐 선다.**                                │
+ * │                                                                          │
+ * │ 그리고 이 값은 **워커와 클라이언트가 반드시 같아야 한다** — 한쪽만 정원을  │
+ * │ 보면 내가 보는 내 자리와 남이 보는 내 자리가 어긋난다 (lib/mp/spawn.ts).   │
+ * │ 정원이 방마다 다르던 시절의 유일한 근거가 그 값이었는데, 이제 모든 방이    │
+ * │ 같은 정원이라 상수로 두는 편이 어긋날 구석이 없다.                         │
+ * └──────────────────────────────────────────────────────────────────────────┘
+ */
+export const WORLD_SEAT_SLOTS = ROOM_MAX_PLAYERS + 1;
 
 /** 입장 티켓 수명. 발급 직후 바로 접속하므로 짧을수록 좋다. */
 export const TICKET_TTL_SEC = 60;
