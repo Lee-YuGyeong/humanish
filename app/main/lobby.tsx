@@ -289,12 +289,13 @@ export function Lobby() {
    * 배정되지 않아 "이 방의 참가자가 아니다" 화면을 보게 된다.
    * 이미 그 방에 있으면 서버가 원래 자리를 그대로 돌려준다(rejoined).
    *
-   * @param dest 입장 후 어디로 가는가. 목록 선택은 3D 월드('world')로 간다 —
-   *             게임을 월드에서 돌리기로 해서다. 자리 배정(join)은 여기서 이미
-   *             끝났고, /world 는 ?code= 를 받아 같은 자리로 재입장한다.
+   * 도착지는 언제나 대기방(/room/{code})이다 (2026-08-06 결정 — 예전에는 목록
+   * 선택이 /world 로 직행했다). 월드로 가는 길은 방장의 「게임 시작」 하나다:
+   * world_started_at 이 찍히면 대기방이 전원을 /world 로 보낸다 (room-lobby.tsx).
+   * 이미 시작된 방에 들어가도 같은 길이다 — 대기방이 곧장 월드로 넘겨준다.
    */
   const enterRoom = useCallback(
-    async (raw: string, dest: "room" | "world" = "room"): Promise<void> => {
+    async (raw: string): Promise<void> => {
       // 코드는 이제 방 이름일 수 있다 (서버 codeFromName 과 같은 모양 — 공백 제거 + 대문자)
       const normalized = raw.replace(/\s+/g, "").toUpperCase();
       setBusy(true);
@@ -313,7 +314,7 @@ export function Lobby() {
         setCodeOpen(false);
         // 한글 이름 코드가 URL 에 실린다 — 인코딩 없이는 push 가 깨진다
         const encoded = encodeURIComponent(normalized);
-        router.push(dest === "world" ? `/world?code=${encoded}` : `/room/${encoded}`);
+        router.push(`/room/${encoded}`);
       } catch {
         setJoinError("서버에 연결하지 못했다");
       } finally {
@@ -387,7 +388,7 @@ export function Lobby() {
               sort={sort}
               onSort={(col) => setSort((cur) => nextSort(cur, col))}
               onRetry={() => void loadRooms()}
-              onEnter={(c) => void enterRoom(c, "world")}
+              onEnter={(c) => void enterRoom(c)}
               onCreate={(seed) => {
                 setSeedName(seed ?? "");
                 setTab("create");

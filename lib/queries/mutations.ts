@@ -29,6 +29,7 @@ import {
   setLobbyReady,
   setLobbyName,
   startRoom,
+  startWorld,
   submitAnswer,
 } from '@/lib/api/room';
 import { dispatchRoom, readRoomUi, roomActions } from '@/lib/store/room';
@@ -97,6 +98,15 @@ function useRoomWrite<TVars>(
 
 export function useStartRoom(code: string, roomId: string | undefined) {
   return useRoomWrite<void>(REQUEST.start, code, roomId, () => startRoom(roomId!));
+}
+
+/**
+ * 월드 시작 (2026-08-06 결정). 대기방의 「게임 시작」이 이걸 쓴다 — 2D 시작
+ * (useStartRoom)과 같은 게이트(REQUEST.start)를 탄다. 화면에 시작 버튼은 하나뿐이라
+ * 게이트 이름이 겹쳐도 충돌할 상대가 없다.
+ */
+export function useStartWorld(code: string, roomId: string | undefined) {
+  return useRoomWrite<void>(REQUEST.start, code, roomId, () => startWorld(roomId!));
 }
 
 export function useSubmitAnswer(code: string, roomId: string | undefined) {

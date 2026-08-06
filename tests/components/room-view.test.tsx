@@ -45,6 +45,7 @@ const api = vi.hoisted(() => ({
   fetchServerTime: vi.fn(),
   fetchLobbyLines: vi.fn(),
   startRoom: vi.fn(),
+  startWorld: vi.fn(),
   leaveRoom: vi.fn(),
   submitAnswer: vi.fn(),
   castVote: vi.fn(),
@@ -52,6 +53,25 @@ const api = vi.hoisted(() => ({
   sayLobbyLine: vi.fn(),
   setLobbyReady: vi.fn(),
   advancePhase: vi.fn(),
+}));
+
+/**
+ * 라우터. 전역 setup(tests/setup.ts)의 것을 **이 파일에서만** 스파이로 바꾼다 —
+ * "월드 시작 신호가 오면 정말 /world 로 가나"는 replace 호출을 직접 봐야 한다
+ * (setup.ts 머리말이 안내하는 방식 그대로다).
+ */
+const nav = vi.hoisted(() => ({ push: vi.fn(), replace: vi.fn() }));
+vi.mock('next/navigation', () => ({
+  useRouter: () => ({
+    push: nav.push,
+    replace: nav.replace,
+    back: vi.fn(),
+    forward: vi.fn(),
+    refresh: vi.fn(),
+    prefetch: vi.fn(),
+  }),
+  usePathname: () => '/',
+  useSearchParams: () => new URLSearchParams(),
 }));
 
 vi.mock('@/lib/api/db', () => db);
@@ -85,6 +105,8 @@ function room(patch: Partial<Room> = {}): Room {
     nominated_player_id: null,
     revote_candidates: null,
     roster_seq: 1,
+    // 월드 시작 전이 기본이다. 이 값이 차면 대기방이 /world 로 넘어간다 (2026-08-06).
+    world_started_at: null,
     ...patch,
   };
 }
@@ -178,6 +200,7 @@ beforeEach(() => {
   api.fetchServerTime.mockResolvedValue({ now: new Date().toISOString() });
   api.fetchLobbyLines.mockResolvedValue(LOBBY_LINES);
   api.startRoom.mockResolvedValue({});
+  api.startWorld.mockResolvedValue({});
   api.leaveRoom.mockResolvedValue({ ok: true, room_deleted: false });
   api.submitAnswer.mockResolvedValue({});
   api.sayLobbyLine.mockResolvedValue({});
@@ -370,12 +393,21 @@ describe('대기실에서 말하기 (SPEC §15-3-결정)', () => {
   });
 });
 
-describe('★ 시작 버튼을 연타해도 요청은 한 번만 나간다', () => {
-  it('같은 프레임에 두 번 눌러도 POST /api/room/start 는 1회다', async () => {
-    // 두 번 나가면 각자의 시드로 역할을 upsert 해서, 이미 시작된 판의 스파이가
-    // 다른 사람으로 바뀔 수 있다 (lib/store/room/reducer.ts 의 pending 주석).
-    // 예전에는 inFlightRef 가 막았고, 지금은 스토어의 pending 이 막는다.
-    api.startRoom.mockImplementation(() => new Promise(() => {})); // 끝나지 않는 요청
+describe('★ 시작 버튼', () => {
+  it('「게임 시작」은 월드 시작이다 — 2D 시작(/api/room/start)을 부르지 않는다', async () => {
+    // 2026-08-06 결정. 대기방의 시작은 world_started_at 만 찍는다 —
+    // 2D 상태머신(fillWithBots · 역할 배정 · phase 전환)은 타지 않는다.
+    renderRoom();
+    fireEvent.click(await screen.findByRole('button', { name: /게임 시작/ }));
+
+    await waitFor(() => expect(api.startWorld).toHaveBeenCalledWith(ROOM_ID));
+    expect(api.startRoom).not.toHaveBeenCalled();
+  });
+
+  it('연타해도 요청은 한 번만 나간다', async () => {
+    // 서버 쪽도 멱등이지만(start-world 의 is null 조건), 화면에서 먼저 막는 편이
+    // 요청 하나를 아낀다 — 스토어의 pending 게이트가 막는다 (reducer.ts).
+    api.startWorld.mockImplementation(() => new Promise(() => {})); // 끝나지 않는 요청
 
     renderRoom();
     const button = await screen.findByRole('button', { name: /게임 시작/ });
@@ -384,7 +416,35 @@ describe('★ 시작 버튼을 연타해도 요청은 한 번만 나간다', () 
     fireEvent.click(button);
     fireEvent.click(button);
 
-    await waitFor(() => expect(api.startRoom).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(api.startWorld).toHaveBeenCalledTimes(1));
+  });
+});
+
+describe('★ 월드 시작 신호 (world_started_at)', () => {
+  it('값이 차 있으면 대기방 대신 /world 로 보낸다', async () => {
+    // 방장의 시작이 rooms.world_started_at 을 찍으면 rooms 구독이 방 쿼리를
+    // 무효화해 이 값이 온다. 값 기준이라 **시작 뒤에 들어온 사람도** 곧장 넘어간다.
+    db.fetchRoomByCode.mockResolvedValue(room({ world_started_at: '2026-08-06T00:00:00.000Z' }));
+    renderRoom();
+
+    await waitFor(() => expect(nav.replace).toHaveBeenCalledWith('/world?code=UFJR'));
+  });
+
+  it('★ 월드로 넘어가는 이동은 자리를 빼지 않는다', async () => {
+    // 떠남 감지(useLeaveRoomOnExit)는 "주소가 바뀐 채 걷히면 나갔다"로 본다.
+    // 월드 이동이 markLeft 없이 걷히면 **전원이 동시에 자리를 빼서** 마지막
+    // 나가기가 방 자체를 지운다 — 월드는 같은 자리로 재입장하는 것이지
+    // 떠나는 게 아니다 (room-lobby.tsx 의 이동 효과).
+    db.fetchRoomByCode.mockResolvedValue(room({ world_started_at: '2026-08-06T00:00:00.000Z' }));
+    const { unmount } = renderRoom();
+    await waitFor(() => expect(nav.replace).toHaveBeenCalled());
+
+    // 라우터가 목이라 주소·언마운트는 직접 흉내 낸다 — 실제 이동에서 일어나는 순서다.
+    window.history.pushState({}, '', '/world?code=UFJR');
+    unmount();
+
+    await waitFor(() => expect(api.fetchMe).toHaveBeenCalled());
+    expect(api.leaveRoom).not.toHaveBeenCalled();
   });
 });
 

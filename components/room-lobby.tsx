@@ -31,7 +31,7 @@ import {
   useLeaveRoomOnExit,
   useSayLobbyLine,
   useSetLobbyReady,
-  useStartRoom,
+  useStartWorld,
 } from "@/lib/queries/mutations";
 import { useLobbyLines, useServerClock } from "@/lib/queries/room";
 import { selectIsBusy, selectIsPending, useRoomUi } from "@/lib/store/room";
@@ -85,7 +85,12 @@ export function RoomLobby({
   const { data: profileData } = useProfile();
   const myName = profileData?.profile?.display_name ?? mine?.lobby_name ?? null;
 
-  const start = useStartRoom(code, room.id);
+  /*
+   * 「게임 시작」은 월드 시작이다 (2026-08-06 결정). 2D 상태머신(useStartRoom →
+   * /api/room/start)이 아니라 world_started_at 만 찍는다 — 그 값이 오면 아래
+   * 이동 효과가 전원을 /world 로 보낸다.
+   */
+  const start = useStartWorld(code, room.id);
   const busy = useRoomUi(selectIsBusy);
   const starting = useRoomUi(selectIsPending(REQUEST.start));
 
@@ -115,6 +120,29 @@ export function RoomLobby({
     router.push("/main");
   });
   const leaving = useRoomUi(selectIsPending(REQUEST.leave));
+
+  /*
+   * 월드 시작 신호 (2026-08-06 결정). 방장이 「게임 시작」을 누르면 서버가
+   * rooms.world_started_at 을 찍고(/api/room/start-world), 이미 걸려 있는 rooms
+   * 구독(useRoomRealtime)이 방 쿼리를 무효화해 이 값이 도착한다.
+   *
+   * ★ **값 기준이지 전환 기준이 아니다.** 바뀌는 순간만 보면 시작 뒤에 들어온
+   *   사람이 대기방에 갇힌다 — 시작된 방은 언제 들어와도 곧장 월드로 보낸다.
+   *   (판이 도는 중이면 워커가 round_in_progress 로 거절하고, /world 입장
+   *   패널에서 판이 끝난 뒤 다시 들어간다.)
+   * ★ markLeft 를 먼저 찍는다. 이 이동도 언마운트라, 안 찍으면 떠남 감지
+   *   (useLeaveRoomOnExit)가 자리를 빼 버린다 — 전원이 동시에 이동하는 순간
+   *   마지막 나가기가 방 자체를 지울 수 있다. 월드는 같은 자리로 재입장하는
+   *   것이지 떠나는 게 아니다.
+   * ★ replace 다. push 면 월드에서 뒤로가기가 대기방으로 돌아왔다가 이 효과로
+   *   다시 튕겨서, 뒤로가기가 영영 안 먹는다.
+   */
+  const started = room.world_started_at;
+  useEffect(() => {
+    if (!started) return;
+    markLeft();
+    router.replace(`/world?code=${encodeURIComponent(code)}`);
+  }, [started, markLeft, router, code]);
 
   return (
     <div className={`${styles.root} flex h-screen flex-col overflow-hidden`}>

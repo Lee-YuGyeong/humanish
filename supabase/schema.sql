@@ -53,6 +53,12 @@ create table if not exists rooms (
   -- 이 값의 변화를 보고 public_players를 다시 읽는다.
   -- phase_seq와 헷갈리지 않는다. 이건 잠금 키가 아니라 그냥 신호다.
   roster_seq    int  not null default 0,
+  -- 월드 게임이 시작된 시각. null 이면 아직 대기방이다 (2026-08-06 결정).
+  -- ★ phase 는 그대로 'lobby' 다 — 월드 판은 DB 상태머신이 아니라 워커가 돌린다
+  --   (worker/src/room-do.ts). 이 값은 시작 신호 하나다: 대기방 화면이 rooms 구독으로
+  --   이 값을 보고 /world 로 이동하고(components/room-lobby.tsx), 월드 AI 채움이
+  --   이 값 뒤로는 지연 없이 정원까지 찬다 (lib/server/world-ai.ts).
+  world_started_at timestamptz,
   created_at    timestamptz not null default now()
 );
 
@@ -78,6 +84,9 @@ alter table rooms add constraint rooms_name_check
 -- 컬럼과 phase 제약을 따로 붙인다. inline check는 새로 만드는 테이블에만 걸린다.
 alter table rooms add column if not exists nominated_player_id uuid;
 alter table rooms add column if not exists revote_candidates uuid[];
+
+-- 월드 시작 신호도 나중에 들어왔다 (2026-08-06). 컬럼 정의의 상자 참고.
+alter table rooms add column if not exists world_started_at timestamptz;
 alter table rooms drop constraint if exists rooms_phase_check;
 alter table rooms add constraint rooms_phase_check
   check (phase in ('lobby','question','target','chat','vote','revote','reveal','replay'));

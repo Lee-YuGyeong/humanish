@@ -166,7 +166,7 @@ const UNIQUE_VIOLATION = '23505';
  *   제목 없는 Room 이었다. 그래서 export 한다 (app/api/room/start, app/api/phase/advance).
  */
 export const ROOM_COLUMNS =
-  'id, code, name, capacity, phase, phase_seq, phase_ends_at, round, host_id, roster_seq, nominated_player_id, revote_candidates';
+  'id, code, name, capacity, phase, phase_seq, phase_ends_at, round, host_id, roster_seq, nominated_player_id, revote_candidates, world_started_at';
 
 async function fetchRoom(roomId: string): Promise<Room> {
   const { data, error } = await getServiceClient()

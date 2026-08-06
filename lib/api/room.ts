@@ -103,6 +103,14 @@ export function startRoom(roomId: string): Promise<unknown> {
   return postJson('/api/room/start', { room_id: roomId });
 }
 
+/**
+ * 월드 게임 시작 (2026-08-06 결정). 페이즈 대신 rooms.world_started_at 을 찍는다 —
+ * 대기방 전원은 rooms 구독으로 그 값을 보고 /world 로 이동한다 (room-lobby.tsx).
+ */
+export function startWorld(roomId: string): Promise<unknown> {
+  return postJson('/api/room/start-world', { room_id: roomId });
+}
+
 export function submitAnswer(roomId: string, text: string): Promise<unknown> {
   return postJson('/api/answer', { room_id: roomId, text });
 }

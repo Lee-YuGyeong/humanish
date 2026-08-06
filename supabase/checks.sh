@@ -59,6 +59,11 @@ schema_checks() {
   check "rooms에 name 컬럼이 있다" "1" \
     "$(q "select count(*) from information_schema.columns where table_name='rooms' and column_name='name';")"
 
+  # 월드 시작 신호 (2026-08-06). 없으면 /api/room/start-world 가 42703 으로 죽고
+  # 대기방이 월드로 못 넘어간다.
+  check "rooms에 world_started_at 컬럼이 있다" "1" \
+    "$(q "select count(*) from information_schema.columns where table_name='rooms' and column_name='world_started_at';")"
+
   # ★ 컬럼만 보면 부족하다. 제약이 빠지거나 하한이 빠지면 ''(빈 문자열)이 들어가고,
   #   화면은 "이름이 있는데 안 보이는" 방을 그린다 — null 로 접혀야 코드로 대신 부른다.
   #

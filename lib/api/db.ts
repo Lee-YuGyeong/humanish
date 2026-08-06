@@ -25,7 +25,7 @@ import type { PublicPlayer, Question, Room } from '@/lib/game/types';
  *   (SPEC §17.6). select('*') 로 바꾸지 않는다 — 컬럼이 늘 때 뭐가 딸려오는지 모른다.
  */
 const ROOM_COLUMNS =
-  'id, code, name, capacity, phase, phase_seq, phase_ends_at, round, host_id, roster_seq, nominated_player_id, revote_candidates';
+  'id, code, name, capacity, phase, phase_seq, phase_ends_at, round, host_id, roster_seq, nominated_player_id, revote_candidates, world_started_at';
 
 export interface AnswerRow {
   id: string;

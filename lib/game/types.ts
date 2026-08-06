@@ -62,6 +62,15 @@ export interface Room {
    * phase_seq와 헷갈리지 않는다 — 이건 잠금 키가 아니다.
    */
   roster_seq: number;
+  /**
+   * 월드 게임이 시작된 시각 (ISO). null 이면 아직 대기방이다 (2026-08-06 결정).
+   *
+   * ★ phase 는 그대로 'lobby' 다 — 월드 판은 DB 상태머신이 아니라 워커가 돌린다
+   *   (docs/MULTIPLAYER.md). 이 값이 차면 대기방 화면이 /world 로 이동한다
+   *   (components/room-lobby.tsx). 한 번 차면 되돌아오지 않는다 — 그 방의 게임은
+   *   이제 월드에 있다.
+   */
+  world_started_at: string | null;
 }
 
 export interface Player {

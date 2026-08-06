@@ -32,13 +32,16 @@ export async function POST(req: Request): Promise<Response> {
 
     const { data: room, error: roomErr } = await db
       .from('rooms')
-      .select('id, phase, phase_seq, host_id')
+      .select('id, phase, phase_seq, host_id, world_started_at')
       .eq('id', roomId)
       .single();
     if (roomErr) throw new ApiError(500, `방 조회 실패: ${roomErr.message}`);
 
     if (room.host_id !== me.id) throw new ApiError(403, '방장만 시작할 수 있다');
     if (room.phase !== 'lobby') throw new ApiError(409, '이미 시작된 방이다');
+    // 월드로 시작된 방은 phase 가 lobby 에 남는다 (start-world 머리말). 여기서
+    // 2D 상태머신을 겹쳐 돌리면 월드 판 위로 question 전환이 덮친다.
+    if (room.world_started_at) throw new ApiError(409, '월드로 시작된 방이다');
 
     // 0. 사람이 둘 이상인가 (SPEC §8, §17.6).
     //

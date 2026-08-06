@@ -152,7 +152,8 @@ export async function buildWorldRoster(roomId: string): Promise<WorldRoster | nu
     .from('rooms')
     // capacity를 빠뜨리면 자리 계산이 통째로 어긋난다 — 컬럼을 항상 명시한다.
     // created_at 은 월드 AI 의 지연 합류 기준점이다 (아래 2026-08-05 상자).
-    .select('id, capacity, phase, created_at')
+    // world_started_at 이 차면 지연을 건너뛰고 즉시 전부 채운다 (아래 2026-08-06 상자).
+    .select('id, capacity, phase, created_at, world_started_at')
     .eq('id', roomId)
     .maybeSingle();
   if (!room) return null;
@@ -195,6 +196,18 @@ export async function buildWorldRoster(roomId: string): Promise<WorldRoster | nu
   if (room.phase === 'lobby') {
     const age = Date.now() - new Date(room.created_at as string).getTime();
     /*
+     * ┌─ 방장이 시작한 뒤에는 **지연 없이 전부** 선다 (2026-08-06 결정) ───────────┐
+     * │ 지연 합류의 목적은 "걸어 들어오는 위장"인데, 대기방 흐름(방 목록 →         │
+     * │ /room/[code] → 방장 시작 → /world)에서는 시작 전 월드에 아무도 없어서      │
+     * │ 그 위장을 볼 사람이 없다. 반대로 지연을 그대로 두면 방을 만들자마자         │
+     * │ 시작한 첫 판에 AI 가 0~1 대라 판이 성립하지 않는다.                        │
+     * │ 그래서 world_started_at 이 찍힌 방은 즉시 정원까지 채운다 — 2D 시작의      │
+     * │ fillWithBots 와 같은 순간이다. 지연 합류는 시작 전(=/world 로 직접 들어와  │
+     * │ 라운지에 서 있는 경로)에만 남는다.                                         │
+     * └────────────────────────────────────────────────────────────────────────────┘
+     */
+    const started = room.world_started_at != null;
+    /*
      * ┌─ 월드 AI 는 **지금 최대 자리 다음 번호부터** 선다 (2026-08-04 결정) ────────┐
      * │ 예전엔 1번부터 빈 자리를 채웠다. 그런데 DB 의 자리 배정(pick_free_seat)은   │
      * │ 월드 AI 를 모르고 무작위로 고르므로, 사람이 AI 가 서 있던 자리를 받을 수     │
@@ -216,7 +229,8 @@ export async function buildWorldRoster(roomId: string): Promise<WorldRoster | nu
     // AI 는 그만큼 덜 선다 — 아래 빈 번호를 채우는 순간 익명N 중복이 되살아난다.
     for (let seat = maxTaken + 1; seat <= room.capacity; seat += 1) {
       // 아직 합류 시각 전이면 여기서 끝 — 뒤 순번은 더 늦게 온다 (joinDelayMs 단조 증가).
-      if (age < (await joinDelayMs(roomId, added))) break;
+      // 시작된 방은 지연을 따지지 않는다 (위 2026-08-06 상자).
+      if (!started && age < (await joinDelayMs(roomId, added))) break;
       seats.push({
         // 닉네임·가면은 fill_with_bots 와 같은 규칙이다. 다르게 만들면 그게 표식이다.
         id: await stableUuid(roomId, seat),
