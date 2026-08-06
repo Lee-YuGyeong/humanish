@@ -166,22 +166,29 @@ async function joinDelayMs(roomId: string, ordinal: number): Promise<number> {
 export async function buildWorldRoster(roomId: string): Promise<WorldRoster | null> {
   const db = getServiceClient();
 
-  const { data: room } = await db
-    .from('rooms')
-    // capacity를 빠뜨리면 자리 계산이 통째로 어긋난다 — 컬럼을 항상 명시한다.
-    // created_at 은 월드 AI 의 지연 합류 기준점이다 (아래 2026-08-05 상자).
-    // world_started_at 이 차면 지연을 건너뛰고 즉시 전부 채운다 (아래 2026-08-06 상자).
-    .select('id, capacity, phase, created_at, world_started_at')
-    .eq('id', roomId)
-    .maybeSingle();
+  /*
+   * ★ 둘을 **나란히** 던진다. 서로 필요로 하지 않는데 줄 세우면 왕복이 두 번이고,
+   *   이 함수는 봇이 한마디 할 때마다 LLM 을 부르기 **전에** 불린다 — 그 왕복이
+   *   그대로 봇 응답 지연에 얹힌다 (2026-08-06, "봇이 너무 느리다").
+   *   방이 없으면 좌석 조회는 헛일이 되지만, 그건 없는 방을 물었을 때뿐이다.
+   */
+  const [{ data: room }, { data: playerRows, error }] = await Promise.all([
+    db
+      .from('rooms')
+      // capacity를 빠뜨리면 자리 계산이 통째로 어긋난다 — 컬럼을 항상 명시한다.
+      // created_at 은 월드 AI 의 지연 합류 기준점이다 (아래 2026-08-05 상자).
+      // world_started_at 이 차면 지연을 건너뛰고 즉시 전부 채운다 (아래 2026-08-06 상자).
+      .select('id, capacity, phase, created_at, world_started_at')
+      .eq('id', roomId)
+      .maybeSingle(),
+    // 방 스코프를 반드시 건다 (I10).
+    db
+      .from('players')
+      .select('id, seat, nickname, is_bot')
+      .eq('room_id', roomId)
+      .order('seat', { ascending: true }),
+  ]);
   if (!room) return null;
-
-  // 방 스코프를 반드시 건다 (I10).
-  const { data: playerRows, error } = await db
-    .from('players')
-    .select('id, seat, nickname, is_bot')
-    .eq('room_id', roomId)
-    .order('seat', { ascending: true });
   if (error) throw new ApiError(500, `좌석 조회 실패: ${error.message}`);
 
   const seats: WorldSeat[] = ((playerRows ?? []) as {

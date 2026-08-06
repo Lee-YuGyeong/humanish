@@ -26,6 +26,7 @@
  *   probe · lab · 모델 오버라이드는 개발 도구라 프로덕션에서는 실전 모드만 연다.
  */
 
+import { after } from 'next/server';
 import { timingSafeEqual } from '@/lib/mp/ticket';
 import {
   generate,
@@ -378,19 +379,24 @@ export async function POST(req: Request): Promise<Response> {
 
     // agent_logs 기록 (§9.2 표). ref_id는 발화가 insert된 뒤에야 생기므로 선생성
     // 층이 채운다 — 여기서는 null로 남긴다. 기록 실패가 응답을 막아서는 안 된다.
+    //
+    // ★ 응답 **뒤로** 미룬다 (2026-08-06). LLM 이 답을 다 낸 뒤에 도는 Supabase
+    //   왕복이라, await 하면 그만큼 봇이 할 말을 쥐고 가만히 있는다. after() 는
+    //   응답을 먼저 보내고 런타임이 waitUntil 로 붙들어 준다 — 그냥 떼어 놓으면
+    //   Workers 에서 잘려 기록이 조용히 빈다 (app/api/reveal 주석의 그 고장).
     if (roomId) {
-      const db = getServiceClient();
-      const { error: logErr } = await db.from('agent_logs').insert(
-        results.map((r) => ({
-          room_id: roomId,
-          player_id: r.player_id,
-          ref_id: null,
-          reasoning: r.output.reasoning,
-          suspicion: r.output.suspicionOnMe,
-          action: r.output.action,
-        })),
-      );
-      if (logErr) console.error('[agent] agent_logs 기록 실패:', logErr.message);
+      const rows = results.map((r) => ({
+        room_id: roomId,
+        player_id: r.player_id,
+        ref_id: null,
+        reasoning: r.output.reasoning,
+        suspicion: r.output.suspicionOnMe,
+        action: r.output.action,
+      }));
+      after(async () => {
+        const { error: logErr } = await getServiceClient().from('agent_logs').insert(rows);
+        if (logErr) console.error('[agent] agent_logs 기록 실패:', logErr.message);
+      });
     }
 
     return Response.json({ ok: true, model: cfg?.model ?? null, results });

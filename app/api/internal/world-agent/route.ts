@@ -26,6 +26,7 @@
  * 월드에는 대신 내보낼 하드코딩 문구가 없다 (lib/server/world-ai.ts).
  */
 
+import { after } from 'next/server';
 import { timingSafeEqual } from '@/lib/mp/ticket';
 import { fitChatReply } from '@/lib/agent/chat-reply';
 import { applyTypo, observeStyle, stretchLaugh, stripAvoidedPunct } from '@/lib/agent/disguise';
@@ -441,13 +442,25 @@ export async function POST(req: Request): Promise<Response> {
 
     /*
      * 기록은 **응답을 막지 않는다.** 실패해도 봇은 말한다 — agent_logs와 같은 규약
-     * (app/api/agent/route.ts). 다만 여기서는 await 한다: 워커 예산이 12초
-     * (COMPANION_AGENT_TIMEOUT_MS)라 insert 한 번은 부담이 아니고, 떠 있는 프라미스는
-     * Workers에서 응답과 함께 잘려나가 기록이 조용히 비는 쪽이 더 나쁘다.
+     * (app/api/agent/route.ts).
+     *
+     * ┌─ await 에서 after 로 바꿨다 (2026-08-06, "봇이 너무 느리다") ─────────────┐
+     * │ 예산이 12초(COMPANION_AGENT_TIMEOUT_MS)라 insert 한 번은 부담이 아니라고    │
+     * │ 봤는데, 그 판단이 틀렸다. 문제는 예산이 아니라 **사람이 기다리는 시간**이다 │
+     * │ — 이 insert 는 LLM 이 답을 다 내놓은 **뒤에** 도는 Supabase 왕복이라,      │
+     * │ 그동안 봇은 이미 할 말을 손에 쥐고 가만히 있는다.                          │
+     * │                                                                          │
+     * │ 그냥 떼어 놓으면(await 없이) Workers 에서는 응답과 함께 잘려 기록이 조용히 │
+     * │ 빈다 — app/api/reveal 주석이 경고하는 그 고장이다. 그래서 Next 15 의       │
+     * │ after() 를 쓴다: 응답을 먼저 보내고 그 뒤에 돌되, 런타임이 waitUntil 로     │
+     * │ 붙들어 준다. 잘려나가는 문제도, 기다리는 문제도 여기서 같이 없어진다.       │
+     * └──────────────────────────────────────────────────────────────────────────┘
      */
     if (logRows.length > 0) {
-      const { error: logErr } = await getServiceClient().from('world_agent_logs').insert(logRows);
-      if (logErr) console.error('[world-agent] 발화 기록 실패:', logErr.message);
+      after(async () => {
+        const { error: logErr } = await getServiceClient().from('world_agent_logs').insert(logRows);
+        if (logErr) console.error('[world-agent] 발화 기록 실패:', logErr.message);
+      });
     }
 
     return Response.json({ ok: true, results }, { headers: { 'cache-control': 'no-store' } });

@@ -147,11 +147,20 @@ const DEFENSE_READ_MIN_MS = 700;
 const DEFENSE_READ_MAX_MS = 2_500;
 
 /**
- * ★ 임시 (2026-08-06): 위장 지연 전부 끔 — 순수 LLM 왕복 시간만 보이게 한다.
- * true 인 동안 읽기·타이핑·지터 없이 자리를 잡고, LLM 답이 도착하는 즉시 말한다
- * (게임 방도 라운지의 지각 경로를 탄다). 풀 문구 폴백은 그동안 죽는다 — 자리에
- * 문구를 미리 채우면 같은 답이 두 번 나가기 때문이다. I1 위장(즉답 = 봇 신호)도
- * 꺼지므로 측정이 끝나면 false 로 되돌린다.
+ * ★ 임시 (2026-08-06): 봇 발화에 얹히는 **우리 쪽 지연을 전부 0으로** 만든다.
+ *   남는 건 LLM 왕복뿐이고, 그게 지금 재려는 값이다.
+ *
+ * 끄는 것 — 읽는 시간 · 치는 시간 · 지터 · 최후변론 뜸(위 상수) · 뒷줄 사이 간격 ·
+ * 틱 격자 대기(BOT_TICK_MS) · 좌석별 송신 위상(emitAsBot). LLM 답은 도착하는 즉시
+ * 나간다 (게임 방도 라운지의 지각 경로를 탄다).
+ *
+ * ★ 스위치는 **이 파일에만** 둔다. bots.ts 안으로 넣어 지연 함수를 직접 0으로
+ *   만들었더니 그 함수들을 지키는 I1 검사 12개가 한꺼번에 죽었다 (npm test).
+ *   위장 규칙 자체는 그대로 두고 **부르는 자리에서** 건너뛴다 — 그래야 스위치를
+ *   false 로 되돌렸을 때 규칙이 멀쩡하다는 게 검사로 증명된 상태다.
+ *
+ * 풀 문구 폴백은 그동안 죽는다 — 자리에 문구를 미리 채우면 같은 답이 두 번 나간다.
+ * I1 위장(즉답 = 봇 신호)도 같이 꺼지므로 **측정이 끝나면 false 로 되돌린다.**
  */
 const DISGUISE_OFF = true;
 
@@ -986,7 +995,15 @@ export class RoomDO {
     this.rememberChat(bot.id, bot.nickname, text);
     // 뒷줄은 앞 줄 바로 뒤에 잇는다 — 사람은 한 생각을 두 번에 나눠 친다.
     // (tick 경로에서는 takeSpeech가 이미 걸어 뒀으므로 여기 tail은 null이다.)
-    if (tail) scheduleSpeech(bot, tail, ts);
+    //
+    // ★ 측정 중에는 치는 시간 없이 곧바로 잇는다 (DISGUISE_OFF). 여기 남은 타이핑
+    //   시간이 위장 지연 중 제일 길어서(1.3~4초), 안 끄면 "두 번째 줄만 한참 뒤에
+    //   뜨는" 모양이 그대로 남는다. maxTypeMs 0 이라 speakAt 이 곧 지금이고, 다음
+    //   틱이 그대로 꺼내 간다.
+    if (tail) {
+      if (DISGUISE_OFF) scheduleArrivedSpeech(bot, tail, null, ts, 0);
+      else scheduleSpeech(bot, tail, ts);
+    }
     this.maybeChain(bot, text, ts);
   }
 
@@ -1113,6 +1130,14 @@ export class RoomDO {
     //   예약한다 — 늦은 판에서만 한 줄로 끝나면 안 된다.
     if (companion && bot.speechSeq === seq) {
       remember();
+      /*
+       * ★ 틱(BOT_TICK_MS, 100ms)은 **안 걷어낸다.** 측정 중에도 그렇다.
+       *   여기서 바로 broadcast 하도록 고쳐 봤는데, 그러면 자리를 잡지 않으니 봇이
+       *   **걸으면서 말한다** — 2026-08-05 에 사용자가 보고 물린 그 모양 그대로다
+       *   (scheduleArrivedSpeech 의 상자). 워커 검사도 그 자리에서 걸린다
+       *   ("봇이 'walk' 상태로 말했다", npm run world:smoke).
+       *   버는 건 최대 100ms 인데 잃는 건 그거라 남겨 둔다.
+       */
       scheduleArrivedSpeech(
         bot,
         line.text,
@@ -2043,6 +2068,12 @@ export class RoomDO {
    * 다시 보내므로 무해하다(사람 패킷이 하나 유실된 것과 구분되지 않는다).
    */
   private emitAsBot(botId: string, msg: S2CMessage): void {
+    // 측정 중에는 위상도 0이다 (DISGUISE_OFF). 최대 80ms 지만 이 파일에 남은
+    // 마지막 인위적 지연이라, 남겨두면 "0으로 줄였다"가 사실이 아니게 된다.
+    if (DISGUISE_OFF) {
+      this.broadcast(msg);
+      return;
+    }
     let phase = this.emitPhase.get(botId);
     if (phase === undefined) {
       phase = Math.random() * BOT_EMIT_JITTER_MS;
