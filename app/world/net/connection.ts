@@ -39,6 +39,19 @@ export interface RoundInfo {
 }
 
 /**
+ * 집결 게이트 알맹이 — **방 사람이 전부 월드에 들어왔는가** (protocol.ts 의 t:'gate').
+ * 숫자 둘과 시각 하나뿐이다. 누가 왔는지는 어느 경로로도 오지 않는다 (I1).
+ */
+export interface GateInfo {
+  /** 지금까지 월드에 들어온 사람 수 */
+  present: number;
+  /** 이 판을 기다리는 사람 수 */
+  total: number;
+  /** 인트로가 끝나고 판이 열리는 **서버 시각**(epoch ms). null 이면 아직 대기 중 */
+  startsAt: number | null;
+}
+
+/**
  * reveal 메시지 알맹이 — **판이 끝난 뒤의 결과 전문**.
  *
  * ★ `identities` 가 이 프로젝트에서 정체가 실리는 **유일한 경로**다 (I1 의 예외).
@@ -59,6 +72,11 @@ export interface WorldEvents {
   onLeft(id: string): void;
   onMoved(id: string, x: number, z: number, y: number, heading: number, anim: AnimState): void;
   onChat(id: string, nickname: string, text: string, ts: number): void;
+  /**
+   * 집결 게이트 현황. **게이트가 걸린 방에서만** 온다 — 한 번도 안 오면 예전처럼
+   * 자기 시계로 카운트다운한다 (라운지). 판이 열린 뒤로는 오지 않는다.
+   */
+  onGate(gate: GateInfo): void;
   /** 라운드테이블 진행 상태가 바뀌었다 (단계 전환 · 입장 시 1회) */
   onRound(round: RoundInfo): void;
   /**
@@ -140,6 +158,9 @@ export class WorldConnection {
           break;
         case 'chat':
           events.onChat(msg.id, msg.nickname, msg.text, msg.ts);
+          break;
+        case 'gate':
+          events.onGate({ present: msg.present, total: msg.total, startsAt: msg.startsAt });
           break;
         case 'round':
           events.onRound({

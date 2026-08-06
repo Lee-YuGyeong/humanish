@@ -129,6 +129,17 @@ function requestLock(tries = 3, delayMs = 1400, waitTries = CANVAS_WAIT_TRIES): 
  * 화면마다 두던 정원 범위 복사본도 같이 사라졌다.
  */
 
+/**
+ * 결과(reveal)가 뜬 뒤 **자동으로 방을 접고 로비(/main)로 나가기까지**의 시간(ms).
+ * 결과 오버레이가 한 겹씩 열리는 시간(game-hud 의 REVEAL_STEP_MS × 3 ≈ 2.7초)을
+ * 읽을 여유를 준다.
+ *
+ * ★ 이 사이 「한 판 더」를 누르면 서버가 새 판(topic)을 쏘고 reveal 이 비워지므로
+ *   (roundtable-store 의 applyRound), 아래 타이머 효과가 정리돼 **삭제가 취소된다** —
+ *   그래서 재대국과 자동 삭제가 부딪히지 않는다.
+ */
+const RESULT_TO_LOBBY_MS = 12_000;
+
 export default function WorldPage() {
   const router = useRouter();
   const [code, setCode] = useState('');
@@ -180,6 +191,7 @@ export default function WorldPage() {
         useWorldStore.getState().applyMove(id, x, z, y, heading, anim, performance.now()),
       onChat: (id, nickname, text, ts) =>
         useWorldStore.getState().applyChat(id, nickname, text, ts, performance.now()),
+      onGate: (gate) => useRoundtableStore.getState().applyGate(gate),
       onRound: (round) => useRoundtableStore.getState().applyRound(round),
       onVoteProgress: (voted, total) => useRoundtableStore.getState().applyProgress(voted, total),
       onEliminated: (id) => useRoundtableStore.getState().applyEliminated(id),
@@ -421,6 +433,41 @@ export default function WorldPage() {
     useWorldStore.getState().reset();
     useRoundtableStore.getState().reset();
   }, [conn]);
+
+  /**
+   * 판이 끝났다 — **게임했던 방을 지우고** 로비(/main)로 나간다 (CEO 결정).
+   * 결과 오버레이의 「새로운 게임 시작하기」와, 아래 결과 후 자동 복귀가 함께 쓴다.
+   *
+   * ★ 헤더의 「현재 방에서 퇴장하기」(leave)와 다르다 — 그건 **판 도중** 나가기라
+   *   방을 남긴다(다른 사람이 계속 논다). 여기는 판이 끝난 방이라 접는다.
+   * ★ 방 삭제는 곁다리다: 실패해도(이미 남이 지웠든, 네트워크가 끊겼든) 로비로는
+   *   나간다. 여러 사람이 동시에 부르므로 /api/room/delete 는 멱등이다.
+   * ★ leave() 가 ticket 을 비우므로 room_id 는 그 전에 읽어 둔다.
+   */
+  const endGameToLobby = useCallback(() => {
+    const roomId = ticket?.self.room_id ?? null;
+    if (roomId) {
+      void fetch('/api/room/delete', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ room_id: roomId }),
+      }).catch(() => {});
+    }
+    leave();
+    router.push('/main');
+  }, [ticket, leave, router]);
+
+  /**
+   * 결과가 뜨면 몇 초 뒤 자동으로 방을 접고 로비로 나간다 (CEO 결정).
+   * ★ revealResult 가 채워졌을 때만 건다. 「한 판 더」로 새 판이 열리면 reveal 이
+   *   null 로 돌아가 이 효과가 정리(clearTimeout)되므로 삭제가 취소된다 —
+   *   재대국과 자동 삭제가 부딪히지 않는다.
+   */
+  useEffect(() => {
+    if (!live || !revealResult) return;
+    const id = window.setTimeout(() => endGameToLobby(), RESULT_TO_LOBBY_MS);
+    return () => window.clearTimeout(id);
+  }, [live, revealResult, endGameToLobby]);
 
   /** 확인 오버레이는 ESC 로도 닫힌다 — 잠금이 풀린 상태라 keydown 이 페이지로 온다 */
   useEffect(() => {
@@ -763,7 +810,12 @@ export default function WorldPage() {
           <VolumeHud visible={volumeHud} />
 
           {/* 판 진행 — 단계 HUD(z-30) · 투표/찬반(z-40) · 결과(z-50) */}
-          <GameHud onVote={castVote} onVerdict={castVerdict} onLeave={leave} onRematch={rematch} />
+          <GameHud
+            onVote={castVote}
+            onVerdict={castVerdict}
+            onLeave={endGameToLobby}
+            onRematch={rematch}
+          />
 
           {/*
             퇴장 확인 (z-60 — 결과 오버레이보다 위).

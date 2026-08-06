@@ -39,10 +39,19 @@
 
 import { create } from 'zustand';
 import type { RoundPhase } from '@/lib/mp/protocol';
-import type { RevealResult, RoundInfo } from './net/connection';
+import type { GateInfo, RevealResult, RoundInfo } from './net/connection';
 
 interface RoundtableState {
   // ── 서버가 아는 값 ────────────────────────────────────────────────────────
+  /**
+   * 집결 게이트 — 방 사람이 전부 월드에 들어왔는가 (protocol.ts 의 t:'gate').
+   *
+   * ★ **null 은 "0명 도착"이 아니라 "게이트가 없는 방"이다.** 게이트가 걸리는 건
+   *   대기방에서 방장이 시작한 방뿐이고, /world 로 직접 들어온 라운지에는 이
+   *   메시지가 한 번도 오지 않는다 — 그때 스크린은 예전처럼 자기 시계로 센다.
+   *   두 상태를 숫자 0으로 뭉뚱그리면 라운지가 영원한 대기 화면이 된다.
+   */
+  gate: GateInfo | null;
   /** 진행 단계. 서버 round 메시지가 정한다. 진행 전엔 'idle' */
   phase: RoundPhase;
   /** 중앙 스크린에 뜨는 주제 문구. null 이면 "대기 중" 상태 */
@@ -84,6 +93,8 @@ interface RoundtableState {
    *   같은 단계로 다시 오는 경우가 있어서다(판 중간 입장자에게 보내는 스냅샷) —
    *   그때 무조건 비우면 이미 낸 표가 화면에서 사라진다.
    */
+  /** 집결 게이트 현황 반영 (page.tsx 의 onGate) */
+  applyGate(gate: GateInfo): void;
   applyRound(round: RoundInfo): void;
   /** vote_progress 반영. 서버 숫자가 유일한 진실이다 */
   applyProgress(voted: number, total: number): void;
@@ -110,6 +121,7 @@ interface RoundtableState {
  * 빠뜨리면 방을 옮겨도 지난 판 값(특히 reveal 의 정체)이 그대로 남는다.
  */
 const IDLE = {
+  gate: null as GateInfo | null,
   phase: 'idle' as RoundPhase,
   topic: null,
   endsAt: 0,
@@ -128,6 +140,8 @@ const IDLE = {
 
 export const useRoundtableStore = create<RoundtableState>((set) => ({
   ...IDLE,
+
+  applyGate: (gate) => set({ gate }),
 
   applyRound: (round) =>
     set((s) => {

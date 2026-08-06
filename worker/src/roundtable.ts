@@ -155,6 +155,17 @@ export interface RoundState {
   winner: RoundWinner | null;
   verdictSettled: boolean;
 
+  /**
+   * 생사 재투표를 **다시 받은 횟수** (사용자 결정 2026-08-06).
+   *
+   * ★ 찬성이 과반(반대보다 많음)이 아니면 — 반대가 더 많거나 동수면 — 표를 비우고
+   *   다시 받는다. `VERDICT_MAX_REVOTES` 번까지만이고, 그래도 과반이 안 나오면
+   *   생존으로 확정한다. **상한이 없으면 판이 reveal 에 영영 못 닿아 전적도 안 적힌다.**
+   *
+   * ★ 정체와 무관한 수라 I1과 무관하다 — roundSnapshot·revealSnapshot 어디에도 안 실린다.
+   */
+  revoteCount: number;
+
   /** 판이 끝났는가 (phase === 'ended'). */
   done: boolean;
 }
@@ -188,6 +199,19 @@ export const EMOTION_TOPICS: readonly string[] = [
   '누군가에게 지금 딱 한마디 한다면?',
   '요즘 가장 자주 드는 생각은?',
 ];
+
+/**
+ * 생사 재투표를 다시 받는 **횟수 상한** (사용자 결정 2026-08-06 — "찬성 과반이 나올
+ * 때까지 재투표"). 최초 1회 + 여기 적힌 수만큼 재투표해서, 도합 최대
+ * `VERDICT_MAX_REVOTES + 1` 번의 창이 열린다.
+ *
+ * ★ 왜 상한을 두나: 봇은 대략 반반으로 찬반을 내므로(planBotVerdicts) "언제까지나"
+ *   두면 사람이 계속 반대만 낼 때 과반이 영영 안 나온다. 그러면 stepRound 가 reveal 로
+ *   못 가고 판이 20초짜리 verdict 를 무한히 반복한다 — 정체 공개도, 전적 기록도 없다.
+ *   상한에 닿으면 **생존(부결)으로 확정**한다. 부결은 AI 승이다 (decideWinner, §18.4).
+ *   숫자를 키우고 싶으면 여기만 고친다. verdict 한 창은 ROUND_VERDICT_MS(=20초)다.
+ */
+export const VERDICT_MAX_REVOTES = 3;
 
 /** rng()가 1을 돌려줘도 배열 밖으로 나가지 않는다. */
 function pick<T>(arr: readonly T[], rng: Rng): T {
@@ -268,6 +292,7 @@ export function startRound(
     executed: false,
     winner: null,
     verdictSettled: false,
+    revoteCount: 0,
     done: false,
   };
 }
@@ -511,11 +536,28 @@ export function stepRound(s: RoundState, now: number, rng: Rng = Math.random): b
       s.phaseEndsAt = now + ROUND_VERDICT_MS;
       return true;
 
-    case 'verdict':
+    case 'verdict': {
+      // 생사 재투표 마감. **찬성이 과반**(반대보다 많음)이어야 처형이 확정된다.
+      // 반대가 더 많거나 동수면 아직 과반이 아니다 → 표를 비우고 다시 받는다
+      // (사용자 결정 2026-08-06: "찬성 과반이 나올 때까지 재투표"). 무한 반복을 막는
+      // 상한이 VERDICT_MAX_REVOTES 다 — 거기 닿으면 아래로 떨어져 생존으로 확정한다.
+      //
+      // ★ 여기서 settleVerdict 를 부르지 않는다. 부르면 verdictSettled 가 서서 다음
+      //   창의 집계가 무시된다. 마지막 창에서만 확정한다.
+      const tally = resolveVerdict(s.verdicts, s.humanIds, s.nomineeId);
+      if (!tally.executed && s.revoteCount < VERDICT_MAX_REVOTES) {
+        s.revoteCount += 1;
+        s.verdicts = {}; // 새 표를 받는다 — 마지막 창의 표만 집계된다
+        // 길이 0 전환 금지(위 박스): verdict 를 유지하되 새 20초 창을 연다.
+        // 이 전환도 true 를 돌려주므로 호출부(onPhaseEnter)가 봇 재투표를 다시 예약한다.
+        s.phaseEndsAt = now + ROUND_VERDICT_MS;
+        return true;
+      }
       settleVerdict(s);
       s.phase = 'reveal';
       s.phaseEndsAt = now + ROUND_REVEAL_MS;
       return true;
+    }
 
     case 'reveal':
       s.phase = 'ended';

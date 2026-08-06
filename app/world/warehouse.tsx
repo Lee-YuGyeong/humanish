@@ -22,6 +22,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import * as THREE from "three";
 
 import { groundHeightAt, resolveCollisions } from "@/lib/mp/collide";
+import { WORLD_INTRO_MS } from "@/lib/mp/constants";
 import { pauseMusic, startMusic, stopMusic } from "./music";
 // 판이 열렸는지만 읽는다 (상영을 끊는 조건). roundtable.tsx 가 이 파일을 읽으므로
 // 그쪽이 아니라 **스토어**를 본다 — 순환 import 를 만들지 않는다.
@@ -353,16 +354,24 @@ function Screen({ onIntroEnd }: { onIntroEnd?: () => void }) {
 /** 영사되는 영상. public/world/screen.mp4 (720p, 43초) */
 const SCREEN_VIDEO = '/world/screen.mp4';
 
-/** 들어와서 상영까지의 준비 시간(초). 자리 잡고 둘러볼 틈을 넉넉히 준다 */
-const COUNTDOWN_SEC = 20;
-
 /**
- * 스크린 — 카운트다운 → 영상.
+ * 스크린 — 대기 → 카운트다운 → 영상.
  *
  * ┌─ 순서 ─────────────────────────────────────────────────────────────────┐
- * │ 들어오는 즉시 음악이 깔린다(낮은 볼륨). 스크린에는 20 → 0 이 흐른다.    │
+ * │ 들어오는 즉시 음악이 깔린다(낮은 볼륨). 방 사람이 다 모일 때까지 스크린 │
+ * │ 에는 대기 화면이 뜨고, 다 모이면 20 → 0 이 흐른다.                      │
  * │ 0 이 되면 영상이 시작되고 **음악은 잠시 멈춘다** — 둘이 같이 나면 둘 다  │
  * │ 안 들린다. 영상이 끝나면 음악이 멈춘 자리에서 이어진다.                 │
+ * └────────────────────────────────────────────────────────────────────────┘
+ *
+ * ┌─ ★ 0 이 되는 순간은 **서버가 정한다** (I2) ─────────────────────────────┐
+ * │ 예전엔 이 컴포넌트가 마운트되는 순간부터 20초를 셌다. 그러면 로딩이 빠른 │
+ * │ 사람의 0초가 제일 먼저 오고, 그 사람의 intro_done 하나로 방 전체의 판이  │
+ * │ 열렸다 — 늦게 뜬 사람은 자기 영상 위에 주제가 겹친 채 판에 들어왔다.     │
+ * │ 이제는 워커가 전원 도착을 확인하고 `startsAt`(서버 시각)을 내려주고,     │
+ * │ 여기서는 **그 시각까지 그리기만** 한다.                                 │
+ * │                                                                        │
+ * │ 게이트가 없는 방(라운지 — gate 가 null)은 예전 그대로 자기 시계로 센다.  │
  * └────────────────────────────────────────────────────────────────────────┘
  *
  * ★ **소리 없이 시작한다.** 브라우저는 사용자가 뭔가 누르기 전에는 소리 있는
@@ -383,11 +392,54 @@ function ScreenVideo({ onIntroEnd }: { onIntroEnd?: () => void }) {
 
   const [texture, setTexture] = useState<THREE.VideoTexture | null>(null);
   const [size, setSize] = useState<[number, number]>([SCREEN.h * (16 / 9), SCREEN.h]);
-  /** null 이면 상영이 시작됐다는 뜻. 숫자면 남은 초 */
-  const [remain, setRemain] = useState<number | null>(COUNTDOWN_SEC);
+  /** 상영이 시작됐나. 참이면 카운트다운은 끝났다 */
+  const [rolling, setRolling] = useState(false);
   /** 상영이 끝났나(또는 재생 중 실패했나). 참이면 막을 끈다 */
   const [finished, setFinished] = useState(false);
   const videoRef = useRef<HTMLVideoElement | null>(null);
+  /** 아래 [] 효과가 채운다. 카운트다운이 0이 되면 부른다 */
+  const startVideoRef = useRef<() => void>(() => {});
+
+  /**
+   * 집결 게이트. **null 은 "0명 도착"이 아니라 "게이트가 없는 방"이다**
+   * (roundtable-store 의 gate 주석). 그때는 예전처럼 내 시계로 센다.
+   */
+  const gate = useRoundtableStore((s) => s.gate);
+  /** 게이트 없는 방의 기준점. 마운트 시각에 한 번만 굳힌다 */
+  const localStartsAt = useRef(0);
+  if (localStartsAt.current === 0) localStartsAt.current = Date.now() + WORLD_INTRO_MS;
+
+  /** 아직 사람을 기다리는 중인가 */
+  const waiting = gate !== null && gate.startsAt === null;
+  const startsAt = gate?.startsAt ?? localStartsAt.current;
+
+  /*
+   * 카운트다운은 **서버 시각과의 차이**로 그린다 (I2). 남은 초를 상태로 깎아 나가면
+   * 탭이 백그라운드로 밀려 setInterval 이 느려질 때 그만큼 늦어지고, 그러면 이 사람만
+   * 영상이 늦게 시작된다. 0.25초 간격은 숫자가 눈에 띄게 늦게 바뀌지 않게 하려는 것뿐이다.
+   */
+  const [nowMs, setNowMs] = useState(() => Date.now());
+  useEffect(() => {
+    if (rolling) return;
+    const id = setInterval(() => setNowMs(Date.now()), 250);
+    return () => clearInterval(id);
+  }, [rolling]);
+
+  const remain = Math.max(0, Math.ceil((startsAt - nowMs) / 1000));
+
+  /*
+   * 0 이 됐다 — 음악을 비키고 영상을 튼다. **한 번만** (rolling 가드).
+   *
+   * ★ `finished` 도 본다. 판이 도는 중에 들어오면 게이트의 startsAt 이 이미 지난
+   *   시각이라 이 효과가 첫 렌더에 걸리는데, 그때 트는 건 아래 상자가 막으려는
+   *   바로 그 상황이다 — 소리만 잠깐 나고 곧 꺼진다. 아예 안 트는 게 맞다.
+   */
+  useEffect(() => {
+    if (rolling || waiting || finished || remain > 0) return;
+    setRolling(true);
+    pauseMusic();
+    startVideoRef.current();
+  }, [rolling, waiting, finished, remain]);
 
   /*
    * ┌─ ★ 판이 열리면 **상영을 끊는다** ─────────────────────────────────────────┐
@@ -414,8 +466,6 @@ function ScreenVideo({ onIntroEnd }: { onIntroEnd?: () => void }) {
   }, [roundStarted, finished]);
 
   useEffect(() => {
-    /** 카운트다운이 끝나는 시점에 부른다. 아래에서 채운다 */
-    let startVideo = () => {};
     /** 소리가 막혔을 때만 걸리는 클릭 리스너를 걷어낸다 */
     let cleanupGesture = () => {};
 
@@ -490,18 +540,6 @@ function ScreenVideo({ onIntroEnd }: { onIntroEnd?: () => void }) {
     // 음악은 **지금 바로** 시작한다. 입장 버튼을 누른 직후라 소리가 허용된다
     startMusic();
 
-    // 10 → 0. 0 에서 음악을 비키고 영상을 튼다
-    const timer = setInterval(() => {
-      setRemain((prev) => {
-        if (prev === null) return null;
-        if (prev > 1) return prev - 1;
-        clearInterval(timer);
-        pauseMusic();
-        startVideo();
-        return null;
-      });
-    }, 1000);
-
     /*
      * ★ **소리부터 켜고 시작한다.** 거절당했을 때만 음소거로 물러난다.
      *
@@ -523,7 +561,7 @@ function ScreenVideo({ onIntroEnd }: { onIntroEnd?: () => void }) {
       cleanupGesture = () => window.removeEventListener('pointerdown', unmute);
     };
 
-    startVideo = () => {
+    startVideoRef.current = () => {
       started = true; // 이 시점부터의 error 는 "인트로 끝"으로 친다 (위 onError)
       video.muted = false;
       video.play().catch(() => {
@@ -535,7 +573,6 @@ function ScreenVideo({ onIntroEnd }: { onIntroEnd?: () => void }) {
     };
 
     return () => {
-      clearInterval(timer);
       video.removeEventListener('loadedmetadata', onReady);
       video.removeEventListener('error', onError);
       video.removeEventListener('ended', onEnded);
@@ -548,7 +585,9 @@ function ScreenVideo({ onIntroEnd }: { onIntroEnd?: () => void }) {
     };
   }, []);
 
-  if (remain !== null) return <ScreenCountdown remain={remain} size={size} />;
+  // 아직 사람을 기다리는 중 — 숫자 둘뿐이다. **누가 안 왔는지는 그리지 않는다** (I1)
+  if (waiting && gate) return <ScreenWaiting present={gate.present} total={gate.total} size={size} />;
+  if (!rolling) return <ScreenCountdown remain={remain} size={size} />;
 
   /*
    * 상영이 끝났다 — 꺼진 막. 아무것도 안 그리면 Screen 의 흰 판이 그대로 드러나
@@ -573,6 +612,64 @@ function ScreenVideo({ onIntroEnd }: { onIntroEnd?: () => void }) {
         영사막은 스스로 빛나는 면이다. 조명을 받는 재질(standard)로 두면 이 어두운
         창고에서 거의 안 보인다. toneMapped 를 끄는 것도 같은 이유다.
       */}
+      <meshBasicMaterial map={texture} toneMapped={false} />
+    </mesh>
+  );
+}
+
+/**
+ * 집결 대기 화면 — **방 사람이 다 들어올 때까지.**
+ *
+ * ┌─ ★ I1 — 여기 그릴 수 있는 건 숫자 둘뿐이다 ───────────────────────────────┐
+ * │ 좌석 목록에 "도착 / 대기"를 찍고 싶어지는 자리인데, 그러면 봇 좌석은 영영   │
+ * │ 도착하지 않으므로 **한 판에 전 좌석이 갈린다.** 숫자가 안전한 이유는        │
+ * │ total 이 사람 좌석 수(공개값 §15-3)이고 좌석과 묶이지 않기 때문이다         │
+ * │ (lib/mp/protocol.ts 의 t:'gate' 상자).                                     │
+ * └──────────────────────────────────────────────────────────────────────────┘
+ */
+function ScreenWaiting({
+  present,
+  total,
+  size,
+}: {
+  present: number;
+  total: number;
+  size: [number, number];
+}) {
+  const texture = useMemo(() => {
+    const canvas = document.createElement('canvas');
+    canvas.width = 1024;
+    canvas.height = 576;
+    const ctx = canvas.getContext('2d');
+    if (ctx) {
+      ctx.fillStyle = '#0b0906';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+
+      ctx.fillStyle = 'rgba(226,226,226,0.62)';
+      ctx.font = '40px ui-sans-serif, system-ui, sans-serif';
+      ctx.fillText('참가자를 기다리는 중', canvas.width / 2, canvas.height / 2 - 110);
+
+      ctx.fillStyle = '#d4a373';
+      ctx.font = 'bold 190px ui-sans-serif, system-ui, sans-serif';
+      ctx.fillText(`${present} / ${total}`, canvas.width / 2, canvas.height / 2 + 20);
+
+      ctx.fillStyle = 'rgba(226,226,226,0.4)';
+      ctx.font = '30px ui-sans-serif, system-ui, sans-serif';
+      ctx.fillText('전원이 들어오면 시작합니다', canvas.width / 2, canvas.height / 2 + 190);
+    }
+    const tex = new THREE.CanvasTexture(canvas);
+    tex.colorSpace = THREE.SRGBColorSpace;
+    return tex;
+  }, [present, total]);
+
+  useEffect(() => () => texture.dispose(), [texture]);
+
+  return (
+    <mesh position={[0, 0, 0.03]}>
+      <planeGeometry args={size} />
       <meshBasicMaterial map={texture} toneMapped={false} />
     </mesh>
   );

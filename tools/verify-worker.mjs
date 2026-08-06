@@ -33,7 +33,7 @@ const ROOM = '11111111-2222-4333-8444-555555555555';
 const WORKER_PORT = 8788;
 const FAKE_PORT = 8799;
 const WS = `ws://127.0.0.1:${WORKER_PORT}`;
-const PROTOCOL_VERSION = 3;
+const PROTOCOL_VERSION = 4;
 
 /** 정원 5 · 사람 2 · 봇 3 */
 const SEATS = [

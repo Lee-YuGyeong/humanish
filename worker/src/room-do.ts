@@ -39,6 +39,8 @@ import {
   CHAT_MAX_LEN,
   CHAT_MIN_INTERVAL_MS,
   GAME_MSG_MIN_INTERVAL_MS,
+  GATHER_DEADLINE_MS,
+  GATHER_ROUND_BACKSTOP_MS,
   LOUNGE_TYPE_MAX_MS,
   MAX_GAME_MESSAGE_LEN,
   MAX_WS_MESSAGE_LEN,
@@ -47,6 +49,7 @@ import {
   SOCKET_TIMEOUT_MS,
   SWEEP_ALARM_MS,
   VOTE_PROGRESS_INTERVAL_MS,
+  WORLD_INTRO_MS,
   WORLD_SEAT_SLOTS,
   isChatLocked,
   mayMove,
@@ -92,6 +95,7 @@ import {
   voteProgress,
   type RoundState,
 } from './roundtable';
+import { gateCounts, gateStartsAt, stepGate, type GateState } from './gate';
 import { postMatchReport } from './match-report';
 import { fetchRoomMeta, type RoomMeta } from './room-meta';
 import { fetchAgentLines, type ChatLine } from './world-agent';
@@ -101,6 +105,7 @@ const KEY_META = 'meta';
 const KEY_BOTS = 'bots';
 const KEY_EMPTY_AT = 'emptyAt';
 const KEY_ROUND = 'round';
+const KEY_GATE = 'gate';
 
 /**
  * 판이 이만큼 뒤처져 있으면 따라잡지 않고 **끝낸다** (ms).
@@ -176,6 +181,17 @@ interface StoredRound {
 
 /** 방 메타(좌석 명단) 캐시 수명. 이보다 자주 사람이 들어오면 pid 미발견 시 강제 갱신된다. */
 const META_TTL_MS = 60_000;
+
+/**
+ * **아직 시작되지 않은 방**의 짧은 캐시 수명 (ms).
+ *
+ * `startedAt`(rooms.world_started_at)은 null → 값으로 딱 한 번 넘어가고, 그 순간
+ * 이 방에 집결 게이트가 생긴다. 60초 캐시를 그대로 두면 그 전환을 최대 1분 늦게
+ * 보는데, 인트로가 63초짜리(카운트다운 20 + 영상 43)라 **게이트가 생기기 전에 판이
+ * 열려 버린다** — 시작 직전에 누가 이 방의 월드에 서 있었을 때 그렇게 된다.
+ * 값이 정해진 뒤로는(startedAt != null) 다시 평소 수명으로 돌아간다.
+ */
+const META_START_TTL_MS = 10_000;
 
 /**
  * 이만큼도 안 남았으면 LLM을 아예 부르지 않는다 (ms). 게임 방 전용 —
@@ -258,6 +274,12 @@ export class RoomDO {
   /** 마지막으로 내보낸 vote_progress의 voted 값. -1이면 아직 안 보냈다. */
   private progressSent = -1;
   private progressAt = 0;
+
+  /** 집결 게이트. null 이면 아직 storage 에서 안 읽었다 (GateState 의 상자). */
+  private gate: GateState | null = null;
+  private gateLoaded = false;
+  /** 마지막으로 내보낸 gate 의 present 값. -1이면 아직 안 보냈다 (같은 값 재전송 방지). */
+  private gateSent = -1;
 
   constructor(
     private readonly ctx: DurableObjectState,
@@ -410,6 +432,18 @@ export class RoomDO {
       // humanRole 은 봇·판 밖 좌석이면 null 이라 여기서 보낼 게 없다 (§18.2).
       const role = humanRole(this.round, snapshot.id);
       if (role) this.send(server, { t: 'role', role });
+    }
+
+    /*
+     * 집결 게이트 — 이 좌석의 도착을 명단에 넣고, 다 모였으면 연다.
+     * ★ 방송이 안 나갔으면 이 소켓에만 따로 보낸다. 방송은 값이 바뀔 때만 나가므로
+     *   (이미 도착했던 좌석의 재접속·게이트가 이미 열린 방), 안 보내면 새로고침한
+     *   사람의 화면이 대기 상태로 굳는다 — 판 중간 입장자에게 round 를 개별로
+     *   보내는 것과 같은 이유다.
+     */
+    if (!(await this.maybeOpenGate(Date.now()))) {
+      const gate = this.gateSnapshot();
+      if (gate) this.send(server, gate);
     }
 
     await this.ctx.storage.delete(KEY_EMPTY_AT);
@@ -658,6 +692,15 @@ export class RoomDO {
       this.startSim();
     }
 
+    /*
+     * 집결 게이트의 **시간 축은 여기 하나뿐이다.** 틱(startSim)은 봇이 0기이고 판도
+     * 없는 방 — 즉 사람만 모인 방 — 에서 아예 안 도므로 상한을 못 건다.
+     *  ① 상한(GATHER_DEADLINE_MS): 안 들어온 사람이 있어도 연다
+     *  ② 백스톱: 게이트는 열렸는데 아무도 intro_done 을 못 보낸 방을 연다
+     */
+    await this.maybeOpenGate(now);
+    await this.maybeBackstopRound(now);
+
     await this.persistBots();
     await this.ctx.storage.setAlarm(this.nextAlarmAt(now));
   }
@@ -671,10 +714,28 @@ export class RoomDO {
    */
   private nextAlarmAt(now: number): number {
     const sweep = now + SWEEP_ALARM_MS;
-    const s = this.round;
-    if (!s || s.done) return sweep;
     // 최소 1초 — 마감이 이미 지났어도 알람이 폭주하지 않게 바닥을 깐다.
-    return Math.min(sweep, Math.max(now + 1_000, s.phaseEndsAt + 100));
+    const soon = (at: number): number => Math.min(sweep, Math.max(now + 1_000, at + 100));
+
+    const s = this.round;
+    if (s && !s.done) return soon(s.phaseEndsAt);
+
+    /*
+     * 판이 없는 방이라도 게이트가 걸려 있으면 **시간에 맞춰 깨어나야 한다.**
+     * 30초 스윕에만 기대면 상한이 최대 30초 늦게 걸리고, 그동안 방 전원이
+     * 아무 설명 없는 대기 화면을 본다.
+     */
+    if (this.gateRequired() && !this.round) {
+      const openedAt = this.gate?.openedAt ?? null;
+      const at =
+        openedAt === null
+          ? (this.meta?.startedAt ?? now) + GATHER_DEADLINE_MS
+          : openedAt + WORLD_INTRO_MS + GATHER_ROUND_BACKSTOP_MS;
+      // ★ 지난 시각이면 스윕으로 돌아간다. `now + 1초`를 계속 돌려주면 판이 못 열리는
+      //   방(좌석 0 · 한 판 더가 실패한 방)에서 알람이 초당 한 번씩 영원히 깨어난다.
+      if (at > now) return soon(at);
+    }
+    return sweep;
   }
 
   private async ensureAlarm(): Promise<void> {
@@ -717,6 +778,7 @@ export class RoomDO {
     if (!meta) return;
     await this.ensureBots(meta);
     await this.ensureRound();
+    await this.ensureGate();
     this.startSim();
   }
 
@@ -1180,6 +1242,105 @@ export class RoomDO {
       .filter((id) => humans.has(id));
   }
 
+  /* ─────────────────────────── 집결 게이트 ─────────────────────────── */
+
+  private async ensureGate(): Promise<void> {
+    if (this.gate || this.gateLoaded) return;
+    this.gateLoaded = true;
+    const stored = await this.ctx.storage.get<GateState>(KEY_GATE);
+    if (stored) this.gate = { arrived: stored.arrived ?? [], openedAt: stored.openedAt ?? null };
+  }
+
+  /**
+   * 이 방에 게이트를 거는가 — **방장이 대기방에서 시작을 누른 방만이다.**
+   *
+   * /world 로 직접 들어와 서 있는 라운지에는 걸지 않는다. 거기엔 "이 판을 함께
+   * 시작할 명단"이라는 게 없어서, 기다릴 대상을 정하면 브라우저를 닫고 간 좌석
+   * 때문에 매번 상한(GATHER_DEADLINE_MS)까지 멈춘다.
+   * ★ companionMode 로 가르면 안 된다 — 시작한 방도 true 다 (room-meta 의 startedAt).
+   */
+  private gateRequired(): boolean {
+    return this.meta?.startedAt != null;
+  }
+
+  /** 판을 열어도 되는가. 게이트가 없는 방은 언제나 참이다. */
+  private gateOpen(): boolean {
+    if (!this.gateRequired()) return true;
+    return this.gate?.openedAt != null;
+  }
+
+  /** 사람 좌석 id. 게이트의 분모다 — **좌석 자체는 밖으로 나가지 않는다** (I1). */
+  private humanSeatIds(): string[] {
+    return (this.meta?.seats ?? []).filter((s) => !s.is_bot).map((s) => s.id);
+  }
+
+  private gateSnapshot(): Extract<S2CMessage, { t: 'gate' }> | null {
+    if (!this.gateRequired()) return null;
+    const { present, total } = gateCounts(this.gate, this.humanSeatIds());
+    return { t: 'gate', present, total, startsAt: gateStartsAt(this.gate, WORLD_INTRO_MS) };
+  }
+
+  /**
+   * 도착 명단을 갱신하고, 다 모였으면(또는 상한이 지났으면) 게이트를 연다.
+   * 판정은 전부 gate.ts 의 순수 함수가 한다 — 여기는 값을 물어다 주고 굽기만 한다.
+   *
+   * 부르는 곳은 둘이다 — 입장(도착)과 알람(상한).
+   * **나갈 때는 부르지 않는다.** 한 번 열린 게이트는 닫지 않고(stepGate 의 상자),
+   * 도착 명단도 줄지 않으므로 부를 이유가 없다.
+   *
+   * @returns 방에 실제로 알렸는가. 입장 경로가 이걸 보고 **중복 전송을 건너뛴다.**
+   */
+  private async maybeOpenGate(now: number): Promise<boolean> {
+    if (!this.gateRequired()) return false;
+    await this.ensureGate();
+    if (this.gate?.openedAt != null) return false; // 열린 게이트는 다시 닫지 않는다
+
+    const before = this.gate;
+    this.gate = stepGate(
+      before,
+      this.humanSeatIds(),
+      this.humanSnapshots().map((p) => p.id),
+      this.meta?.startedAt ?? now,
+      GATHER_DEADLINE_MS,
+      now,
+    );
+
+    if (this.gate.openedAt !== null || this.gate.arrived.length !== (before?.arrived.length ?? 0)) {
+      await this.ctx.storage.put(KEY_GATE, this.gate);
+      // 알람이 잡혀 있어야 상한이 실제로 걸린다 — 대기 중에는 마감에 맞춰 당긴다.
+      await this.ctx.storage.setAlarm(this.nextAlarmAt(now));
+    }
+    return this.broadcastGate();
+  }
+
+  /**
+   * 게이트 현황을 방에 알린다. **숫자 둘 + 시각 하나뿐이다** (protocol.ts 의 t:'gate').
+   * 바뀐 게 없으면 보내지 않는다 — 같은 값을 계속 흘리면 그 주기가 다시 신호가 된다.
+   */
+  private broadcastGate(): boolean {
+    const msg = this.gateSnapshot();
+    if (!msg) return false;
+    if (msg.startsAt === null && msg.present === this.gateSent) return false;
+    this.gateSent = msg.present;
+    this.broadcast(msg);
+    return true;
+  }
+
+  /**
+   * 게이트는 열렸는데 **아무도 `intro_done` 을 못 보낸** 방을 서버가 연다.
+   * 정상 경로는 여전히 intro_done 이다 (GATHER_ROUND_BACKSTOP_MS 의 상자).
+   */
+  private async maybeBackstopRound(now: number): Promise<void> {
+    if (!this.gateRequired()) return;
+    await this.ensureGate();
+    const openedAt = this.gate?.openedAt;
+    if (openedAt == null) return;
+    if (now < openedAt + WORLD_INTRO_MS + GATHER_ROUND_BACKSTOP_MS) return;
+    await this.ensureRound();
+    if (this.round) return; // 이미 열렸거나 끝난 판이다 — rematch 말고는 되살리지 않는다
+    await this.maybeStartRound(now);
+  }
+
   private async ensureRound(): Promise<void> {
     if (this.round || this.roundLoaded) return;
     this.roundLoaded = true;
@@ -1191,6 +1352,8 @@ export class RoomDO {
       ...stored.round,
       actorIds: stored.round.actorIds ?? [],
       matchId: stored.round.matchId ?? null,
+      // 재투표 카운터가 생기기 전에 구운 판 방어 — 없으면 0(아직 재투표 안 함)으로 읽는다.
+      revoteCount: stored.round.revoteCount ?? 0,
     };
     this.botVotes = stored.botVotes ?? {};
     this.botVerdicts = stored.botVerdicts ?? {};
@@ -1214,6 +1377,14 @@ export class RoomDO {
    */
   private async maybeStartRound(now: number): Promise<void> {
     if (this.round) return;
+    /*
+     * ★ 집결 게이트가 열리기 전에는 열지 않는다 (GateState 의 상자).
+     *   `intro_done` 은 클라이언트의 video 이벤트라, 예전에는 **제일 먼저 뜬 사람
+     *   하나**가 방 전체의 판을 열었다 — 늦게 뜬 사람은 자기 인트로 위에 주제가
+     *   겹친 채로 판에 들어왔다 (warehouse.tsx 의 "판이 열리면 상영을 끊는다" 상자).
+     */
+    await this.ensureGate();
+    if (!this.gateOpen()) return;
     const meta = this.meta;
     // ★ 메타가 없으면 열지 않는다. 좌석 명단 없이는 사람과 봇을 가를 수 없고,
     //   그러면 "승패를 정하는 표는 사람 표만 센다"(SPEC §18.3)가 통째로 무너진다.
@@ -1612,7 +1783,9 @@ export class RoomDO {
     // └────────────────────────────────────────────────────────────────────────────┘
     if (this.round && !this.round.done && this.meta) return this.meta;
 
-    if (!force && this.meta && now - this.meta.fetchedAt < META_TTL_MS) return this.meta;
+    // 시작 전 방은 짧게 잡는다 — 게이트가 생기는 순간을 놓치면 안 된다 (상수의 상자).
+    const ttl = this.meta?.startedAt == null ? META_START_TTL_MS : META_TTL_MS;
+    if (!force && this.meta && now - this.meta.fetchedAt < ttl) return this.meta;
 
     const fresh = await fetchRoomMeta(this.env, roomId);
     if (!fresh) return this.meta; // Next가 잠깐 죽어도 캐시로 버틴다

@@ -70,13 +70,15 @@ WebSocket URL 에 실을 수 없고, 다른 오리진(워커)으로 자동 전�
 | `worker/src/match-report.ts` | reveal 진입 틱에 끝난 판을 위로 보낸다. 실패는 삼킨다 |
 | `worker/src/index.ts` | 라우팅만 |
 | `worker/src/room-do.ts` | 입장 · 릴레이 · 하트비트 · 알람 |
+| `worker/src/gate.ts` | **집결 게이트** — 방 사람이 전부 들어와야 판이 열린다 (순수 함수) |
 | `worker/src/bots.ts` | 봇 조종 (순수 스텝 함수) · 발화 예약 |
 | `app/world/net/connection.ts` | 소켓 래퍼. 상태관리 라이브러리를 모른다 |
 | `app/world/net/remote-players.ts` | 좌표 링버퍼 (가변 객체) |
 | `app/world/store.ts` | zustand — **멤버십만** 들고 있다 |
 | `app/world/world-scene.tsx` | 씬 · 내 아바타(송신) · 남의 아바타(보간) |
 | `tests/worker/bots.test.ts` | 발화 예약 · 타이핑 중 정지 (`npm test`) |
-| `tools/verify-world.mjs` | 소켓 2개 왕복 검증 |
+| `tests/worker/gate.test.ts` | 집결 게이트 — 도착 집계 · 상한 (`npm test`) |
+| `tools/verify-world.mjs` | 소켓 2개 왕복 검증 (+ 집결 게이트) |
 
 ---
 

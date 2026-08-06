@@ -32,6 +32,14 @@ export interface RoomMeta {
    * 대화 성향을 가른다 — 게임 중 봇은 아껴 말하고, 동행자는 잘 대꾸한다.
    */
   companionMode: boolean;
+  /**
+   * 방장이 대기방에서 시작을 누른 시각 (epoch ms). 안 눌렀으면 null.
+   * **집결 게이트를 걸 방인지**를 이걸로 가른다 (room-do.ts 의 maybeOpenGate).
+   *
+   * ★ companionMode 로 대신할 수 없다 — 시작을 누른 방도 phase 는 'lobby' 라
+   *   빈자리가 월드 AI 로 채워져서 양쪽 다 true 다 (lib/server/world-ai.ts).
+   */
+  startedAt: number | null;
 }
 
 /** Next가 잠깐 느릴 때 워커 전체가 멈추지 않도록 상한을 둔다. */
@@ -56,8 +64,12 @@ export async function fetchRoomMeta(env: Env, roomId: string): Promise<RoomMeta 
       seats?: SeatRow[];
       bot_lines?: string[];
       companion_mode?: boolean;
+      world_started_at?: string | null;
     };
     if (typeof body.capacity !== 'number' || !Array.isArray(body.seats)) return null;
+
+    // 못 읽는 값이면 null 로 둔다 — 게이트가 안 걸릴 뿐, 예전 동작 그대로다.
+    const started = body.world_started_at ? Date.parse(body.world_started_at) : NaN;
 
     return {
       capacity: body.capacity,
@@ -65,6 +77,7 @@ export async function fetchRoomMeta(env: Env, roomId: string): Promise<RoomMeta 
       seats: body.seats,
       botLines: Array.isArray(body.bot_lines) ? body.bot_lines : [],
       companionMode: body.companion_mode === true,
+      startedAt: Number.isFinite(started) ? started : null,
     };
   } catch (e) {
     console.warn(`[room-meta] 실패 ${roomId}: ${e instanceof Error ? e.message : String(e)}`);
