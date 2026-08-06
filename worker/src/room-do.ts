@@ -146,6 +146,15 @@ const DEFENSE_PROMPT = '너를 AI라고 지목했다. 마지막으로 할 말은
 const DEFENSE_READ_MIN_MS = 700;
 const DEFENSE_READ_MAX_MS = 2_500;
 
+/**
+ * ★ 임시 (2026-08-06): 위장 지연 전부 끔 — 순수 LLM 왕복 시간만 보이게 한다.
+ * true 인 동안 읽기·타이핑·지터 없이 자리를 잡고, LLM 답이 도착하는 즉시 말한다
+ * (게임 방도 라운지의 지각 경로를 탄다). 풀 문구 폴백은 그동안 죽는다 — 자리에
+ * 문구를 미리 채우면 같은 답이 두 번 나가기 때문이다. I1 위장(즉답 = 봇 신호)도
+ * 꺼지므로 측정이 끝나면 false 로 되돌린다.
+ */
+const DISGUISE_OFF = true;
+
 function rand(min: number, max: number): number {
   return min + Math.random() * (max - min);
 }
@@ -852,7 +861,7 @@ export class RoomDO {
       if (wantsChat && this.botsMayChat()) {
         // 라운지는 위장 지연 없이 LLM 이 오는 대로 말한다 (scheduleInstantSpeech 상자).
         // 로비 방은 풀이 비어 있어 null이 온다 — 자리만 잡히고 문구는 LLM이 채운다.
-        if (this.isLounge()) scheduleInstantSpeech(bot, now);
+        if (DISGUISE_OFF || this.isLounge()) scheduleInstantSpeech(bot, now);
         else scheduleSpeech(bot, pickLine(this.botLines(), this.recentTexts()), now);
         // ★ 스스로 꺼내는 말도 LLM 을 태운다. 안 태우면 이 자리는 아무 말도 못 한다
         //   (예전에는 평생 풀 문구만 말했고, 사용자가 본 게 정확히 그거였다).
@@ -924,7 +933,7 @@ export class RoomDO {
     // 라운지는 읽는 시간도 치는 시간도 없다 — LLM 이 오는 대로 바로 말한다
     // (scheduleInstantSpeech 상자). 판이 도는 방은 읽는 시간을 준다 — 0이면
     // 사람이 말한 그 순간 멈추는 아바타가 생긴다 (I1).
-    if (this.isLounge()) scheduleInstantSpeech(bot, now);
+    if (DISGUISE_OFF || this.isLounge()) scheduleInstantSpeech(bot, now);
     else scheduleSpeech(bot, pickLine(this.botLines(), this.recentTexts()), now, readDelayMs());
 
     // 자리는 잡혔다. LLM이 speakAt 전에 오면 그 자리가 채워지고, 못 오면 잠깐 서 있다
@@ -956,7 +965,7 @@ export class RoomDO {
 
     // 라운지는 즉시(자리를 잡을 뿐 서지 않으니 "문 열리는 순간 멈춤"도 없다),
     // 판 도중(퇴장 사건)은 읽는 시간을 준다 — 그 순간 멈추면 그게 표식이다 (I1).
-    if (this.isLounge()) scheduleInstantSpeech(bot, now);
+    if (DISGUISE_OFF || this.isLounge()) scheduleInstantSpeech(bot, now);
     else scheduleSpeech(bot, null, now, readDelayMs());
     void this.upgradeSpeech(bot, bot.speechSeq, null, event);
   }
@@ -1023,7 +1032,7 @@ export class RoomDO {
 
     this.botChainHops += 1;
     // 봇→봇 연쇄도 같은 규칙이다 — 라운지는 즉시, 판 도중은 위장 지연.
-    if (this.isLounge()) scheduleInstantSpeech(bot, now);
+    if (DISGUISE_OFF || this.isLounge()) scheduleInstantSpeech(bot, now);
     else scheduleSpeech(bot, pickLine(this.botLines(), this.recentTexts()), now, readDelayMs());
     void this.upgradeSpeech(bot, bot.speechSeq, text);
   }
@@ -1053,7 +1062,9 @@ export class RoomDO {
   ): Promise<void> {
     const roomId = this.meta?.roomId;
     if (!roomId) return;
-    const companion = this.meta?.companionMode === true;
+    // ★ DISGUISE_OFF 동안은 게임 방도 companion 취급 — 예산 문턱 없이 LLM 을 부르고,
+    //   자리를 놓친 답도 도착하는 대로 말한다 (아래 지각 경로).
+    const companion = DISGUISE_OFF || this.meta?.companionMode === true;
 
     const budget = bot.speakAt - Date.now();
     if (!companion && budget < MIN_AGENT_BUDGET_MS) return;
@@ -1107,7 +1118,7 @@ export class RoomDO {
         line.text,
         line.tail ?? null,
         Date.now(),
-        this.isLounge() ? LOUNGE_TYPE_MAX_MS : Infinity,
+        DISGUISE_OFF ? 0 : this.isLounge() ? LOUNGE_TYPE_MAX_MS : Infinity,
       );
     }
   }
@@ -1825,12 +1836,14 @@ export class RoomDO {
     if (!bot) return;
     if (Math.random() < BOT_DEFENSE_SILENCE_CHANCE) return;
 
-    scheduleSpeech(
-      bot,
-      pickLine(this.botLines(), this.recentTexts()),
-      now,
-      rand(DEFENSE_READ_MIN_MS, DEFENSE_READ_MAX_MS),
-    );
+    if (DISGUISE_OFF) scheduleInstantSpeech(bot, now);
+    else
+      scheduleSpeech(
+        bot,
+        pickLine(this.botLines(), this.recentTexts()),
+        now,
+        rand(DEFENSE_READ_MIN_MS, DEFENSE_READ_MAX_MS),
+      );
     void this.upgradeSpeech(bot, bot.speechSeq, DEFENSE_PROMPT);
   }
 
