@@ -317,9 +317,16 @@ async function verifyGate() {
   const a = new Jar('GA');
   const b = new Jar('GB');
 
-  const created = await a.post('/api/room', { capacity: 5 });
+  // 정원은 이제 고르지 않는다 (2026-08-06 — 사람 8 고정 + AI 1).
+  const created = await a.post('/api/room');
   const roomId = created.room.id;
   await b.post('/api/room/join', { code: created.room.code });
+
+  // ★ 월드 시작도 **전원 준비**를 요구한다 (lib/game/rules.ts 의 startBlock — 2D 시작과
+  //   같은 함수다). 빠뜨리면 start-world 가 409 로 떨어지고 게이트 검사가 통째로 멈춘다.
+  await a.post('/api/lobby/ready', { room_id: roomId, ready: true });
+  await b.post('/api/lobby/ready', { room_id: roomId, ready: true });
+
   // 2D 시작이 아니다 — 이쪽만 world_started_at 을 찍고 게이트를 만든다.
   await a.post('/api/room/start-world', { room_id: roomId });
 
