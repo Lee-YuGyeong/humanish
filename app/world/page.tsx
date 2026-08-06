@@ -96,6 +96,12 @@ const CANVAS_WAIT_TRIES = 40;
  *   두 번 더 시도한다. 그래도 안 되면 화면은 이미 걷기 모드고(키 조작은 된다)
  *   시야만 안 돌아간다 — 그때는 화면을 한 번 클릭하면 된다.
  */
+/**
+ * 이 문서에서 잠금을 한 번이라도 잡아 봤는가. 크롬은 그 뒤로는 클릭 제스처 없이도
+ * (짧은 쿨다운만 지나면) 되잡게 해 준다 — 아래 「뻔한 거절」 판정에 쓴다.
+ */
+let hasLockedOnce = false;
+
 function requestLock(tries = 3, delayMs = 1400, waitTries = CANVAS_WAIT_TRIES): void {
   const canvas = document.querySelector('canvas');
   if (!canvas) {
@@ -107,11 +113,26 @@ function requestLock(tries = 3, delayMs = 1400, waitTries = CANVAS_WAIT_TRIES): 
   // 이미 잡혀 있으면 다시 두드리지 않는다 (걷는 중의 클릭이 여기로도 온다)
   if (document.pointerLockElement === canvas) return;
 
+  /*
+   * ★ 거절이 뻔한 요청은 보내지 않는다. 클릭 제스처(transient activation)가 만료됐고
+   *   이 문서에서 잠금을 잡아 본 적도 없으면 브라우저는 반드시 거절하는데, 그때마다
+   *   three(PointerLockControls)가 콘솔에 "Unable to use Pointer Lock API" 에러를
+   *   찍는다. 특히 첫 입장의 자동 잠금이 그렇다 — 개발 서버는 청크 컴파일이 길어서
+   *   입장 클릭의 제스처가 로딩 중에 만료된다. 이 경우의 복구는 어차피 화면 클릭뿐이고
+   *   그 클릭이 다시 이리로 오므로, 조용히 물러나도 잃는 것이 없다.
+   *   (userActivation 이 없는 브라우저는 예전처럼 일단 두드린다.)
+   */
+  const activation = navigator.userActivation;
+  if (activation && !activation.isActive && !hasLockedOnce) return;
+
   const onError = () => {
     document.removeEventListener('pointerlockchange', onSettled);
     if (tries > 1) window.setTimeout(() => requestLock(tries - 1, delayMs), delayMs);
   };
-  const onSettled = () => document.removeEventListener('pointerlockerror', onError);
+  const onSettled = () => {
+    document.removeEventListener('pointerlockerror', onError);
+    if (document.pointerLockElement) hasLockedOnce = true;
+  };
   document.addEventListener('pointerlockerror', onError, { once: true });
   document.addEventListener('pointerlockchange', onSettled, { once: true });
 
