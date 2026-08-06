@@ -20,7 +20,7 @@
  *   결과 화면은 게임의 마지막 장면이다. 부르는 쪽이 await 하지 않는다.
  */
 
-import type { ProfileStats, RecentMatch, Role } from '@/lib/game/types';
+import type { MatchHistoryPage, MatchRecord, ProfileStats, RecentMatch, Role } from '@/lib/game/types';
 import type { RoundWinner } from '@/lib/mp/protocol';
 import { getServiceClient } from '@/lib/server/supabase';
 import { toProfileStats } from '@/lib/server/stats';
@@ -210,4 +210,39 @@ export async function readMatchStats(userId: string): Promise<ProfileStats> {
   const sums = (totals as Totals | null) ?? { games: 0, wins: 0, exp: 0 };
 
   return toProfileStats(sums, (recent ?? []) as RecentMatch[]);
+}
+
+/** 기록 화면 한 쪽의 줄 수. 커서(before)로 다음 쪽을 이어 받는다. */
+const HISTORY_PAGE = 30;
+
+/**
+ * 내 전체 기록, 한 쪽 (SPEC §15-2-결정 — 기록 화면 /account/history).
+ *
+ * ★ readMatchStats 와 같은 규칙 — **계정 하나치만.** userId 는 라우트가 쿠키
+ *   세션에서 되찾아 넘긴다 (I9). 남의 기록을 읽는 길은 없다 (I1).
+ * ★ 오프셋이 아니라 created_at 커서다. 오프셋은 새 판이 적히는 사이에 쪽이
+ *   밀려 같은 줄이 두 번 오고, 판수가 늘수록 뒤쪽이 느려진다.
+ *   (내 행끼리 created_at 이 겹칠 일은 사실상 없다 — 한 판에 내 행은 하나다.)
+ */
+export async function readMatchHistory(
+  userId: string,
+  before: string | null,
+): Promise<MatchHistoryPage> {
+  let query = getServiceClient()
+    .from('match_results')
+    .select('room_id, role, won, score, humans, created_at')
+    .eq('user_id', userId)
+    .order('created_at', { ascending: false })
+    .limit(HISTORY_PAGE);
+  if (before) query = query.lt('created_at', before);
+
+  const { data, error } = await query;
+  if (error) throw new Error(`기록 조회 실패: ${error.message}`);
+
+  const matches = (data ?? []) as MatchRecord[];
+  return {
+    matches,
+    // 꽉 찬 쪽만 다음이 있을 수 있다. 모자라면 거기가 끝이다.
+    next: matches.length === HISTORY_PAGE ? matches[matches.length - 1].created_at : null,
+  };
 }

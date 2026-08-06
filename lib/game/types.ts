@@ -154,6 +154,23 @@ export interface ProfileStats {
 }
 
 /**
+ * 기록 화면(/account/history)의 한 판. RecentMatch 에 그 판의 사람 수를 더한 것 —
+ * 로비의 다섯 줄에는 안 들어가지만 전체 기록에서는 "몇 명 판이었나"가 승패의
+ * 맥락이다. RecentMatch 와 같은 I1 규칙을 따른다 — **내 행만 다룬다.**
+ */
+export interface MatchRecord extends RecentMatch {
+  /** 그 판의 사람 수 (2 이상 — 그보다 작은 판은 애초에 안 적힌다) */
+  humans: number;
+}
+
+/** GET /api/profile/matches 한 쪽. next 가 null 이면 끝까지 읽었다. */
+export interface MatchHistoryPage {
+  matches: MatchRecord[];
+  /** 다음 쪽을 달라고 할 때 넘길 커서 (마지막 행의 created_at). 더 없으면 null */
+  next: string | null;
+}
+
+/**
  * 클라이언트가 실제로 받는 플레이어 모양. `public_players` 뷰와 1:1이다.
  * SPEC §7.2: is_bot이 새어나가면 게임이 즉시 끝난다.
  *

@@ -4,7 +4,7 @@
  * 라우트는 app/api/profile 하나다. 쓰기는 전부 거기를 지난다 (I9).
  */
 
-import type { Profile, ProfileStats } from '@/lib/game/types';
+import type { MatchHistoryPage, Profile, ProfileStats } from '@/lib/game/types';
 
 export interface ProfileResponse {
   profile: Profile | null;
@@ -51,6 +51,19 @@ export async function fetchProfileStats(): Promise<ProfileStats> {
   // 전적이 없다는 이유로 로비가 에러 화면이 되면 안 된다.
   if (res.status === 401) return EMPTY_STATS;
   return unwrap<ProfileStats>(res);
+}
+
+/**
+ * 내 전체 기록, 한 쪽 (기록 화면 /account/history).
+ *
+ * ★ 남의 기록을 받는 방법은 없다 — 라우트가 쿠키 세션의 계정 하나만 본다 (I1, I9).
+ * ★ 401 을 빈 쪽으로 접지 않는다 — 기록 화면은 RequireLogin 뒤에 있어서
+ *   로그인 전에 불릴 일이 없고, 접으면 진짜 오류가 "기록 없음"으로 위장한다.
+ */
+export async function fetchMatchHistory(before: string | null): Promise<MatchHistoryPage> {
+  const query = before ? `?before=${encodeURIComponent(before)}` : '';
+  const res = await fetch(`/api/profile/matches${query}`, { cache: 'no-store' });
+  return unwrap<MatchHistoryPage>(res);
 }
 
 /**

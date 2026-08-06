@@ -11,13 +11,25 @@
  *   둘이 한 화면에서 만나는 순간 익명성이 끝난다.
  */
 
-import { useQuery, useQueryClient, type UseQueryResult } from '@tanstack/react-query';
+import {
+  useInfiniteQuery,
+  useQuery,
+  useQueryClient,
+  type UseInfiniteQueryResult,
+  type InfiniteData,
+  type UseQueryResult,
+} from '@tanstack/react-query';
 import { useCallback } from 'react';
 
 import { getCurrentUser, type AuthUser } from '@/lib/auth';
-import { fetchProfile, fetchProfileStats, type ProfileResponse } from '@/lib/api/profile';
-import type { ProfileStats } from '@/lib/game/types';
-import { authUserKey, profileKey, profileStatsKey } from './keys';
+import {
+  fetchMatchHistory,
+  fetchProfile,
+  fetchProfileStats,
+  type ProfileResponse,
+} from '@/lib/api/profile';
+import type { MatchHistoryPage, ProfileStats } from '@/lib/game/types';
+import { authUserKey, matchHistoryKey, profileKey, profileStatsKey } from './keys';
 
 /**
  * 지금 계정. 로그인 전이면 null.
@@ -71,6 +83,23 @@ export function useProfileStats(): UseQueryResult<ProfileStats> {
   });
 }
 
+/**
+ * 내 전체 게임 기록, 쪽 단위 (기록 화면 /account/history).
+ *
+ * ★ useProfileStats 와 같은 이유로 폴링하지 않는다 — 기록은 판이 끝날 때만 늘고,
+ *   그때 사용자는 이 화면에 없다. 화면을 열 때마다 첫 쪽부터 새로 읽는다.
+ */
+export function useMatchHistory(): UseInfiniteQueryResult<InfiniteData<MatchHistoryPage>> {
+  return useInfiniteQuery({
+    queryKey: matchHistoryKey,
+    queryFn: ({ pageParam }) => fetchMatchHistory(pageParam),
+    initialPageParam: null as string | null,
+    getNextPageParam: (last) => last.next,
+    staleTime: 60_000,
+    retry: 0,
+  });
+}
+
 /** 계정이 바뀐 뒤 다시 읽게 한다 (연결 · 로그아웃 · 이름 변경 직후). */
 export function useInvalidateAuthUser(): () => void {
   const qc = useQueryClient();
@@ -79,5 +108,6 @@ export function useInvalidateAuthUser(): () => void {
     void qc.invalidateQueries({ queryKey: profileKey });
     // 로그아웃하면 남의 전적이 남아 있으면 안 된다. 계정이 바뀌는 자리에 같이 건다.
     void qc.invalidateQueries({ queryKey: profileStatsKey });
+    void qc.invalidateQueries({ queryKey: matchHistoryKey });
   }, [qc]);
 }

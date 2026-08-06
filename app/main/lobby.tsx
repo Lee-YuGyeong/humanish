@@ -657,8 +657,16 @@ function PlayerSidebar() {
       </div>
 
       <div className="p-5">
-        <div className="mb-3 flex items-center gap-2">
+        <div className="mb-3 flex items-center justify-between gap-2">
           <span className={styles.label}>최근 게임</span>
+          {/* 여기는 다섯 줄뿐이다 — 끝까지 보는 화면은 /account/history 하나다 */}
+          <Link
+            href="/account/history"
+            className="text-[0.62rem] transition-colors hover:underline"
+            style={{ color: "var(--muted)" }}
+          >
+            전체 기록 →
+          </Link>
         </div>
 
         {stats && stats.recent.length === 0 ? (

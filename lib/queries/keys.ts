@@ -76,3 +76,9 @@ export const profileKey = ['profile'] as const;
  * ★ 계정과 같은 이유로 방 스코프 밖이다. 전적은 방보다 오래 산다.
  */
 export const profileStatsKey = ['profile-stats'] as const;
+
+/**
+ * 내 전체 게임 기록 (기록 화면 /account/history). profileStatsKey 와 같은 이유로
+ * 형제이고 방 스코프 밖이다 — 로그아웃 때 같이 걷는다 (useInvalidateAuthUser).
+ */
+export const matchHistoryKey = ['match-history'] as const;
