@@ -3,7 +3,8 @@
  *
  * GET /api/internal/world-room?room_id=...
  *   Authorization: Bearer <WORLD_SHARED_SECRET>
- *   → { capacity, phase, seats: [{ id, seat, nickname, mask_id, is_bot }], bot_lines }
+ *   → { capacity, phase, seats: [{ id, seat, nickname, mask_id, is_bot }], bot_lines,
+ *       companion_mode, world_started_at }
  *
  * ┌─ ★★ 이 경로는 is_bot을 내보내는 유일한 곳이다 (I1의 예외) ─────────────────┐
  * │ 받는 쪽이 **서버(Cloudflare Worker)**이고 브라우저가 아니기 때문에만 성립한다.  │
@@ -83,6 +84,8 @@ export async function GET(req: Request): Promise<Response> {
         })),
         bot_lines: botLines,
         companion_mode: roster.companionMode,
+        // 집결 게이트의 기준점. 시각 하나라 정체와 무관하다 (world-ai.ts 의 startedAt).
+        world_started_at: roster.startedAt,
       },
       { headers: { 'cache-control': 'no-store' } },
     );

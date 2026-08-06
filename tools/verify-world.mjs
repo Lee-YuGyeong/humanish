@@ -23,7 +23,7 @@
  */
 
 const NEXT = process.env.NEXT_URL ?? 'http://127.0.0.1:3000';
-const PROTOCOL_VERSION = 3;
+const PROTOCOL_VERSION = 4;
 
 let failures = 0;
 
@@ -287,8 +287,85 @@ async function main() {
 
   clientB.close();
 
+  await verifyGate();
+
   console.log(failures === 0 ? '\n전부 통과\n' : `\n실패 ${failures}건\n`);
   process.exit(failures === 0 ? 0 : 1);
+}
+
+/**
+ * 집결 게이트 — **방 사람이 전부 들어와야 판이 열린다** (lib/mp/protocol.ts 의 t:'gate').
+ *
+ * 위 흐름과 방을 **같이 쓸 수 없다.** 저긴 2D 시작(/api/room/start)이라 phase 가
+ * 넘어가 있고, 월드 시작(/api/room/start-world)은 phase 가 'lobby' 인 방만 받는다.
+ * 게이트가 걸리는 조건 자체가 "방장이 월드 시작을 눌렀나"라서 새 방이 필요하다.
+ *
+ * 브라우저로는 사람 둘을 서로 다른 시각에 붙여야 재현되는 흐름이고, 틀렸을 때의
+ * 증상이 **"방이 영원히 시작 안 됨"** 이라 여기서 잡는 게 제일 싸다.
+ */
+async function verifyGate() {
+  console.log('\n  ── 집결 게이트 ──\n');
+
+  const a = new Jar('GA');
+  const b = new Jar('GB');
+
+  const created = await a.post('/api/room', { capacity: 5 });
+  const roomId = created.room.id;
+  await b.post('/api/room/join', { code: created.room.code });
+  // 2D 시작이 아니다 — 이쪽만 world_started_at 을 찍고 게이트를 만든다.
+  await a.post('/api/room/start-world', { room_id: roomId });
+
+  const ticketA = await a.post('/api/world/ticket', { room_id: roomId });
+  const ticketB = await b.post('/api/world/ticket', { room_id: roomId });
+
+  const clientA = new Client('GA');
+  await clientA.connect(ticketA.ws_url, roomId, ticketA.ticket);
+
+  await check('혼자 들어오면 게이트가 안 열린다 (startsAt 이 null)', async () => {
+    const gate = await clientA.waitFor((m) => m.t === 'gate', 4000, 'gate');
+    if (gate.startsAt !== null) throw new Error(`혼자인데 startsAt 이 ${gate.startsAt} 이다`);
+    if (gate.total !== 2) throw new Error(`total 이 ${gate.total} 이다 (사람 2명이어야 한다)`);
+    if (gate.present !== 1) throw new Error(`present 가 ${gate.present} 이다`);
+  });
+
+  await check('게이트에는 좌석이 실리지 않는다 — 숫자 둘뿐이다 (I1)', async () => {
+    const gate = await clientA.waitFor((m) => m.t === 'gate', 2000, 'gate');
+    const allowed = new Set(['t', 'present', 'total', 'startsAt']);
+    const extra = Object.keys(gate).filter((k) => !allowed.has(k));
+    if (extra.length) throw new Error(`모르는 필드가 실려 있다: ${extra.join(', ')}`);
+  });
+
+  await check('게이트가 닫혀 있으면 intro_done 으로도 판이 안 열린다', async () => {
+    clientA.send({ t: 'intro_done' });
+    const opened = await clientA
+      .waitFor((m) => m.t === 'round', 2500, 'round')
+      .then(() => true)
+      .catch(() => false);
+    if (opened) throw new Error('혼자 보낸 intro_done 하나로 판이 열렸다');
+  });
+
+  const clientB = new Client('GB');
+  await clientB.connect(ticketB.ws_url, roomId, ticketB.ticket);
+
+  await check('전원이 들어오면 게이트가 열린다 (startsAt 이 서버 시각)', async () => {
+    const gate = await clientA.waitFor(
+      (m) => m.t === 'gate' && m.startsAt !== null,
+      5000,
+      '열린 gate',
+    );
+    if (gate.present !== 2) throw new Error(`present 가 ${gate.present} 이다`);
+    if (typeof gate.startsAt !== 'number') throw new Error('startsAt 이 숫자가 아니다');
+    // 인트로 준비 시간(WORLD_INTRO_MS=20초) 뒤여야 한다. 지금이면 카운트다운이 없다.
+    if (gate.startsAt <= Date.now()) throw new Error('startsAt 이 이미 지난 시각이다');
+  });
+
+  await check('늦게 들어온 사람도 게이트 상태를 받는다', async () => {
+    const gate = await clientB.waitFor((m) => m.t === 'gate', 3000, 'gate');
+    if (gate.startsAt === null) throw new Error('B 는 대기 상태로 굳는다');
+  });
+
+  clientA.close();
+  clientB.close();
 }
 
 main().catch((e) => {

@@ -97,28 +97,29 @@ describe('발화 잠금 (I1)', () => {
     for (const p of MOVEMENT_LOCKED_PHASES) expect(isChatLocked(p)).toBe(true);
   });
 
-  it('두 목록의 차이는 defense 하나뿐이다 — 그게 이 단계의 정의다', () => {
-    // defense 만 "말은 지목자에게 열리고, 이동은 지목자에게만 닫힌다".
-    // 다른 단계가 여기 끼면 그건 목록이 조용히 갈라진 것이지 설계가 아니다.
-    const onlyChat = CHAT_LOCKED_PHASES.filter((p) => !MOVEMENT_LOCKED_PHASES.includes(p));
-    expect(onlyChat).toEqual(['defense']);
+  it('말 잠금과 이동 잠금이 같아졌다 — defense 는 둘 다에서 빠졌다 (2026-08-06)', () => {
+    // 예전엔 defense 만 "말은 지목자에게 열리고 이동은 지목자에게만 닫힌다"라 두 목록이
+    // 한 칸 달랐다. 이제 defense 발화가 전원에게 열려서(사람·봇 대칭) 목록에서 통째로
+    // 빠졌고, 두 목록이 같아졌다. 한쪽에만 defense 가 남아 있으면 되돌린 흔적이다.
+    expect([...CHAT_LOCKED_PHASES].sort()).toEqual([...MOVEMENT_LOCKED_PHASES].sort());
+    expect(CHAT_LOCKED_PHASES).not.toContain('defense');
   });
 
   it('지목되지 않은 좌석은 잠긴 단계에서 아무도 말할 수 없다', () => {
     for (const p of CHAT_LOCKED_PHASES) expect(mayChat(p, false)).toBe(false);
   });
 
-  it('최후변론은 지목된 본인만 말한다 — 사람이든 봇이든 똑같이', () => {
-    // 여기를 닫으면 "변론한 지목자 = 봇 / 침묵한 지목자 = 사람"이 되어
-    // defense 가 통째로 정체 판별기가 된다.
+  it('최후변론은 이제 전원이 말한다 — 지목 여부와 무관하게 (I1: 사람·봇 대칭)', () => {
+    // 지목된 본인만 열면 "변론한 자 = 봇 / 침묵한 자 = 사람"이 되고, 반대로 사람만
+    // 열어도 샌다. defense 를 CHAT_LOCKED 에서 빼 봇도 같이 말하게 했으므로 전원이 열린다.
     expect(mayChat('defense', true)).toBe(true);
-    expect(mayChat('defense', false)).toBe(false);
+    expect(mayChat('defense', false)).toBe(true);
   });
 
-  it('지목됐다고 다른 잠긴 단계까지 열리지는 않는다', () => {
+  it('잠긴 단계(vote·verdict·reveal)는 지목돼도 열리지 않는다', () => {
     for (const p of CHAT_LOCKED_PHASES) {
-      if (p === 'defense') continue;
       expect(mayChat(p, true)).toBe(false);
+      expect(mayChat(p, false)).toBe(false);
     }
   });
 

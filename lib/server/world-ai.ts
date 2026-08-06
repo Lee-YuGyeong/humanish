@@ -80,6 +80,18 @@ export interface WorldRoster {
   phase: string | null;
   seats: WorldSeat[];
   /**
+   * 방장이 대기방에서 시작을 누른 시각 (ISO). 안 눌렀으면 null.
+   *
+   * 워커의 **집결 게이트 기준점**이다 (worker/src/room-do.ts 의 maybeOpenGate).
+   * companionMode 로는 이걸 대신할 수 없다 — 시작을 누른 방도 phase 는 'lobby' 라
+   * 빈자리가 월드 AI 로 채워지고, 그래서 companionMode 가 **양쪽 다 true** 다.
+   *
+   * ★ 이 값이 null 인 방(= /world 로 직접 들어와 서 있는 라운지)에는 게이트를
+   *   걸지 않는다. 거기엔 "이 판을 함께 시작할 명단"이라는 게 없어서, 기다릴
+   *   대상을 정하면 브라우저를 닫고 간 좌석 때문에 매번 상한까지 멈춘다.
+   */
+  startedAt: string | null;
+  /**
    * 월드 AI 가 서 있는 방인가 (= 게임이 아직 안 돌아간다).
    *
    * 워커가 이걸로 대화 성향을 바꾼다. 게임 중 봇은 아껴 말해야 하지만(늘 대꾸하는
@@ -246,5 +258,11 @@ export async function buildWorldRoster(roomId: string): Promise<WorldRoster | nu
     companionMode = added > 0;
   }
 
-  return { capacity: room.capacity, phase: room.phase, seats, companionMode };
+  return {
+    capacity: room.capacity,
+    phase: room.phase,
+    seats,
+    startedAt: (room.world_started_at as string | null) ?? null,
+    companionMode,
+  };
 }
