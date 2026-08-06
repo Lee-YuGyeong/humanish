@@ -222,19 +222,38 @@ function pickTopics(rng: Rng): string[] {
 /* ─────────────────────────────── 연기자 (§18.2) ─────────────────────────────── */
 
 /**
- * 연기자를 뽑는다. **사람이 2명 이상이면 정확히 1명** — 2D(assignRoles 의 spy)와 같은
- * 규칙이다 (2026-08-05 결정. §18.2 의 "수는 0~상한 균등 랜덤"을 뒤집는다 — 수가
- * 고정이면 수는 더 이상 비밀이 아니고, 비밀은 **누구인가** 하나로 좁아진다).
- * 사람 1명 이하면 0명 — 연기를 봐 줄 상대가 없다.
+ * 사람 수(AI 는 빼고 센다 — humanIds)에 따른 연기자 상한 (2026-08-06 확정).
+ * 폐기된 §18.1 인원표보다 한 칸 보수적이다: 표는 사람 3명부터 1이었는데 3명도 0으로
+ * 내렸다. 사람 3명 이하 판은 연기자 없이 순수 추리다 — 연기자를 빼고 나면 시민이
+ * 한둘뿐이라, 연기가 성공하는 순간 추리할 사람이 남지 않는다.
+ */
+function actorCap(humanCount: number): number {
+  if (humanCount < 4) return 0; // 1~3명 — 연기자 없음
+  if (humanCount < 6) return 1; // 4~5명 — 0~1명
+  return 2; // 6~8명 — 0~2명
+}
+
+/**
+ * 연기자를 뽑는다. **수는 0~상한(actorCap) 균등 랜덤이다** (§18.2. 2026-08-05 의
+ * "정확히 1명"은 2026-08-06 에 도로 뒤집었다 — 수가 고정이면 표만 보면 아는 값이라,
+ * 랜덤으로 두는 것이 곧 비밀로 두는 것이다. 0명인 판은 정상이다).
  *
  * ★ 뽑기가 명단 순서에 의존하면 안 된다 (I1 — tallyNomination 의 동점 추첨과 같은
- *   이유). 균등 인덱스 하나라 순서 편향이 없다. rng()가 1을 돌려줘도 배열 밖으로
- *   나가지 않는다 (pick 과 같은 방어).
+ *   이유). 매번 균등 인덱스로 하나씩 빼내므로 순서 편향이 없다. rng()가 1을
+ *   돌려줘도 배열 밖으로 나가지 않는다 (pick 과 같은 방어).
  */
 function pickActors(humans: readonly string[], rng: Rng): string[] {
-  if (humans.length < 2) return [];
-  const i = Math.min(humans.length - 1, Math.floor(rng() * humans.length));
-  return [humans[i]];
+  const cap = actorCap(humans.length);
+  if (cap === 0) return [];
+  const count = Math.min(cap, Math.floor(rng() * (cap + 1)));
+  const pool = humans.slice();
+  const out: string[] = [];
+  while (out.length < count) {
+    const i = Math.min(pool.length - 1, Math.floor(rng() * pool.length));
+    out.push(pool[i]);
+    pool.splice(i, 1);
+  }
+  return out;
 }
 
 /* ─────────────────────────────── 판 열기 ─────────────────────────────── */

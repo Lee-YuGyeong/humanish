@@ -565,34 +565,65 @@ describe('decideWinner — 승패 매핑 (SPEC §18.4)', () => {
   });
 });
 
-describe('연기자 배정 — 사람 2명 이상이면 정확히 1명 (2026-08-05 결정)', () => {
-  it('사람 1명 이하면 연기자가 없다 — 연기를 봐 줄 상대가 없다', () => {
+describe('연기자 배정 — 상한은 사람 수로, 그 안에서 균등 랜덤 (§18.2, 2026-08-06 확정)', () => {
+  it('사람 3명 이하면 연기자가 없다 — 작은 판은 연기 없이 순수 추리다', () => {
+    expect(startRound(SEATS, ['a', 'b', 'c'], 0, rngOf(0.99))!.actorIds).toEqual([]);
+    expect(startRound(SEATS, HUMANS, 0, rngOf(0.99))!.actorIds).toEqual([]);
     expect(startRound(SEATS, ['a'], 0, rngOf(0.99))!.actorIds).toEqual([]);
     expect(startRound(SEATS, [], 0, rngOf(0.99))!.actorIds).toEqual([]);
   });
 
-  it('사람 2명부터는 rng 와 무관하게 정확히 1명이다 — 0명인 판은 더 이상 없다', () => {
-    expect(startRound(SEATS, HUMANS, 0, rngOf(0))!.actorIds.length).toBe(1);
-    expect(startRound(SEATS, HUMANS, 0, rngOf(0.99))!.actorIds.length).toBe(1);
+  it('사람 4~5명이면 상한 1 — rng 를 끝까지 올려도 2명은 안 나온다', () => {
+    // cap 1: count = floor(rng×2) — 0.4 → 0명, 0.6 → 1명
+    const four = ['a', 'b', 'c', 'd'];
+    expect(startRound(['a', 'b', 'c', 'd', 'e'], four, 0, rngOf(0.4))!.actorIds).toEqual([]);
+    expect(startRound(['a', 'b', 'c', 'd', 'e'], four, 0, rngOf(0.6))!.actorIds.length).toBe(1);
     expect(
-      startRound(['a', 'b', 'c', 'd', 'e'], ['a', 'b', 'c'], 0, rngOf(0))!.actorIds.length,
+      startRound(['a', 'b', 'c', 'd', 'e', 'f'], ['a', 'b', 'c', 'd', 'e'], 0, rngOf(0.99))!
+        .actorIds.length,
     ).toBe(1);
   });
 
-  it('연기자는 언제나 사람 중에서만 나온다', () => {
+  it('사람 6명부터 상한 2 — 0명인 판도 2명인 판도 정상이다 (§18.2)', () => {
+    // cap 2: count = floor(rng×3) — 0 → 0명, 0.5 → 1명, 0.99 → 2명
+    const seats = ['a', 'b', 'c', 'd', 'e', 'f', 'g'];
+    const humans = ['a', 'b', 'c', 'd', 'e', 'f'];
+    expect(startRound(seats, humans, 0, rngOf(0))!.actorIds).toEqual([]);
+    expect(startRound(seats, humans, 0, rngOf(0.5))!.actorIds.length).toBe(1);
+    expect(startRound(seats, humans, 0, rngOf(0.99))!.actorIds.length).toBe(2);
+  });
+
+  it('연기자는 언제나 사람 중에서만, 겹치지 않게 나온다', () => {
     for (let i = 0; i < 200; i += 1) {
       const s = startRound(
         ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'],
         ['a', 'b', 'c', 'd', 'e', 'f'],
         0,
       )!;
-      expect(s.actorIds.length).toBe(1);
-      expect(s.humanIds).toContain(s.actorIds[0]);
+      expect(s.actorIds.length).toBeLessThanOrEqual(2);
+      expect(new Set(s.actorIds).size).toBe(s.actorIds.length);
+      for (const id of s.actorIds) expect(s.humanIds).toContain(id);
     }
   });
 
+  it('0·1·2명이 전부 실제로 나온다 — 상한이 조용히 좁아지면 여기서 걸린다', () => {
+    const seen = new Set<number>();
+    for (let i = 0; i < 300; i += 1) {
+      seen.add(
+        startRound(
+          ['a', 'b', 'c', 'd', 'e', 'f', 'g'],
+          ['a', 'b', 'c', 'd', 'e', 'f'],
+          0,
+        )!.actorIds.length,
+      );
+    }
+    expect([...seen].sort()).toEqual([0, 1, 2]);
+  });
+
   it('연기자를 처형하면 연기자 승이고 reveal 에 role 이 실린다 (§18.4)', () => {
-    const s = startRound(['a', 'b', 'c', 'd'], ['a', 'b', 'c'], 0, rngOf(0.99))!;
+    // rngOf(0.6): 사람 4명은 상한 1 — count = floor(0.6×2) = 1, 연기자는
+    // humans[floor(0.6×4)] = 'c'. 시민이 셋 남아 표가 성립한다
+    const s = startRound(['a', 'b', 'c', 'd', 'e'], ['a', 'b', 'c', 'd'], 0, rngOf(0.6))!;
     expect(s.actorIds.length).toBe(1);
     const actor = s.actorIds[0];
     const others = s.humanIds.filter((h) => h !== actor);
@@ -661,7 +692,7 @@ describe('판 전체 — 집계가 결말로 이어진다', () => {
   });
 
   it('시민을 처형하면 AI 승', () => {
-    // FIXED 로 연 판의 연기자는 a 다 (pickActors 가 humans[floor(0×2)]) — b 가 시민이다.
+    // FIXED(0) 로 연 판에는 연기자가 없다 (count = floor(0×3) = 0) — 전원 시민이다.
     // 연기자 처형(→ 연기자 승)은 위 「연기자를 처형하면」 테스트가 본다.
     const s = playRound({ votes: { a: 'b', b: 'a' }, verdicts: { a: true }, rng: rngOf(0.99) });
     expect(s.nomineeId).toBe('b'); // 동점 [a,b] 의 1번
@@ -989,9 +1020,9 @@ describe('revealSnapshot — 정체를 내보내는 유일한 함수', () => {
     const s = playRound({ votes: { a: 'c', b: 'c' }, verdicts: { a: true, b: true } });
     const r = revealSnapshot(s)!;
     expect(r.identities.map((i) => i.id)).toEqual(SEATS);
-    // FIXED 로 연 판의 연기자는 a 다 — 사람 2명이면 정확히 1명 (2026-08-05 결정)
+    // FIXED(0) 로 연 판에는 연기자가 없다 (count = floor(0×3) = 0) — 사람은 전원 시민이다
     expect(r.identities).toEqual([
-      { id: 'a', isBot: false, role: 'actor' },
+      { id: 'a', isBot: false, role: 'citizen' },
       { id: 'b', isBot: false, role: 'citizen' },
       { id: 'c', isBot: true, role: 'ai' },
       { id: 'd', isBot: true, role: 'ai' },
@@ -1046,7 +1077,7 @@ describe('revealSnapshot — 정체를 내보내는 유일한 함수', () => {
         { voterId: 'b', targetId: 'c' },
       ],
       identities: [
-        { id: 'a', isBot: false, role: 'actor' }, // FIXED 판의 연기자 (위 identities 검사 참고)
+        { id: 'a', isBot: false, role: 'citizen' }, // FIXED 판은 연기자 0명 (위 identities 검사 참고)
         { id: 'b', isBot: false, role: 'citizen' },
         { id: 'c', isBot: true, role: 'ai' },
         { id: 'd', isBot: true, role: 'ai' },
