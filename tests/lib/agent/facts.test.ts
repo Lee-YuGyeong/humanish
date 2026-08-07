@@ -8,6 +8,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   factKey,
+  isQuestionLike,
   mergeFacts,
   pinFact,
   sanitizeFact,
@@ -253,6 +254,64 @@ describe('pinFact — 그때 한 답을 그대로 못 박는다', () => {
 
   it('발화 상한(42자)짜리 답도 담긴다 — MAX_FACT_LEN이 그만큼 있다', () => {
     expect(pinFact('몇 살이야?', '가'.repeat(42))).not.toBeNull();
+  });
+
+  /*
+   * 월드에서는 라운드 주제만이 아니라 **사람이 방금 친 아무 줄**이 여기 들어온다
+   * (app/api/internal/world-agent 의 trigger). 평서문에 딸려 나온 대꾸를 답으로
+   * 박으면 그 판 내내 동문서답이 된다 (isQuestionLike 의 상자).
+   */
+  it('평서문에는 안 박는다 — 낱말만 걸린 잡담이 사실이 되면 안 된다', () => {
+    // 실측된 모양: '회사'가 '하는 일'에 걸려 「하는 일: ㅇㅇ 힘내」가 박혔다
+    expect(pinFact('나 지금 회사인데 너무 졸려', 'ㅇㅇ 힘내')).toBeNull();
+    expect(pinFact('나 아까 편의점 가서 저녁 먹었어', '그렇구나')).toBeNull();
+  });
+
+  it('물음표가 없어도 의문 어미면 박는다', () => {
+    expect(pinFact('너 몇 살이니', '스물셋')).toBe('나이: 스물셋');
+  });
+});
+
+describe('isQuestionLike — 물음일 때만 못 박는다', () => {
+  it('물음표가 있으면 물음이다', () => {
+    expect(isQuestionLike('오늘 아침에 처음 먹은 것은?')).toBe(true);
+  });
+
+  it('확실한 의문 어미는 물음표 없이도 받는다', () => {
+    for (const q of ['뭐 먹었니', '어디 사냐', '지금 몇 시일까', '주말에 뭐 하나요']) {
+      expect(isQuestionLike(q), q).toBe(true);
+    }
+  });
+
+  it('평서문은 아니다 — 평서문과 겹치는 어미(야·어·아)는 일부러 안 받는다', () => {
+    for (const s of ['나 지금 회사인데 너무 졸려', '나 아까 편의점 갔다왔어', '오늘 좀 덥다', '']) {
+      expect(isQuestionLike(s), s).toBe(false);
+    }
+    expect(isQuestionLike(null)).toBe(false);
+  });
+});
+
+describe('시각 주제는 서로 갈린다 — 라운드 주제가 「지금 시각」을 덮어쓰면 안 된다', () => {
+  /*
+   * 실측: 월드 주제 풀의 "오늘 집을 나선 시각은 몇 시였어?"(worker/src/roundtable.ts)가
+   * `/몇 시/` 에 걸려 '지금 시각'으로 박혔고, 그 뒤 "지금 몇 시야?"에 봇이 아침에 집
+   * 나선 시각을 그대로 답했다 — clock.ts 가 넣어 준 진짜 시각과 어긋난다.
+   */
+  it('집 나선 시각은 지금 시각이 아니다', () => {
+    expect(topicOf('오늘 집을 나선 시각은 몇 시였어?')).toBe('집 나선 시각');
+    expect(topicOf('지금 몇 시야?')).toBe('지금 시각');
+  });
+
+  it('잠든·깬 시각도 따로다', () => {
+    expect(topicOf('어제 잠든 시각과 오늘 깬 시각은?')).toBe('잠든·깬 시각');
+  });
+
+  it('그래서 둘이 한 칸을 다투지 않는다', () => {
+    const sheet = mergeFacts(
+      [],
+      [pinFact('오늘 집을 나선 시각은 몇 시였어?', '여덟시 반쯤'), pinFact('지금 몇 시야?', '열시 십분')],
+    );
+    expect(sheet).toEqual(['집 나선 시각: 여덟시 반쯤', '지금 시각: 열시 십분']);
   });
 });
 
