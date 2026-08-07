@@ -1143,3 +1143,30 @@ describe('hasContent — 알맹이 없는 말에는 대꾸하지 않는다', () 
     expect(hasContent('3')).toBe(true);
   });
 });
+
+/*
+ * 답을 만드는 **동안** 새 자리를 잡으면 seq 가 올라 그 답이 버려진다
+ * (BotState.pending 의 상자 · room-do 의 upgradeSpeech). 사람이 조를수록 더
+ * 조용해지던 실제 증상이라, 자물쇠가 살아 있는지 검사로 못 박는다.
+ */
+describe('pending — 답을 만드는 중에는 새 요청을 안 받는다', () => {
+  const t0 = 1_000_000;
+
+  it('만드는 중인 봇은 대꾸 후보에서 빠진다', () => {
+    const bot = walkingBot(t0);
+    bot.pending = true;
+    expect(pickResponder([bot], t0)).toBeNull();
+  });
+
+  it('다 만들면 다시 받는다', () => {
+    const bot = walkingBot(t0);
+    bot.pending = true;
+    expect(pickResponder([bot], t0)).toBeNull();
+    bot.pending = false;
+    expect(pickResponder([bot], t0)).not.toBeNull();
+  });
+
+  it('새로 만든 봇은 잠겨 있지 않다', () => {
+    expect(createBot(SEED, 5, t0).pending).toBe(false);
+  });
+});

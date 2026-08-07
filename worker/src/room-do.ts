@@ -881,9 +881,12 @@ export class RoomDO {
       //   nextChatAt 이 안 밀려서, 투표가 끝나는 순간 밀린 타이머가 **전 봇에서 한꺼번에
       //   터진다** — 그 동시 발화가 곧 명단이다 (I1). shouldChat 은 막히든 말든 다음
       //   시각을 다시 잡아 준다(그 함수의 상자).
+      // ★ pending — 이미 답을 만드는 중이면 혼잣말로 그 자리를 뺏지 않는다
+      //   (BotState.pending). shouldChat 은 막히든 말든 다음 시각을 다시 잡아 주므로
+      //   botsMayChat 과 같은 자리에 둔다.
       const speakWindow = this.speakTopic();
       const wantsChat = shouldChat(bot, now, speakWindow !== null || this.humanSpokeLast());
-      if (wantsChat && this.botsMayChat()) {
+      if (wantsChat && this.botsMayChat() && !bot.pending) {
         // 라운지는 위장 지연 없이 LLM 이 오는 대로 말한다 (scheduleInstantSpeech 상자).
         // 로비 방은 풀이 비어 있어 null이 온다 — 자리만 잡히고 문구는 LLM이 채운다.
         if (DISGUISE_OFF || this.isLounge()) scheduleInstantSpeech(bot, now);
@@ -1141,20 +1144,33 @@ export class RoomDO {
       if (wait < MIN_AGENT_BUDGET_MS) return;
     }
 
-    const lines = await fetchAgentLines(
-      this.env,
-      roomId,
-      [bot.id],
-      this.chatContext(),
-      trigger,
-      event,
-      { [bot.id]: bot.facts },
-      // ★ 무대는 `synthetic` 이 아니라 **판이 도는가**로 갈린다 (RoundContext 의 상자).
-      //   월드의 판은 rooms.phase 를 'lobby' 로 둔 채 돌아서, 오리진 혼자서는
-      //   주제가 떠 있는 45초와 라운지 잡담을 구분할 방법이 없다.
-      { active: this.roundActive(), topic: this.speakTopic() },
-      wait,
-    );
+    /*
+     * ★ 이 순간부터 이 봇은 **새 발화 자리를 잡지 않는다** (BotState.pending).
+     *   여기서 안 잠그면 답이 오는 4~20초 사이에 사람이 한 줄만 쳐도 새 자리가
+     *   잡히고 seq 가 올라, 만들던 답이 아래 seq 검사에서 통째로 버려진다.
+     *   사람이 조를수록 더 조용해지던 게 이것이다 (사용자 신고 2026-08-07).
+     */
+    bot.pending = true;
+    let lines: Awaited<ReturnType<typeof fetchAgentLines>>;
+    try {
+      lines = await fetchAgentLines(
+        this.env,
+        roomId,
+        [bot.id],
+        this.chatContext(),
+        trigger,
+        event,
+        { [bot.id]: bot.facts },
+        // ★ 무대는 `synthetic` 이 아니라 **판이 도는가**로 갈린다 (RoundContext 의 상자).
+        //   월드의 판은 rooms.phase 를 'lobby' 로 둔 채 돌아서, 오리진 혼자서는
+        //   주제가 떠 있는 45초와 라운지 잡담을 구분할 방법이 없다.
+        { active: this.roundActive(), topic: this.speakTopic() },
+        wait,
+      );
+    } finally {
+      // 실패해도 반드시 푼다 — 안 그러면 그 봇은 영영 말을 안 한다.
+      bot.pending = false;
+    }
     const line = lines.find((l) => l.player_id === bot.id);
     if (!line?.text) return;
 
