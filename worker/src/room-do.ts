@@ -29,6 +29,7 @@ import {
   BOT_EMIT_JITTER_MS,
   BOT_JOIN_REACT_CHANCE,
   BOT_LEAVE_REACT_CHANCE,
+  BOT_MISSED_TTL_MS,
   BOT_PERSIST_MS,
   BOT_SILENCE_CHANCE,
   BOT_TICK_MS,
@@ -162,8 +163,15 @@ const DEFENSE_READ_MAX_MS = 2_500;
  *
  * 풀 문구 폴백은 그동안 죽는다 — 자리에 문구를 미리 채우면 같은 답이 두 번 나간다.
  * I1 위장(즉답 = 봇 신호)도 같이 꺼지므로 **측정이 끝나면 false 로 되돌린다.**
+ *
+ * ★ 2026-08-07: 되돌렸다 (사용자 결정). 측정은 끝났고, 그 결과는 아래에 남긴다 —
+ *   NIM 무료 티어의 google/gemma-4-31b-it 은 p50 ≈ 18초이고 **그게 전부 TTFT**다
+ *   (47자 프롬프트로 18자를 뽑는 데 19.7초, 첫 바이트까지 19.69초). 즉 max_tokens
+ *   나 프롬프트 길이를 줄여도 안 줄어든다 — 위 상자의 "생성 시간은 낸 토큰 수에
+ *   비례한다"(callNim 의 max_tokens 상자)는 그때는 맞았지만 지금 병목이 아니다.
+ *   다시 켜서 재려거든 **끝나고 반드시 false 로 되돌린다.**
  */
-const DISGUISE_OFF = true;
+const DISGUISE_OFF = false;
 
 function rand(min: number, max: number): number {
   return min + Math.random() * (max - min);
@@ -222,6 +230,15 @@ const META_START_TTL_MS = 10_000;
  */
 const MIN_AGENT_BUDGET_MS = 900;
 
+/*
+ * ★ 월드에만 더 높은 문턱(10초)을 둬 봤다가 **뺐다** (2026-08-07, 실측).
+ *   "모델 최속(11.7초)에도 못 미치는 예산이면 어차피 버릴 요청이니 큐만 먹는다"는
+ *   논리였는데, 판을 돌려 보니 발화가 오히려 줄었다. 예산이 짧아도 그 요청이
+ *   **가끔은 들어오고**, 월드는 자리를 놓친 답도 말하기 때문이다
+ *   ("어색한 풀 문구 < 침묵 < 늦은 진짜 답", upgradeSpeech 의 머리말).
+ *   버릴 요청을 줄이려면 문턱이 아니라 **지연 자체**를 줄여야 한다.
+ */
+
 /**
  * 월드 AI 방에서 LLM을 기다려 주는 상한 (ms). 예약 시각(speakAt)에 매이지 않는다 —
  * 풀 문구가 없는 방이라 자리를 놓친 답은 버리면 그냥 침묵인데, 사용자 결정은
@@ -235,8 +252,16 @@ const MIN_AGENT_BUDGET_MS = 900;
  *
  * ★ 판이 도는 동안에는 이 값이 그대로 쓰이지 않는다 — **남은 단계 시간**으로 한 번
  *   더 조인다 (upgradeSpeech). 주제가 바뀐 뒤에 오는 답은 동문서답이다.
+ *
+ * ★ 26초 → 32초 (2026-08-07). 위 실측(7~11초)이 낡았다 — 같은 모델·같은 계정에서
+ *   **중앙값 17초 · p90 21초**로 늘었고, 지연이 전부 TTFT 라(공급자 큐) 프롬프트를
+ *   줄여도 안 준다. 오리진 컷을 28초로 올리면서 그 위 여유(4초)를 그대로 유지한다.
+ *
+ *   ★ **이 상향이 듣는 곳은 라운지와 freechat 뿐이다.** speak(45초)에서는 위 상자의
+ *     단계 클램프가 먼저 걸려서 예산이 20초대에 묶인다 — 거기서 답을 살리는 건
+ *     이 값이 아니라 **물어보는 시각**이다 (bots.ts 의 TOPIC_SPEAK_MAX_FRAC).
  */
-const COMPANION_AGENT_TIMEOUT_MS = 26_000;
+const COMPANION_AGENT_TIMEOUT_MS = 32_000;
 
 /**
  * 단계 경계에 남겨 두는 여유 (ms). 답이 딱 마감에 오면 말풍선이 다음 단계로 넘어간다.
@@ -295,6 +320,34 @@ export class RoomDO {
    * 사람이 한마디 하면 0으로 돌아간다. 잃어도 무해하므로 메모리에만 둔다.
    */
   private botChainHops = 0;
+
+  /**
+   * ┌─ 답을 만드는 동안 들어와서 **놓친 사람 말** 한 줄 (2026-08-07, 사용자 결정) ─┐
+   * │ 신고: "말을 걸었는데 대꾸가 없다."                                          │
+   * │                                                                            │
+   * │ 봇이 LLM 답을 만드는 동안(실측 p50 18초)에는 pickResponder 가 그 봇을 뺀다   │
+   * │ (bots.ts 의 `!b.pending`). 월드 AI 는 **1대**라 그 순간 후보가 0이 되고,     │
+   * │ reactToHuman 은 그냥 return 했다 — 큐도 재시도도 없어서 그 18초 동안의 사람  │
+   * │ 발화가 **전부 영구히 사라졌다.** freechat 60초처럼 사람이 빠르게 치는        │
+   * │ 구간에서는 한 줄 답하고 서너 줄을 통째로 씹는 그림이 된다.                   │
+   * │                                                                            │
+   * │ 그래서 한 칸만 둔다. 규칙 셋:                                               │
+   * │  · **방 단위 한 칸**이다. 봇마다 두면 놓친 한 줄에 여러 봇이 동시에 답한다.  │
+   * │  · **늘 마지막 말로 덮어쓴다.** 사람도 답을 치는 동안 세 줄이 쌓이면 마지막   │
+   * │    줄에 답하지, 밀린 걸 순서대로 다 받아치지 않는다.                        │
+   * │  · **상해서 버린다** (BOT_MISSED_TTL_MS). 30초 지난 말에 이제 와 답하면      │
+   * │    그건 대꾸가 아니라 유령이다.                                            │
+   * │                                                                            │
+   * │ I1: 반응률 상한은 안 올라간다 — BOT_REACT_CHANCE 는 이미 1이고(constants.ts) │
+   * │ "알맹이 있는 말은 다 받는다"가 사용자 결정이다. 오히려 강화된다: 지금은      │
+   * │ **침묵 구간이 LLM 왕복 시간과 정확히 겹쳐서**, 봇이 말한 직후 몇 초가 반드시  │
+   * │ 무응답이다. 그 상관을 없애는 게 이 칸의 요점이다.                           │
+   * │                                                                            │
+   * │ 메모리에만 둔다. DO 가 죽으면 잃지만, 잃어 봐야 대꾸 한 줄이다.             │
+   * └────────────────────────────────────────────────────────────────────────────┘
+   */
+  private missedTrigger: string | null = null;
+  private missedAt = 0;
 
   /**
    * 진행 중인 판. **단계가 바뀔 때마다 storage에 굽는다** (매 틱 아니다 — 100ms마다
@@ -857,6 +910,13 @@ export class RoomDO {
     // 단계 목록은 lib/mp/constants.ts 의 BOT_GATHER_PHASES 하나뿐이다.
     const gather = shouldGather(phase);
 
+    // ⓿ 답을 만드느라 못 받은 말이 한 줄 밀려 있으면, 자리가 나는 대로 그걸 먼저 받는다
+    //    (missedTrigger 의 상자). 혼잣말(①)보다 앞이다 — 사람도 밀린 대꾸를 먼저 하고
+    //    새 화제를 꺼낸다. 자리 판정은 reactToHuman 과 **같은 pickResponder** 를 쓴다:
+    //    주제에 답할 빚(topicDue)이 남았으면 여기서도 안 뽑히고, 그동안 밀린 말은
+    //    그대로 기다린다.
+    this.replayMissed(now);
+
     for (const bot of bots) {
       // ① 말할 때가 됐으면 **예약만** 한다. 여기서 바로 broadcast하면 걸어가면서
       //    말풍선이 뜬다 — 사람은 타이핑 중 발이 묶이므로 그게 곧 봇 표식이다 (I1).
@@ -881,12 +941,35 @@ export class RoomDO {
       //   nextChatAt 이 안 밀려서, 투표가 끝나는 순간 밀린 타이머가 **전 봇에서 한꺼번에
       //   터진다** — 그 동시 발화가 곧 명단이다 (I1). shouldChat 은 막히든 말든 다음
       //   시각을 다시 잡아 준다(그 함수의 상자).
-      // ★ pending — 이미 답을 만드는 중이면 혼잣말로 그 자리를 뺏지 않는다
-      //   (BotState.pending). shouldChat 은 막히든 말든 다음 시각을 다시 잡아 주므로
-      //   botsMayChat 과 같은 자리에 둔다.
+      /*
+       * ★ pending — 이미 답을 만드는 중이면 혼잣말로 그 자리를 뺏지 않는다
+       *   (BotState.pending).
+       *
+       * ┌─ ★ pending 은 shouldChat **앞**이다 (2026-08-07, 실측) ────────────────┐
+       * │ 전에는 botsMayChat 과 같은 자리(뒤)에 뒀다. 그 근거는 바로 위 상자다 —   │
+       * │ 뒤에 두면 shouldChat 이 막히든 말든 nextChatAt 을 밀어 주므로, 단계가    │
+       * │ 풀리는 순간 밀린 타이머가 전 봇에서 한꺼번에 터지지 않는다.              │
+       * │                                                                        │
+       * │ 그 근거는 botsMayChat 에만 해당한다. 저건 **방 전체가 동시에** 풀리는    │
+       * │ 게이트라 동기화가 실제 위험이지만, pending 은 봇마다 따로 켜지고 따로    │
+       * │ 꺼지는 값이라 겹칠 일이 없다.                                          │
+       * │                                                                        │
+       * │ 그런데 뒤에 두면 **주제에 답할 차례가 통째로 날아간다.** shouldChat 은   │
+       * │ 부르는 순간 nextChatAt 을 25~75초(BOT_CHAT_*) 뒤로 미는데, speak 창은    │
+       * │ 45초다. LLM 왕복이 15~20초인 지금(실측: gemma-4-31b-it p50 19.2초,      │
+       * │ 전부 TTFT) 창이 열릴 때 이미 답을 만들고 있는 일이 흔하고, 그 한 번에    │
+       * │ 그 창의 유일한 발화 차례가 사라진다. 실측된 판에서 첫 speak 45초가       │
+       * │ 통째로 조용했고 사람이 세 번 말을 걸어도 대꾸가 없었다 — 이 자리다.      │
+       * │                                                                        │
+       * │ 앞으로 옮기면 차례가 **보존된다.** pending 이 풀리는 다음 틱에 그대로    │
+       * │ 꺼내 쓴다. 재시도를 따로 걸지 않는 이유는 그게 더 나쁘기 때문이다 —      │
+       * │ 판이 도는 방에서는 자리를 잡을 때마다 봇이 서서 "친다"(scheduleSpeech)   │
+       * │ 라, 2초마다 다시 걸면 그 반복적인 멈춤 자체가 자리 신호가 된다 (I1).     │
+       * └────────────────────────────────────────────────────────────────────────┘
+       */
       const speakWindow = this.speakTopic();
-      const wantsChat = shouldChat(bot, now, speakWindow !== null || this.humanSpokeLast());
-      if (wantsChat && this.botsMayChat() && !bot.pending) {
+      const wantsChat = !bot.pending && shouldChat(bot, now, speakWindow !== null || this.humanSpokeLast());
+      if (wantsChat && this.botsMayChat()) {
         // 라운지는 위장 지연 없이 LLM 이 오는 대로 말한다 (scheduleInstantSpeech 상자).
         // 로비 방은 풀이 비어 있어 null이 온다 — 자리만 잡히고 문구는 LLM이 채운다.
         if (DISGUISE_OFF || this.isLounge()) scheduleInstantSpeech(bot, now);
@@ -930,8 +1013,43 @@ export class RoomDO {
 
       // ③ 서 있는 시간이 끝났으면 그때 말한다. 이 틱의 stepBot은 이미 idle로 굴렸다.
       //    뒷줄이 있으면 takeSpeech가 이미 이어 예약했다 — 그래서 tail을 넘기지 않는다.
+      const held = bot.speechHeld;
       const said = takeSpeech(bot, now);
       if (said !== null) this.botSpoke(bot, said, now);
+      /*
+       * ┌─ ★ 못 갚은 빚은 놓아준다 (2026-08-07, 실측) ────────────────────────────┐
+       * │ topicDue 는 "이 창에서 주제에 답할 차례가 아직 남았다"는 표시고,          │
+       * │ pickResponder 가 그 표시를 보고 이 봇을 **사람 말 대꾸에서 빼 둔다**      │
+       * │ (bots.ts:1057). 잡아 둔 자리를 대꾸 예약이 덮어쓰지 못하게 하려는 것이다. │
+       * │                                                                        │
+       * │ 그런데 지우는 곳이 botSpoke 하나뿐이었다 — 즉 **말을 해야만** 풀린다.     │
+       * │ LLM 이 못 오거나 답이 거르개에 걸려 자리가 빈 채 지나가면 빚이 그대로     │
+       * │ 남아서, 남은 창 내내 사람이 무슨 말을 걸어도 이 봇은 뽑히지 않는다.       │
+       * │ 실측: 첫 speak 45초 동안 사람이 세 번 말했는데 대꾸가 한 번도 없었다.     │
+       * │                                                                        │
+       * │ 자리가 빈 채 지나갔다는 건 이 창의 시도가 끝났다는 뜻이다. 단 **아직      │
+       * │ 답을 만드는 중이면(pending) 그대로 둔다** — 그때 빚을 풀면 사람 말 대꾸가 │
+       * │ 새 자리를 잡아 seq 를 올리고, 날아오던 주제 답이 통째로 무효가 된다       │
+       * │ (upgradeSpeech 의 seq 검사). 원래 topicDue 가 막으려던 게 바로 그거다.   │
+       * │                                                                        │
+       * │ I1: 침묵을 줄이는 게 아니라 **침묵의 원인을 되돌리는** 변경이다. 의도된   │
+       * │ 침묵(primeForTopic 의 speak=false)은 여기 오지 않는다 — 그쪽은 자리를     │
+       * │ 잡지 않고 topicDue 를 애초에 0 으로 둔다.                                │
+       * │                                                                        │
+       * │ 끝났다고 볼 조건은 둘이다. 라운지는 자리를 잡자마자 지나가므로(instant)   │
+       * │ **방금 자리가 빈 채 풀렸다**(held)로 잡히고, 판이 도는 방은 자리가 먼저   │
+       * │ 지나가고 답이 한참 뒤에 오므로 그때는 pending 이 켜져 있어 위 조건을      │
+       * │ 못 탄다 — 그쪽은 **이 창 안에 다시 말할 차례가 없다**(nextChatAt)로 잡는다.│
+       * └────────────────────────────────────────────────────────────────────────┘
+       */
+      if (
+        bot.topicDue > now &&
+        !bot.speechHeld &&
+        !bot.pending &&
+        (held || bot.nextChatAt >= bot.topicDue)
+      ) {
+        bot.topicDue = 0;
+      }
     }
 
     if (now - this.lastPersistAt > BOT_PERSIST_MS) {
@@ -960,7 +1078,15 @@ export class RoomDO {
     // 남은 제동은 구조다: 이미 치는 중이면 안 뽑히고(speechHeld), 주제에 답할 빚이
     // 남았으면 그 창에서는 빠진다(topicDue).
     const bot = pickResponder(bots, now, this.meta?.companionMode === true);
-    if (!bot) return;
+    if (!bot) {
+      // 받을 자리가 없다 (대개 답을 만드는 중이라 pending 이다). 버리지 말고 한 칸에
+      // 얹어 둔다 — 자리가 나면 tick 이 이어받는다 (missedTrigger 의 상자).
+      this.missedTrigger = trigger;
+      this.missedAt = now;
+      return;
+    }
+    // 이 줄에 바로 답한다 — 밀려 있던 말은 이걸로 덮인다. 마지막 말이 이긴다.
+    this.missedTrigger = null;
 
     // 라운지는 읽는 시간도 치는 시간도 없다 — LLM 이 오는 대로 바로 말한다
     // (scheduleInstantSpeech 상자). 판이 도는 방은 읽는 시간을 준다 — 0이면
@@ -970,6 +1096,35 @@ export class RoomDO {
 
     // 자리는 잡혔다. LLM이 speakAt 전에 오면 그 자리가 채워지고, 못 오면 잠깐 서 있다
     // 그냥 지나간다 — 어느 쪽이든 서 있는 시간은 같다 (bots.ts의 speechHeld).
+    void this.upgradeSpeech(bot, bot.speechSeq, trigger);
+  }
+
+  /**
+   * 답을 만드느라 못 받았던 한 줄을, 자리가 나면 이제 받는다 (missedTrigger 의 상자).
+   *
+   * reactToHuman 과 **같은 문**을 쓴다 — 여기만 완화하면 "밀렸을 때만 더 잘 답하는
+   * 자리"가 되고 그 편차가 곧 신호다 (I1). 다른 점은 하나뿐이다: 이미 한 번
+   * 놓친 말이라 상하기 전에만 쓴다.
+   */
+  private replayMissed(now: number): void {
+    const trigger = this.missedTrigger;
+    if (trigger === null) return;
+
+    // 상했으면 조용히 버린다. 30초 지난 말에 이제 와 답하면 대꾸가 아니라 유령이다.
+    if (now - this.missedAt > BOT_MISSED_TTL_MS) {
+      this.missedTrigger = null;
+      return;
+    }
+
+    const bots = this.bots;
+    if (!bots || bots.length === 0 || !this.botsMayChat()) return;
+
+    const bot = pickResponder(bots, now, this.meta?.companionMode === true);
+    if (!bot) return; // 아직 자리가 없다 — 다음 틱에 다시 본다 (TTL 이 끝을 낸다).
+
+    this.missedTrigger = null;
+    if (DISGUISE_OFF || this.isLounge()) scheduleInstantSpeech(bot, now);
+    else scheduleSpeech(bot, pickLine(this.botLines(), this.recentTexts()), now, readDelayMs());
     void this.upgradeSpeech(bot, bot.speechSeq, trigger);
   }
 
@@ -1791,6 +1946,13 @@ export class RoomDO {
 
   private hushBots(): void {
     for (const bot of this.bots ?? []) cancelSpeech(bot);
+    /*
+     * ★ 밀려 있던 말도 같이 버린다 (missedTrigger). 남겨 두면 앞 단계에서 못 받은
+     *   한 줄이 **단계가 바뀐 뒤에** 튀어나온다 — cancelSpeech 가 막으려는 게 정확히
+     *   그거다(그 함수의 상자): 투표 패널이 뜨는 순간 사람은 입력이 막히므로,
+     *   "단계가 바뀐 뒤에도 말하는 자리 = 봇"이 된다 (I1).
+     */
+    this.missedTrigger = null;
   }
 
   /**
