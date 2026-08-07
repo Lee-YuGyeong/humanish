@@ -41,6 +41,20 @@ import { create } from 'zustand';
 import type { RoundPhase } from '@/lib/mp/protocol';
 import type { GateInfo, RevealResult, RoundInfo } from './net/connection';
 
+/**
+ * 좌석 메모의 한 칸 — **내 짐작**이다 (2026-08-07 요청). 서버가 준 정체가 아니다.
+ *
+ * ★ 이름을 role 로 짓지 않는다. 이 값은 **아무 근거가 없다** — 내가 눌러서 만든
+ *   낙서고, 소켓으로 나가지도 않고 아무도 못 본다. RoundRole 을 재사용하면
+ *   언젠가 "이 자리 role" 로 읽혀서 진짜 정체가 들어오는 통로가 열린다 (I1).
+ * ★ 없음('?')은 값이 아니라 **키가 없는 것**이다. 초기값을 따로 두면 좌석이
+ *   바뀔 때마다 빈 칸을 채워 넣어야 한다.
+ */
+export type SeatGuess = 'human' | 'actor' | 'ai';
+
+/** 눌렀을 때 도는 차례. null 이 '?' 다 (사용자 지정: ? → 사람 → 연기자 → AI → ?) */
+const GUESS_CYCLE: (SeatGuess | null)[] = [null, 'human', 'actor', 'ai'];
+
 interface RoundtableState {
   // ── 서버가 아는 값 ────────────────────────────────────────────────────────
   /**
@@ -97,6 +111,17 @@ interface RoundtableState {
    * false 로 돌린다 — 안 돌리면 다음 판의 카드가 아예 안 뜬다.
    */
   roleAck: boolean;
+  /**
+   * 좌석 메모 — players.id → 내 짐작 (2026-08-07 요청). 키가 없으면 '?' 다.
+   *
+   * ★ **완전히 로컬이다.** 소켓으로 나가지 않고, 남의 화면에도 없고, 서버는
+   *   이런 게 있는지도 모른다. 그래서 이 값이 무엇이든 I1 과 무관하다 —
+   *   거꾸로, 여기에 **서버가 준 값을 채워 넣지 마라.** 그 순간 "내가 찍은 것"과
+   *   "서버가 아는 것"이 같은 그릇에 담겨서, 정체가 새는 자리가 된다.
+   * ★ 새 판(rematch)에서 걷는다. 지난 판의 낙서가 남아 있으면 그게 지금 판의
+   *   판단인 것처럼 보인다 — myRole 과 같은 자리에서 같이 비운다.
+   */
+  guesses: Record<string, SeatGuess>;
 
   // ── 액션 ──────────────────────────────────────────────────────────────────
   /**
@@ -126,6 +151,8 @@ interface RoundtableState {
   setMyRole(role: 'citizen' | 'actor'): void;
   /** 역할 카드의 「확인」 — 카드를 걷고 왼쪽 라벨로 넘어간다 */
   ackRole(): void;
+  /** 좌석 메모를 한 칸 돌린다: ? → 사람 → 연기자 → AI → ? */
+  cycleGuess(playerId: string): void;
   /** 방을 옮기거나 판이 끝나면 부른다. **지난 판의 정체가 새 방으로 새면 안 된다** */
   reset(): void;
 }
@@ -152,6 +179,7 @@ const IDLE = {
   myVerdict: null,
   myRole: null,
   roleAck: false,
+  guesses: {} as Record<string, SeatGuess>,
 };
 
 export const useRoundtableStore = create<RoundtableState>((set) => ({
@@ -201,7 +229,7 @@ export const useRoundtableStore = create<RoundtableState>((set) => ({
          * └──────────────────────────────────────────────────────────────────────┘
          */
         ...(round.phase === 'topic' && (s.phase === 'reveal' || s.phase === 'ended')
-          ? { myRole: null, roleAck: false }
+          ? { myRole: null, roleAck: false, guesses: {} }
           : null),
       };
     }),
@@ -219,6 +247,19 @@ export const useRoundtableStore = create<RoundtableState>((set) => ({
   setMyRole: (myRole) => set({ myRole }),
 
   ackRole: () => set({ roleAck: true }),
+
+  /*
+   * 한 칸 돌린다. **없음으로 돌아오면 키를 지운다** — undefined 를 넣어 두면
+   * 나간 사람의 자리가 메모에 계속 남는다.
+   */
+  cycleGuess: (playerId) =>
+    set((s) => {
+      const next = GUESS_CYCLE[(GUESS_CYCLE.indexOf(s.guesses[playerId] ?? null) + 1) % GUESS_CYCLE.length];
+      const guesses = { ...s.guesses };
+      if (next === null) delete guesses[playerId];
+      else guesses[playerId] = next;
+      return { guesses };
+    }),
 
   reset: () => set({ ...IDLE }),
 }));

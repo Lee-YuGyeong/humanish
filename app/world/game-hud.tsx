@@ -33,7 +33,7 @@ import { VERDICT_MAX_REVOTES } from '@/lib/mp/constants';
 import type { RevealIdentity, RoundPhase, RoundRole, RoundWinner } from '@/lib/mp/protocol';
 import { seatColor } from '@/lib/mp/validate';
 import cardStyles from './role-card.module.css';
-import { roleCardOpen, useRoundtableStore } from './roundtable-store';
+import { type SeatGuess, roleCardOpen, useRoundtableStore } from './roundtable-store';
 import { useWorldStore } from './store';
 
 /* ─────────────────────────────── 말 ─────────────────────────────── */
@@ -330,6 +330,95 @@ export function MyRoleBadge() {
           {card.name}
         </span>
       </span>
+    </div>
+  );
+}
+
+/* ─────────────────────────────── 좌석 메모 ─────────────────────────────── */
+
+/**
+ * 메모 한 칸의 생김새. '?' 는 아직 안 찍은 것이고 값이 아니다 (roundtable-store).
+ *
+ * 색은 이 화면이 이미 쓰는 말과 맞춘다 — 연기자는 월드 금색(#d4a373), AI 는
+ * emerald(ROLE_TAG.ai), 사람은 시민 카드의 하늘색(ROLE_CARD.citizen). 여기서
+ * 새 색을 지어내면 결과 화면과 메모가 서로 다른 색으로 같은 말을 하게 된다.
+ */
+const GUESS_LOOK: Record<'none' | SeatGuess, { label: string; color: string }> = {
+  none: { label: '?', color: '#737373' },
+  human: { label: '사람', color: '#7dd3fc' },
+  actor: { label: '연기자', color: '#d4a373' },
+  ai: { label: 'AI', color: '#34d399' },
+};
+
+/**
+ * 왼쪽의 **내 메모** — 누가 뭐라고 생각하는지 눌러서 적어 둔다 (2026-08-07 요청).
+ * 한 번 누를 때마다 ? → 사람 → 연기자 → AI → ? 로 돈다.
+ *
+ * ┌─ 이건 화면 밖으로 나가지 않는다 ───────────────────────────────────────────┐
+ * │ 값은 roundtable-store 의 guesses 하나뿐이고 소켓·서버와 아무 관계가 없다.   │
+ * │ 그래서 무엇을 찍든 I1 과 무관하다. **거꾸로가 위험하다** — 여기에 서버가    │
+ * │ 준 정체(reveal.identities)를 미리 채워 넣지 마라. 그 순간 이 판은 남의      │
+ * │ 역할을 그리는 자리가 된다.                                                 │
+ * └────────────────────────────────────────────────────────────────────────────┘
+ *
+ * ★ 명단은 투표 패널과 **같은 useSeats()** 다. 여기서 따로 모으면 판 중간에 들어온
+ *   사람이 한쪽에만 뜬다. 이름은 '익명N', 점 색은 좌석 색으로 좌석표와 맞춘다.
+ * ★ 내 자리는 「나」로 두고 못 누르게 한다. 내 역할은 짐작할 것이 아니다
+ *   (왼쪽 위 MyRoleBadge 가 이미 말하고 있다).
+ * ★ **걸어 다니는 동안에는 못 누른다.** 그때는 포인터가 잠겨 커서가 없기 때문이다
+ *   (world-scene 의 포인터락). ESC 로 커서를 되찾거나, 투표처럼 이동이 잠긴 단계
+ *   에서는 그냥 눌린다 — 어차피 찍어 두고 싶은 순간이 거기다.
+ * ★ 좌석이 2개 미만이면 그리지 않는다. 나 혼자인 라운지에서 적어 둘 것이 없다.
+ */
+export function SeatNotes() {
+  const seats = useSeats();
+  const guesses = useRoundtableStore((s) => s.guesses);
+  const cycleGuess = useRoundtableStore((s) => s.cycleGuess);
+
+  if (seats.length < 2) return null;
+
+  return (
+    <div className="pointer-events-auto mt-3 w-[9.5rem] rounded-xl border border-white/10 bg-black/55 p-1.5 backdrop-blur">
+      <p className="px-1.5 pb-1 text-[8px] uppercase tracking-[0.2em] text-neutral-500">내 메모</p>
+      <ul className="flex flex-col gap-0.5">
+        {seats.map((s) => {
+          const look = GUESS_LOOK[s.isSelf ? 'none' : (guesses[s.id] ?? 'none')];
+          return (
+            <li key={s.id}>
+              <button
+                type="button"
+                disabled={s.isSelf}
+                onClick={() => cycleGuess(s.id)}
+                aria-label={`${s.nickname} — 지금 ${s.isSelf ? '나' : look.label}`}
+                className="flex w-full items-center gap-1.5 rounded-lg px-1.5 py-1 text-left transition-colors enabled:cursor-pointer enabled:hover:bg-white/[0.07] disabled:cursor-default"
+              >
+                <span
+                  aria-hidden
+                  className="h-1.5 w-1.5 shrink-0 rounded-full"
+                  style={{ backgroundColor: seatColor(s.seat) }}
+                />
+                <span className="min-w-0 flex-1 truncate text-[10px] text-neutral-300">
+                  {s.nickname}
+                </span>
+                <span
+                  className="shrink-0 rounded px-1 py-px text-[9px] font-bold leading-tight"
+                  style={
+                    s.isSelf
+                      ? { color: '#a3a3a3' }
+                      : {
+                          color: look.color,
+                          background: `color-mix(in srgb, ${look.color} 16%, transparent)`,
+                          border: `1px solid color-mix(in srgb, ${look.color} 40%, transparent)`,
+                        }
+                  }
+                >
+                  {s.isSelf ? '나' : look.label}
+                </span>
+              </button>
+            </li>
+          );
+        })}
+      </ul>
     </div>
   );
 }

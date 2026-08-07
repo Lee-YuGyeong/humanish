@@ -24,7 +24,7 @@ import { WORLD_SEAT_SLOTS, isMovementLocked, mayChat } from '@/lib/mp/constants'
 import { spawnFor } from '@/lib/mp/spawn';
 import type { Role } from '@/lib/game/types';
 import { WorldConnection, type WorldEvents } from './net/connection';
-import GameHud, { MyRoleBadge } from './game-hud';
+import GameHud, { MyRoleBadge, SeatNotes } from './game-hud';
 import {
   getVolume as getMusicVolume,
   setVolume as setMusicVolume,
@@ -790,6 +790,13 @@ export default function WorldPage() {
             예전에는 여기 회색 한 줄이었는데 방 코드 줄과 구별이 안 됐다.
           */}
           <MyRoleBadge />
+          {/*
+            내 메모 (2026-08-07 요청). 좌석마다 ? → 사람 → 연기자 → AI 로 눌러
+            찍어 둔다. **전부 로컬이다** — game-hud 의 SeatNotes 머리말 참고.
+            머리말 안에 두는 이유는 위치를 숫자로 고정하지 않기 위해서다:
+            역할 뱃지가 뜨고 지는 만큼 이 판도 같이 밀린다.
+          */}
+          {live ? <SeatNotes /> : null}
         </div>
         {/* 소리는 걸으면서 M · − + 로 맞춘다 (판 없음) */}
         {live ? <StatusChip /> : null}
