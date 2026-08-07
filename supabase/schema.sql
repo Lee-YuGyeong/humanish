@@ -95,6 +95,39 @@ alter table rooms add constraint rooms_phase_check
   check (phase in ('lobby','question','target','chat','vote','revote','reveal','replay'));
 
 ------------------------------------------------------------------------------
+-- world_ai_seats — 월드 AI 가 가져간 자리 번호 (2026-08-08 결정)
+------------------------------------------------------------------------------
+-- ┌─ 왜 rooms 컬럼이 아니라 별도 테이블인가 (I1) ──────────────────────────────┐
+-- │ **rooms 는 anon 이 통째로 읽는다** (policies.sql — `grant select on rooms`).│
+-- │ 거기에 AI 자리를 적으면 브라우저 콘솔 한 줄로 정답이 나온다. 이 테이블은     │
+-- │ anon·authenticated 에게 아무 권한도 주지 않는다 (policies.sql).            │
+-- │                                                                           │
+-- │ 왜 적어둬야 하는가: start_world_seats 가 시작 순간 사람+AI 를 1..N+1 로     │
+-- │ 한 번 섞고 나면, 그 뒤로 AI 가 어느 번호였는지 알 방법이 없다. AI 는        │
+-- │ players 행이 없는 synthetic 이라 자리를 스스로 붙들지 못한다               │
+-- │ (lib/server/world-ai.ts 머리말). buildWorldRoster 는 상태가 없어서 봇이     │
+-- │ 한마디 할 때마다 다시 계산하는데, 그때 명단이 바뀌어 있으면 **판 도중에     │
+-- │ 전원의 익명 번호가 갈아엎어진다.** 그래서 한 번 적고 그 뒤로는 읽기만 한다. │
+-- └───────────────────────────────────────────────────────────────────────────┘
+--
+-- ★ 자리 하나가 아니라 배열이다. AI 수는 lib/game/rules.ts 의 AI_SEATS_PER_ROUND
+--   에서 오고 그 값이 start_world_seats 의 인자로 내려온다 — 수를 늘려도 스키마는
+--   그대로다. 지금은 언제나 길이 1 이다.
+-- ★ 이 행이 있는 방은 pick_free_seat 이 그 번호를 빈 자리로 보지 않는다.
+--   월드 방은 phase 가 계속 'lobby' 라 시작한 뒤에도 사람이 들어올 수 있고
+--   (join_room 은 phase 만 본다), 그때 AI 번호를 받아 가면 같은 익명N 이 둘 된다.
+create table if not exists world_ai_seats (
+  room_id    uuid primary key references rooms(id) on delete cascade,
+  -- 1..9 (players.seat 과 같은 범위). check 안에는 서브쿼리를 못 쓰므로
+  -- generate_series 대신 상수 배열로 적는다 — 포함 관계(<@) 하나가 원소 전부를 본다.
+  seats      int[] not null check (
+               array_length(seats, 1) >= 1
+               and seats <@ array[1,2,3,4,5,6,7,8,9]
+             ),
+  created_at timestamptz not null default now()
+);
+
+------------------------------------------------------------------------------
 -- players
 ------------------------------------------------------------------------------
 create table if not exists players (

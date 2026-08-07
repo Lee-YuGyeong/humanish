@@ -77,6 +77,21 @@ schema_checks() {
   check "rooms에 world_started_at 컬럼이 있다" "1" \
     "$(q "select count(*) from information_schema.columns where table_name='rooms' and column_name='world_started_at';")"
 
+  # 월드 AI 가 가져간 자리 (2026-08-08). 없으면 start_world_seats 가 42P01 로 죽어
+  # **월드 시작 자체가 안 된다**. rooms 컬럼이 아니라 별도 테이블인 이유는 아래
+  # anon 권한 검사에 있다 — rooms 는 anon 이 통째로 읽는다 (I1).
+  check "world_ai_seats 테이블이 있다" "1" \
+    "$(q "select count(*) from information_schema.tables where table_name='world_ai_seats';")"
+
+  # ★ 방마다 한 줄이어야 한다. 기본키가 없으면 시작을 두 번 눌렀을 때 줄이 둘 되고,
+  #   buildWorldRoster 의 maybeSingle 이 그 순간 에러가 되어 월드 명단이 통째로 멈춘다.
+  check "world_ai_seats 기본키가 room_id 다" "room_id" \
+    "$(q "select string_agg(a.attname, ',' order by k.ord)
+            from pg_constraint c
+            join lateral unnest(c.conkey) with ordinality k(att, ord) on true
+            join pg_attribute a on a.attrelid = c.conrelid and a.attnum = k.att
+           where c.conrelid = to_regclass('world_ai_seats') and c.contype = 'p';")"
+
   # ★ 컬럼만 보면 부족하다. 제약이 빠지거나 하한이 빠지면 ''(빈 문자열)이 들어가고,
   #   화면은 "이름이 있는데 안 보이는" 방을 그린다 — null 로 접혀야 코드로 대신 부른다.
   #
@@ -387,6 +402,7 @@ schema_checks() {
     "kick_player(uuid,uuid,uuid)" \
     "fill_with_bots(uuid)" \
     "shuffle_seats(uuid)" \
+    "start_world_seats(uuid,int)" \
     "send_message(uuid,uuid,text,int)" \
     "say_lobby_line(uuid,uuid,text,int,int)" \
     "set_lobby_ready(uuid,uuid,boolean)" \
@@ -413,6 +429,14 @@ schema_checks() {
   check "anon은 messages 테이블을 못 읽는다 (I1)" "f" \
     "$(q "select has_table_privilege('anon','messages','select');")"
 
+  # ★ 이 테이블은 **정답 그 자체다** — 월드 AI 가 가져간 익명 번호가 방마다 한 줄이다.
+  #   한 칸이라도 열리면 콘솔 한 줄로 판이 끝난다. rooms 컬럼으로 두지 않은 이유가
+  #   이것이다 (rooms 는 anon 이 통째로 읽는다 — 바로 아래 select 권한).
+  for r in anon authenticated; do
+    check "$r 는 world_ai_seats 를 못 읽는다 (I1)" "f" \
+      "$(q "select has_table_privilege('$r','world_ai_seats','select');")"
+  done
+
   # 쓰기는 전부 service role 서버를 거친다 (I9). anon에 쓰기 권한이 남아 있으면 안 된다.
   for t in rooms questions answers messages votes players; do
     check "anon은 $t 에 쓰기 권한이 없다" "f" \
@@ -435,6 +459,7 @@ schema_checks() {
     "kick_player(uuid,uuid,uuid)" \
     "fill_with_bots(uuid)" \
     "shuffle_seats(uuid)" \
+    "start_world_seats(uuid,int)" \
     "say_lobby_line(uuid,uuid,text,int,int)" \
     "set_lobby_ready(uuid,uuid,boolean)" \
     "set_lobby_name(uuid,uuid,text)" \

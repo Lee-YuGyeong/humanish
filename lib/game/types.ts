@@ -76,9 +76,17 @@ export interface Room {
 export interface Player {
   id: string;
   room_id: string;
-  nickname: string; // '익명1' ~ '익명8'. 자리 번호를 그대로 쓴다
+  nickname: string; // '익명1' ~ '익명9'. 자리 번호를 그대로 쓴다
   mask_id: string;
-  seat: number; // 1 ~ room.capacity(최대 8). 표시 순서 고정
+  /**
+   * 1 ~ 9 (players.seat check). 표시 순서 고정.
+   *
+   * 입장할 때는 사람 정원(1..capacity) 안에서 무작위로 받는다 (pick_free_seat).
+   * 시작할 때 다시 배정된다 — 2D 는 shuffle_seats 가 1..N 으로, 월드는
+   * start_world_seats 가 **AI 몫 한 칸을 포함해** 1..N+1 로 섞는다. 그래서 사람도
+   * 9번을 받을 수 있다 (사람 8 + AI 1 인 방).
+   */
+  seat: number;
   is_bot: boolean;
   connected: boolean;
   /**

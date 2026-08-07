@@ -167,12 +167,12 @@ export async function buildWorldRoster(roomId: string): Promise<WorldRoster | nu
   const db = getServiceClient();
 
   /*
-   * ★ 둘을 **나란히** 던진다. 서로 필요로 하지 않는데 줄 세우면 왕복이 두 번이고,
+   * ★ 셋을 **나란히** 던진다. 서로 필요로 하지 않는데 줄 세우면 왕복이 그만큼 늘고,
    *   이 함수는 봇이 한마디 할 때마다 LLM 을 부르기 **전에** 불린다 — 그 왕복이
    *   그대로 봇 응답 지연에 얹힌다 (2026-08-06, "봇이 너무 느리다").
-   *   방이 없으면 좌석 조회는 헛일이 되지만, 그건 없는 방을 물었을 때뿐이다.
+   *   방이 없으면 나머지 둘은 헛일이 되지만, 그건 없는 방을 물었을 때뿐이다.
    */
-  const [{ data: room }, { data: playerRows, error }] = await Promise.all([
+  const [{ data: room }, { data: playerRows, error }, { data: aiSeatRow }] = await Promise.all([
     db
       .from('rooms')
       // capacity를 빠뜨리면 자리 계산이 통째로 어긋난다 — 컬럼을 항상 명시한다.
@@ -187,6 +187,14 @@ export async function buildWorldRoster(roomId: string): Promise<WorldRoster | nu
       .select('id, seat, nickname, is_bot')
       .eq('room_id', roomId)
       .order('seat', { ascending: true }),
+    /*
+     * 시작할 때 AI 가 가져간 번호 (start_world_seats 가 적어둔다).
+     * 시작 전(라운지)에는 행이 없고, 그때는 아래 지연 합류가 자리를 스스로 고른다.
+     *
+     * ★ **service role 로만 읽힌다.** anon 에게는 권한이 없다 (supabase/policies.sql) —
+     *   이 값이 곧 정답이라 클라이언트로는 한 칸도 나가면 안 된다 (I1).
+     */
+    db.from('world_ai_seats').select('seats').eq('room_id', roomId).maybeSingle(),
   ]);
   if (!room) return null;
   if (error) throw new ApiError(500, `좌석 조회 실패: ${error.message}`);
@@ -233,7 +241,18 @@ export async function buildWorldRoster(roomId: string): Promise<WorldRoster | nu
      */
     const started = room.world_started_at != null;
     /*
-     * ┌─ 월드 AI 는 **지금 최대 자리 다음 번호에** 선다 (2026-08-04 결정) ─────────┐
+     * ┌─ 시작한 방의 AI 자리는 **DB 에 적혀 있다** (2026-08-08 결정) ──────────────┐
+     * │ start_world_seats 가 시작 순간 사람 + AI 를 1..N+1 로 한 번 섞고, AI 가     │
+     * │ 가져간 번호를 world_ai_seats 에 적는다. 여기서는 그걸 읽기만 한다.          │
+     * │                                                                            │
+     * │ 왜 여기서 고르지 않는가: 이 함수는 **상태가 없다.** 봇이 한마디 할 때마다   │
+     * │ 다시 불리는데 그 사이 사람이 하나 나가면 계산 결과가 달라지고, 그러면 판     │
+     * │ 도중에 전원의 익명 번호가 갈아엎어진다. 그리고 무엇보다 — 계산으로 고르면   │
+     * │ 아래 라운지 규칙(max+1)을 쓰게 되는데, 그건 **AI 가 언제나 방에서 제일 큰   │
+     * │ 번호**라는 뜻이다. 제일 큰 번호만 찍으면 맞는 판이 된다 (I1).               │
+     * └────────────────────────────────────────────────────────────────────────────┘
+     *
+     * ┌─ 라운지(시작 전)의 AI 는 **지금 최대 자리 다음 번호에** 선다 (2026-08-04) ─┐
      * │ 예전엔 1번부터 빈 자리를 채웠다. 그런데 DB 의 자리 배정(pick_free_seat)은   │
      * │ 월드 AI 를 모르고 무작위로 고르므로, 사람이 AI 가 서 있던 자리를 받을 수     │
      * │ 있었다. 그러면 AI 가 옆 자리로 밀리는데 id 가 순번 기반이라 그대로였고,      │
@@ -246,15 +265,28 @@ export async function buildWorldRoster(roomId: string): Promise<WorldRoster | nu
      * │   + player_joined 로 방송된다 — 조용히 닉네임만 바뀌는 일은 없다.            │
      * │ · 사람이 8자리를 다 채웠으면 AI 는 **정원 밖 9번**에 선다. 좌석 원을 9칸으로│
      * │   나누는 이유가 이것이다 (lib/mp/constants.ts 의 WORLD_SEAT_SLOTS).         │
+     * │ · 시작하면 이 자리는 버려진다 — start_world_seats 가 전부 다시 섞는다.      │
      * └────────────────────────────────────────────────────────────────────────────┘
      */
+    const stored = ((aiSeatRow?.seats ?? []) as number[]).filter(
+      (s) => s >= 1 && s <= MAX_SEATS_PER_ROOM,
+    );
+    /*
+     * ★ 적힌 게 없는 시작된 방 = 이 결정 전에 시작해 아직 돌고 있는 판이다.
+     *   그때는 옛 규칙(max+1)으로 세운다 — AI 가 통째로 사라지는 것보다는 낫다.
+     *   새로 시작하는 방은 언제나 적힌 쪽으로 온다.
+     */
+    const fromStore = started && stored.length > 0;
     const maxTaken = seats.reduce((m, s) => Math.max(m, s.seat), 0);
     let added = 0;
     // AI 는 딱 1대다 (위 상자). 자리 상한은 room.capacity 가 아니라 **정원 + AI** 다 —
     // 사람이 꽉 찬 방에서 AI 가 사라지지 않게 하려면 정원 밖 한 자리가 필요하다.
     for (let i = 0; i < AI_SEATS_PER_ROUND; i += 1) {
-      const seat = maxTaken + 1 + i;
-      if (seat > MAX_SEATS_PER_ROOM) break;
+      const seat = fromStore ? stored[i] : maxTaken + 1 + i;
+      if (seat === undefined || seat > MAX_SEATS_PER_ROOM) break;
+      // 사람이 그 번호를 갖고 있으면 건너뛴다. pick_free_seat 이 적힌 번호를 빼고
+      // 고르므로(room.sql) 여기 걸릴 일은 없지만, 겹치면 같은 익명N 이 둘 되는 자리다.
+      if (fromStore && seats.some((s) => s.seat === seat)) continue;
       // 아직 합류 시각 전이면 여기서 끝 — 뒤 순번은 더 늦게 온다 (joinDelayMs 단조 증가).
       // 시작된 방은 지연을 따지지 않는다 (위 2026-08-06 상자).
       if (!started && age < (await joinDelayMs(roomId, added))) break;

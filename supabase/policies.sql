@@ -42,10 +42,11 @@ alter table agent_logs    enable row level security;
 alter table question_pool enable row level security;
 alter table bot_line_pool enable row level security;
 alter table world_agent_logs enable row level security;
+alter table world_ai_seats enable row level security;
 
 -- 정책이 하나도 없는 테이블 = 전면 거부. service_role만 통과한다.
--- player_roles, agent_logs, question_pool, bot_line_pool, world_agent_logs는
--- 의도적으로 정책을 만들지 않는다.
+-- player_roles, agent_logs, question_pool, bot_line_pool, world_agent_logs,
+-- world_ai_seats는 의도적으로 정책을 만들지 않는다.
 --
 -- 문구 풀을 막는 이유는 보안이 아니라 게임이다 (I1). 봇 문구 풀을 읽을 수 있으면
 -- 채팅을 풀과 대조해서 봇을 즉시 특정할 수 있다. is_bot을 가린 의미가 없어진다.
@@ -55,6 +56,10 @@ revoke all on player_roles  from anon, authenticated;
 revoke all on agent_logs    from anon, authenticated;
 -- 월드 AI가 실제로 한 말이 방·시각과 함께 들어 있다. 채팅과 대조하면 봇이 특정된다.
 revoke all on world_agent_logs from anon, authenticated;
+-- ★ 이 테이블은 **정답 그 자체다.** 월드 AI 가 가져간 익명 번호가 방마다 한 줄로
+--   들어 있다. 한 칸이라도 열면 게임이 끝난다 (I1). rooms 에 컬럼으로 두지 않은
+--   이유가 이것이다 — rooms 는 anon 이 통째로 읽는다 (아래 grant).
+revoke all on world_ai_seats from anon, authenticated;
 
 ------------------------------------------------------------------------------
 -- players — is_bot 차단

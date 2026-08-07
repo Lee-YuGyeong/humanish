@@ -8,6 +8,7 @@
 
 import { getServiceClient } from '@/lib/server/supabase';
 import { ApiError } from '@/lib/server/auth';
+import { AI_SEATS_PER_ROUND } from '@/lib/game/rules';
 import type { Phase, PublicPlayer, Room } from '@/lib/game/types';
 
 /*
@@ -405,6 +406,30 @@ export async function shuffleSeats(roomId: string): Promise<number> {
   const { data, error } = await getServiceClient().rpc('shuffle_seats', { p_room_id: roomId });
   if (error) throw new ApiError(500, `자리 재배치 실패: ${error.message}`);
   return typeof data === 'number' ? data : 0;
+}
+
+/**
+ * 월드판을 연다 — 사람 + AI 를 1..N+1 로 섞고 시작 신호를 **한 트랜잭션에서** 찍는다.
+ *
+ * 월드판의 shuffleSeats 다. 나뉘어 있는 이유는 AI 도 순열 안에 있어야 하기 때문이다 —
+ * 월드 AI 는 players 행이 없어서(lib/server/world-ai.ts) shuffleSeats 가 빠뜨리고,
+ * 빠뜨리면 AI 가 언제나 방에서 제일 큰 번호가 된다 (I1). 자세한 내용은
+ * supabase/functions/room.sql 의 start_world_seats 주석에 있다.
+ *
+ * 멱등이다 — 이미 시작된 방이면 적어둔 번호를 그대로 돌려주고 아무것도 안 바꾼다.
+ *
+ * ★ AI 수는 **여기서** 넘긴다. rules.ts 의 상수 하나가 유일한 출처여야 한다 —
+ *   SQL 쪽에 숫자를 또 적으면 그 순간 둘이 갈린다.
+ *
+ * @returns AI 가 가져간 자리 번호. **정답 그 자체다 — 응답에 싣지 않는다** (I1).
+ */
+export async function startWorldSeats(roomId: string): Promise<number[]> {
+  const { data, error } = await getServiceClient().rpc('start_world_seats', {
+    p_room_id: roomId,
+    p_ai_count: AI_SEATS_PER_ROUND,
+  });
+  if (error) throw new ApiError(500, `월드 시작 실패: ${error.message}`);
+  return Array.isArray(data) ? (data as number[]) : [];
 }
 
 /**

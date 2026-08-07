@@ -39,6 +39,10 @@ as $$ select capacity from rooms where id = p_room_id $$;
 --   몰려서, seat만 보고 봇을 골라낼 수 있다 (I1).
 -- ★ 사람 정원(1..capacity) 안에서만 고른다. AI 전용인 정원 밖 자리는 여기 오지 않는다 —
 --   그 자리는 fill_with_bots 가 따로 잡는다.
+-- ★ **월드 AI 가 가져간 번호도 뺀다** (2026-08-08). 월드 방은 시작한 뒤에도 phase 가
+--   'lobby' 라서 join_room 이 사람을 계속 받는데(그쪽은 phase 만 본다), 그 사람이
+--   AI 번호를 받아 가면 같은 익명N 이 화면에 둘 남는다 — 2026-08-04 에 한 번 겪은
+--   그 버그다. 월드 AI 는 players 행이 없어서(synthetic) 자리를 스스로 못 막는다.
 create or replace function pick_free_seat(p_room_id uuid)
 returns int
 language sql
@@ -49,6 +53,9 @@ as $$
     from generate_series(1, room_capacity(p_room_id)) s
    where not exists (
      select 1 from players p where p.room_id = p_room_id and p.seat = s
+   )
+     and not exists (
+     select 1 from world_ai_seats w where w.room_id = p_room_id and s = any(w.seats)
    )
    order by random()
    limit 1;
@@ -469,6 +476,117 @@ end;
 $$;
 
 ------------------------------------------------------------------------------
+-- 월드 시작 — 사람 + AI 를 1..N+1 로 한 번에 섞는다 (2026-08-08 결정)
+------------------------------------------------------------------------------
+-- ★ 월드판의 shuffle_seats 다. 나눠 놓은 이유는 **AI 도 순열 안에 있어야** 하기
+--   때문이다. 월드 AI 는 players 행이 없어서(lib/server/world-ai.ts 머리말)
+--   shuffle_seats 의 "방 안 모든 행을 1..N 으로" 가 AI 를 빠뜨린다.
+--
+--   빠뜨리면 어떻게 되는가: 사람이 1..N 을 가져가고 AI 는 buildWorldRoster 가
+--   맨 뒤(max+1)에 세우므로 **AI 는 언제나 방에서 제일 큰 번호**가 된다.
+--   사람 셋이면 AI 는 반드시 익명4다. 대기방을 안 봤어도, 아무 정보가 없어도,
+--   제일 큰 번호만 찍으면 100% 맞는 판이 된다 (I1). 자리를 아무리 잘 섞어도 소용없다.
+--   그래서 여기서 AI 몫을 **1..N+1 중 무작위로 먼저 떼고**, 사람이 나머지를 나눠 갖는다.
+--
+-- ★ 시작 신호(rooms.world_started_at)를 **같은 트랜잭션에서** 찍는다. 나누면 둘 다 샌다:
+--     · 섞기만 성공하고 신호가 실패하면 is_ready 가 지워진 채 영영 못 여는 방이 된다.
+--     · 신호를 먼저 찍으면 대기방이 /world 로 넘어가 **옛 번호로 티켓을 받는다**
+--       (app/api/world/ticket — players.seat 을 그때 읽는다).
+--
+-- ★ 대기방 흔적(발화·준비·직접 지은 이름)을 shuffle_seats 와 똑같이 지운다.
+--   월드에서도 필수다 — 월드 방은 phase 가 계속 'lobby' 라 public_players 가 그 네
+--   컬럼을 계속 내려준다(policies.sql). 남겨두면 "대기방의 철수 = 월드의 익명3" 이
+--   그대로 이어져서 번호를 섞은 의미가 사라진다.
+--
+-- ★ 멱등이다. 이미 시작된 방이면 적어둔 번호를 그대로 돌려주고 아무것도 건드리지
+--   않는다 — 연타·재전송이 판 중간에 번호를 다시 섞으면 안 된다.
+--
+-- 반환값은 AI 가 가져간 번호. **정답 그 자체라 서버 밖으로 내보내지 않는다** (I1).
+create or replace function start_world_seats(p_room_id uuid, p_ai_count int default 1)
+returns int[]
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+declare
+  v_started timestamptz;
+  v_ai      int[];
+  v_humans  int;
+  v_total   int;
+begin
+  -- 방을 잠근다. 두 요청이 동시에 들어와도 순열은 한 번만 돈다.
+  select world_started_at into v_started from rooms where id = p_room_id for update;
+  if not found then
+    raise exception '그런 방이 없다: %', p_room_id using errcode = 'P0002';
+  end if;
+
+  if v_started is not null then
+    select seats into v_ai from world_ai_seats where room_id = p_room_id;
+    return v_ai;
+  end if;
+
+  if p_ai_count < 1 then
+    raise exception 'AI 수는 1 이상이어야 한다: %', p_ai_count using errcode = 'P0001';
+  end if;
+
+  select count(*) into v_humans from players where room_id = p_room_id;
+  if v_humans = 0 then
+    raise exception '빈 방은 시작할 수 없다' using errcode = 'P0001';
+  end if;
+
+  -- 자리 수 = 방 안의 행 수 + AI 수. 사람 셋 + AI 하나면 1..4 다.
+  v_total := v_humans + p_ai_count;
+  -- players.seat 은 1..9 다 (schema.sql). 넘으면 아래 update 가 검사에 걸려 죽는데,
+  -- 그때 메시지가 "seat 제약 위반"이라 원인이 안 보인다. 여기서 먼저 세운다.
+  if v_total > 9 then
+    raise exception '자리가 모자란다: 사람 % + AI % 는 9자리를 넘는다', v_humans, p_ai_count
+      using errcode = 'P0001';
+  end if;
+
+  -- AI 몫을 먼저 뗀다. 1..N+1 중 아무 번호나 — 뒷번호로 몰면 그게 표식이다 (I1).
+  select array_agg(s order by s) into v_ai
+    from (select s from generate_series(1, v_total) s order by random() limit p_ai_count) t;
+
+  -- ★ shuffle_seats 와 같은 이유로 유니크를 이 트랜잭션 동안만 미룬다. 순열 도중에는
+  --   두 사람이 잠깐 같은 자리를 갖는 순간이 반드시 생긴다.
+  set constraints players_room_seat_key, players_room_nickname_key deferred;
+
+  with nums as (
+    -- 사람에게 줄 번호 = 1..N+1 에서 AI 몫을 뺀 것. 무작위 순서로 줄을 세운다.
+    select s, row_number() over (order by random()) as rn
+      from generate_series(1, v_total) s
+     where s <> all(v_ai)
+  ),
+  ppl as (
+    select p.id, row_number() over (order by random()) as rn
+      from players p
+     where p.room_id = p_room_id
+  )
+  update players p
+     set seat             = n.s,
+         nickname         = '익명' || n.s,
+         mask_id          = 'mask-' || lpad(n.s::text, 2, '0'),
+         is_ready         = false,
+         lobby_line       = null,
+         lobby_line_at    = null,
+         lobby_line_count = 0,
+         lobby_name       = null
+    from ppl join nums n on n.rn = ppl.rn
+   where p.id = ppl.id;
+
+  -- 적어둔다. buildWorldRoster 는 상태가 없어서 조회할 때마다 다시 계산하는데,
+  -- 그때 명단이 바뀌어 있으면 판 도중에 전원의 번호가 갈아엎어진다 (schema.sql 상자).
+  insert into world_ai_seats (room_id, seats) values (p_room_id, v_ai)
+    on conflict (room_id) do update set seats = excluded.seats;
+
+  update rooms set world_started_at = now() where id = p_room_id;
+
+  -- roster_seq 는 players 트리거가 이미 올렸다 (shuffle_seats 와 같다).
+  return v_ai;
+end;
+$$;
+
+------------------------------------------------------------------------------
 -- 권한 — I9
 ------------------------------------------------------------------------------
 -- Supabase는 새 함수에 anon execute를 자동으로 깔아준다. security definer라
@@ -493,6 +611,8 @@ revoke all on function leave_room(uuid,uuid)      from public, anon, authenticat
 revoke all on function kick_player(uuid,uuid,uuid) from public, anon, authenticated;
 revoke all on function fill_with_bots(uuid)       from public, anon, authenticated;
 revoke all on function shuffle_seats(uuid)        from public, anon, authenticated;
+-- ★ 이건 특히 새면 안 된다 — 반환값이 AI 자리 번호다 (I1).
+revoke all on function start_world_seats(uuid,int) from public, anon, authenticated;
 
 grant execute on function create_room(text,int,text,uuid) to service_role;
 grant execute on function join_room(text,uuid)    to service_role;
@@ -500,3 +620,4 @@ grant execute on function leave_room(uuid,uuid)   to service_role;
 grant execute on function kick_player(uuid,uuid,uuid) to service_role;
 grant execute on function fill_with_bots(uuid)    to service_role;
 grant execute on function shuffle_seats(uuid)     to service_role;
+grant execute on function start_world_seats(uuid,int) to service_role;

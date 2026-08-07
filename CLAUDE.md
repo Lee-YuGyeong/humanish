@@ -123,6 +123,14 @@ npm test               # 순수 함수 · 화면 조각 (vitest, tests/ 아래)
   정원이 아니라 `lib/mp/constants.ts` 의 `WORLD_SEAT_SLOTS`(9)로 나눈다. 정원으로 나누면
   9번 자리가 1번과 겹친다.
   **`capacity`/`seat_count` 로 수를 둘로 나누던 §18.1 인원표는 폐기됐다.**
+- **시작하는 순간 자리를 다시 섞는다. AI도 그 순열 안에 있다 (2026-08-08).** 2D는
+  `shuffle_seats`, 월드는 `start_world_seats` 다 (`supabase/functions/room.sql`). 사람 셋이면
+  익명1~4 이고 어느 칸이 AI 인지는 무작위다 — **사람만 1..N 으로 정리하면 AI 가 언제나
+  방에서 제일 큰 번호가 되어 그것만 찍으면 맞는 판이 된다** (I1). 월드 AI 는 `players`
+  행이 없어서 자리를 스스로 못 붙든다: 뽑은 번호를 `world_ai_seats` 에 적고
+  `buildWorldRoster`·`pick_free_seat` 이 그걸 읽는다. **그 테이블은 정답 그 자체라
+  anon 에게 한 칸도 열지 않는다** — `rooms` 컬럼으로 두지 않은 이유가 이것이다.
+  자세한 내용은 `docs/MULTIPLAYER.md`.
 - **손대기 전에** SPEC에서 해당 섹션을 읽는다. 섹션 번호(`§5.2` 등)는 코드 주석이 참조하므로 **재번호를 매기지 않는다.**
 - **막히면 추측하지 말고 SPEC §15(미결정 사항)를 확인한다.** 거기 있는 항목은 사용자에게 물어볼 것.
 - 코드를 고쳤으면 `npm run build`로 끝낸다. 타입 에러를 남기지 않는다.

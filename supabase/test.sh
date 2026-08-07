@@ -265,6 +265,69 @@ check "명단 신호가 올라간다 (§17.3)"  "up" \
 check "봇 수는 그대로 5"             "5" "$(q "select count(*) from players where room_id='$SHUF_R' and is_bot;")"
 
 echo ""
+echo "── 월드 시작: 사람 + AI 를 1..N+1 로 섞는다 (2026-08-08 결정) ──"
+# 사람 셋이면 익명1~4 다 — 그 중 한 칸이 AI 몫이고, 어느 칸인지는 무작위다.
+WS_R=a1a1a1a1-5555-5555-5555-555555555555
+psql -q -c "
+insert into rooms (id, code, capacity) values ('$WS_R','WSTA',8);
+insert into players (room_id, nickname, mask_id, seat, is_ready, lobby_line, lobby_name)
+select '$WS_R', '익명'||s, 'mask-'||lpad(s::text,2,'0'), s, true, '반가워요', '철수'||s
+  from unnest(array[2,5,7]) s;"
+WS_AI="$(q "select start_world_seats('$WS_R', 1);")"
+
+check "AI 자리를 하나 돌려준다"        "1" "$(q "select array_length('$WS_AI'::int[], 1);")"
+check "AI 자리를 적어둔다"            "$WS_AI" "$(q "select seats from world_ai_seats where room_id='$WS_R';")"
+check "시작 시각이 찍힌다"            "t" "$(q "select world_started_at is not null from rooms where id='$WS_R';")"
+# ★ 핵심. 사람 3 + AI 1 = 1..4 가 정확히 한 번씩 나와야 한다. 사람 자리와 AI 자리를
+#   합쳐서 본다 — 사람만 1..3 으로 정리하면 AI 는 언제나 4가 되어 정답이 된다 (I1).
+check "사람+AI 가 1~4를 한 번씩 쓴다"  "t" \
+  "$(q "select (select array_agg(s order by s) from (
+                  select seat s from players where room_id='$WS_R'
+                  union all select unnest(seats) from world_ai_seats where room_id='$WS_R') u)
+            = array(select generate_series(1,4));")"
+check "닉네임이 새 자리를 따라간다"    "t" \
+  "$(q "select coalesce(bool_and(nickname = '익명'||seat and mask_id = 'mask-'||lpad(seat::text,2,'0')),false) from players where room_id='$WS_R';")"
+# 대기방 흔적. 남으면 "대기방의 철수2 = 월드의 익명3" 이 이어져 섞은 의미가 사라진다 (I1).
+check "대기방 흔적을 지운다 (I1)"      "t" \
+  "$(q "select coalesce(bool_and(not is_ready and lobby_line is null and lobby_name is null),false) from players where room_id='$WS_R';")"
+
+# 멱등. 판 도중에 다시 부르면 번호가 통째로 갈아엎어진다 — 연타·재전송이 그 경로다.
+WS_MAP="$(q "select string_agg(id::text||':'||seat, ',' order by id) from players where room_id='$WS_R';")"
+check "다시 불러도 같은 AI 자리"       "$WS_AI" "$(q "select start_world_seats('$WS_R', 1);")"
+check "다시 불러도 자리가 그대로"      "$WS_MAP" \
+  "$(q "select string_agg(id::text||':'||seat, ',' order by id) from players where room_id='$WS_R';")"
+
+# ★ AI 가 늘 제일 큰 번호이면 아무 정보 없이 그 번호만 찍어도 맞는 판이 된다 (I1).
+#   사람 3 + AI 1 은 언제나 1..4 를 채우므로 "제일 크다" = "4를 받았다" 와 같다.
+#   방 하나로는 못 잡는다 — 1/4 로 우연히 4가 나온다. 20방을 돌려 4가 아닌 방이
+#   하나도 없다면 그건 우연이 아니라 규칙이다 ((1/4)^20 ≈ 1e-12).
+psql -q -c "
+insert into rooms (code, capacity) select 'WSP'||lpad(i::text,2,'0'), 8 from generate_series(1,20) i;
+insert into players (room_id, nickname, mask_id, seat)
+select r.id, '익명'||s, 'mask-'||lpad(s::text,2,'0'), s
+  from rooms r, generate_series(1,3) s where r.code like 'WSP%';"
+check "AI 번호가 늘 제일 크지는 않다"  "t" \
+  "$(q "select count(*) filter (where ai <> 4) > 0
+          from (select (start_world_seats(id, 1))[1] as ai from rooms where code like 'WSP%') t;")"
+
+# ★ 월드 방은 시작한 뒤에도 phase 가 'lobby' 라 사람이 계속 들어온다 (join_room 은
+#   phase 만 본다). 그때 AI 번호를 받아 가면 같은 익명N 이 화면에 둘 남는다.
+WS_P=a2a2a2a2-6666-6666-6666-666666666666
+psql -q -c "
+insert into rooms (id, code, capacity) values ('$WS_P','WSPF',8);
+insert into players (room_id, nickname, mask_id, seat)
+select '$WS_P', '익명'||s, 'mask-'||lpad(s::text,2,'0'), s from generate_series(1,7) s;
+insert into world_ai_seats (room_id, seats) values ('$WS_P', array[8]);"
+check "pick_free_seat 이 AI 자리를 안 준다" "t" \
+  "$(q "select pick_free_seat('$WS_P') is null;")"
+
+# 빈 방은 순열이 성립하지 않는다. 23514(check 위반)가 아니라 P0001로 튀어야
+# 라우트가 사용자에게 보여줄 문장이 된다.
+psql -q -c "insert into rooms (id, code, capacity) values ('a3a3a3a3-7777-7777-7777-777777777777','WSEM',8);"
+check "빈 방은 시작할 수 없다"         "denied" \
+  "$(denied_if "select start_world_seats('a3a3a3a3-7777-7777-7777-777777777777', 1);" '빈 방은 시작할 수 없다')"
+
+echo ""
 echo "── §17.3 명단 신호 ──"
 BEFORE="$(q "select roster_seq from rooms where id='$R';")"
 psql -q -c "update players set connected=false where id='$P2';"

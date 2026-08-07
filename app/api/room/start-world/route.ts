@@ -5,26 +5,35 @@
  *
  * 2D 시작(/api/room/start)과 달리 **페이즈를 건드리지 않는다** — 월드 판은 DB
  * 상태머신이 아니라 워커가 돌린다 (worker/src/room-do.ts). 여기가 하는 일은
- * 시작 신호 하나다:
- *   1. rooms.world_started_at 을 찍는다. 그 UPDATE 가 rooms Realtime 구독으로
+ * startWorldSeats 호출 하나이고, 그 함수가 한 트랜잭션에서 둘을 같이 한다:
+ *   1. 사람 + AI 를 1..N+1 로 다시 섞는다 (사람 셋이면 익명1~4).
+ *   2. rooms.world_started_at 을 찍는다. 그 UPDATE 가 rooms Realtime 구독으로
  *      대기방 전원에게 전파되고, 대기방 화면이 /world 로 이동한다
- *      (components/room-lobby.tsx).
- *   2. buildWorldRoster 가 이 값을 보고 빈 좌석을 월드 AI 로 **즉시** 채운다
- *      (lib/server/world-ai.ts — 시작 전에는 지연 합류).
+ *      (components/room-lobby.tsx). buildWorldRoster 도 이 값을 보고 월드 AI 를
+ *      지연 없이 **즉시** 세운다 (lib/server/world-ai.ts).
  *
  * 시작 조건은 2D 와 같다 — **사람 2~8명이고, 방장을 뺀 전원이 준비 완료**여야 한다
  * (lib/game/rules.ts 의 startBlock). 화면의 시작 버튼도 같은 함수를 본다.
  *
- * 2D 시작이 하는 나머지는 전부 하지 않는다:
+ * ┌─ 좌석 셔플이 여기 붙은 이유 (2026-08-08, 보류 해제) ───────────────────────┐
+ * │ 2026-08-05 에는 "월드 좌석은 id 가 자리에 묶여 있어(stableUuid) 섞으면 명부  │
+ * │ diff 가 깨진다"며 미뤄 두었다. 그 사이 두 가지가 새고 있었다:               │
+ * │   · 대기방에서 본 정체가 그대로 이어졌다 (shuffle_seats 가 막던 바로 그것). │
+ * │   · 그리고 더 나쁜 쪽 — AI 가 max(자리)+1 에 서므로 **언제나 방에서 제일 큰  │
+ * │     번호**였다. 제일 큰 번호만 찍으면 100% 맞는 판이었다 (I1).              │
+ * │ diff 걱정은 근거가 없었다. 셔플은 시작 신호보다 **먼저** 커밋되고 그 신호가  │
+ * │ 있어야 아무도 /world 로 넘어오지 않는다 — 섞는 순간 월드는 비어 있다.       │
+ * │ AI 자리는 시작 때 한 번 정해 world_ai_seats 에 적으므로 그 뒤로 안 움직인다  │
+ * │ (stableUuid 도 그대로 안정적이다).                                         │
+ * └───────────────────────────────────────────────────────────────────────────┘
+ *
+ * 2D 시작이 하는 나머지는 여전히 하지 않는다:
  *   · fillWithBots 없음 — 월드 AI 는 DB 행이 없는 synthetic 이다 (world-ai.ts 머리말).
  *   · 역할 배정 없음 — 연기자는 워커의 startRound 가 뽑는다 (roundtable.ts).
- *   · shuffleSeats 없음 — 월드 좌석은 id 가 자리에 묶여 있어(stableUuid) 섞으면
- *     명부 diff 가 깨진다. 대기방 관찰이 판으로 이어지는 문제는 좌석 셔플 재논의와
- *     함께 다룬다 (보류 — 2026-08-05).
  */
 
 import { START_BLOCK_MESSAGE, startBlock } from '@/lib/game/rules';
-import { ROOM_COLUMNS } from '@/lib/server/room';
+import { ROOM_COLUMNS, startWorldSeats } from '@/lib/server/room';
 import { getServiceClient } from '@/lib/server/supabase';
 import { ApiError, apiError, readJson, requirePlayer } from '@/lib/server/auth';
 
@@ -74,18 +83,13 @@ export async function POST(req: Request): Promise<Response> {
     }
 
     /*
-     * 이미 찍혀 있으면 그대로 성공이다 (멱등). 연타·재전송이 와도 시각이 두 번
-     * 바뀌지 않게 `is null` 조건으로 첫 요청만 쓴다 — 시각이 흔들리면
-     * 월드 AI 채움 기준(world-ai.ts)이 조회마다 달라질 수 있다.
+     * 섞기 + 시작 신호. 이미 시작된 방이면 아무것도 안 바꾸고 그대로 성공이다 —
+     * 멱등 판정은 **DB 안에서** 방을 잠근 채 한다. 여기서 위 `room.world_started_at`
+     * 으로 판단하면 두 요청이 나란히 통과해 판 중간에 번호가 다시 섞인다.
+     *
+     * ★ 반환값(AI 자리 번호)은 받아서 버린다. 응답에 실으면 그게 정답이다 (I1).
      */
-    if (!room.world_started_at) {
-      const { error: startErr } = await db
-        .from('rooms')
-        .update({ world_started_at: new Date().toISOString() })
-        .eq('id', roomId)
-        .is('world_started_at', null);
-      if (startErr) throw new ApiError(500, `시작 기록 실패: ${startErr.message}`);
-    }
+    await startWorldSeats(roomId);
 
     const { data: after, error: afterErr } = await db
       .from('rooms')
