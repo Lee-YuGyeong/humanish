@@ -105,30 +105,15 @@
   flex-shrink: 0;
 }
 
-.tag {
-  font-size: 0.5rem;
-  letter-spacing: 0.22em;
-  text-transform: uppercase;
-  padding: 0.22rem 0.65rem;
-  border: 1px solid var(--border2);
-  color: var(--muted);
-  display: inline-block;
-  white-space: nowrap;
-}
 /*
- * ★ 테두리 색을 여기 박아두지 않는다. 이 태그는 머리말 안에도 서는데(「나」),
- *   그 띠는 로비 팔레트로 갈아입는다 (components/top-bar.module.css).
- *   초록만 그쪽 값이고 테두리만 형광이면 그 자리에서 어긋난다.
+ * ★ .tag / .tagGreen(네모 배지)은 지웠다 (2026-08-07). 마지막 사용처가 좌석의
+ *   「host」 태그였는데 그게 왕관(.hostMark)으로 바뀌었다.
+ *   머리말의 「나」 배지는 여기 것이 아니라 components/top-bar.module.css 것이다.
  */
-.tagGreen {
-  color: var(--accent);
-  border-color: var(--accent-line);
-  background: var(--accent-dim);
-}
 
 /*
  * ★ .panel(규칙판 전용 사각 판)은 규칙판과 함께 지웠다 (2026-08-07).
- *   대기실에 판을 다시 세울 일이 생기면 .frame(조준선)을 얹는다 —
+ *   대기실에 판을 다시 세울 일이 생기면 .bevel(모서리 깎인 이중 프레임)을 얹는다 —
  *   1px 사각 테두리를 되살리면 이 화면이 다시 "상자의 반복"으로 돌아간다.
  */
 
@@ -147,128 +132,221 @@
  */
 .seatGrid {
   display: grid;
-  gap: 0.5rem;
+  gap: 0.6rem;
   grid-template-columns: repeat(2, minmax(0, 1fr));
+  /*
+   * ★ minmax(바닥, 1fr) 이다 (2026-08-07 사용자 지시: "8자리도 방 꽉차게").
+   *   1fr 만 쓰면 정원 3인 방에서 한 줄이 화면 높이를 통째로 먹어 카드가
+   *   우스꽝스럽게 길어지고, 바닥값만 쓰면 8자리 방에서 아래가 텅 빈다.
+   *   둘을 같이 줘야 "모자라면 스크롤, 남으면 늘어난다"가 된다.
+   */
+  grid-auto-rows: minmax(10.5rem, 1fr);
 }
 /* 좁은 화면에서 4칸은 글자가 뭉갠다. 두 칸으로 시작해 넓어지면 넷이 된다 */
 @media (min-width: 640px) {
   .seatGrid {
     grid-template-columns: repeat(4, minmax(0, 1fr));
+    /* 넓은 화면에서만 높이를 채운다 — 2열 4줄일 때 늘리면 카드가 세로로 길어진다 */
+    height: 100%;
   }
 }
 
 /*
- * ┌─ 뷰파인더 조준선 ─────────────────────────────────────────────────────┐
- * │ 2026-08-07 사용자 지시: "너무 네모네모하다. 동그라미 말고 다른 방법."    │
+ * ┌─ 프레임 (2026-08-07, 레퍼런스 게임 UI) ───────────────────────────────┐
+ * │ 이 화면은 세 번 고쳐졌다.                                              │
+ * │   1차 "너무 네모네모하다"     → 테두리를 끊고 모서리 괄호만 남겼다.     │
+ * │   2차 레퍼런스 이미지         → 모서리를 45°로 깎았다.                 │
+ * │   3차 "저 테두리 못따라해?"   → 깎은 건 모서리였지 **테두리가 아니었다.**│
  * │                                                                       │
- * │ 이 화면의 문제는 각진 게 아니라 **모양이 하나뿐이던 것**이었다 —        │
- * │ 좌석·패널·태그·말풍선·막대가 전부 같은 1px 사각 테두리라 화면 전체가    │
- * │ "같은 상자의 반복"으로 읽혔다.                                          │
+ * │ 레퍼런스 프레임을 실제로 뜯어보면 특징이 셋이다:                       │
+ * │   ① 모서리가 살짝 둥글다 (각지지도, 완전히 둥글지도 않다)              │
+ * │   ② **귀퉁이에서 테두리가 밝아지고 변 가운데로 갈수록 사그라든다** —   │
+ * │      금속 판을 네 귀퉁이에서 조여 놓은 것처럼 보이는 게 이것이다       │
+ * │   ③ 안쪽 면이 단색이 아니라 위가 밝고 아래가 어두운 세로 그라디언트다  │
  * │                                                                       │
- * │ 그래서 **테두리를 아예 끊는다.** 네 모서리 괄호만 남기면 사각형이       │
- * │ 사라지고, 그 자리에 카메라 초점 · 조준경의 언어가 들어온다. 빈자리는    │
- * │ 괄호가 느리게 훑고(찾는 중), 사람이 앉으면 안으로 물린다(포착).         │
+ * │ ②가 핵심인데 앞선 두 번은 이걸 안 봤다. 모서리 모양만 바꾸면 여전히    │
+ * │ "테두리 두른 상자"고, 귀퉁이가 밝아져야 **틀**로 읽힌다.               │
+ * │                                                                       │
+ * │ 색은 안 가져온다. 레퍼런스는 남색+금색, 우리는 검정+형광 초록이다      │
+ * │ (사용자 지시: "지금 게임 색상하고 너무 다르지 않게").                  │
  * └───────────────────────────────────────────────────────────────────────┘
  *
- * ★ 괄호는 가상요소가 아니라 **배경 그라디언트 8장**이다. 모서리 넷을 그리려면
- *   ::before/::after 둘로는 모자라 빈 <span> 을 더 넣어야 하는데, 이 언어를
- *   좌석 말고 패널·버튼에도 쓰려면 그때마다 마크업이 는다. 배경으로 그리면
- *   **클래스 하나만 얹으면 되고 DOM 이 안 는다.**
+ * ★ 왜 border 가 아니라 배경 두 층인가: border 는 한 가지 색이라 ②를 못 만든다.
+ *   겉(.bevel)이 테두리 층이고 ::before 가 1px 안쪽에서 면을 덮으므로,
+ *   **겉 층에서 보이는 건 남는 1px 띠뿐이다.** 그 띠에 그라디언트를 깔면
+ *   테두리에만 밝기 변화가 생긴다 — 네 귀퉁이에 радial 을 하나씩 놓으면 끝이다.
+ *   (겉 층 전체를 칠하지만 화면에는 가장자리 1px 만 나온다.)
  *
- * ★ --fr-len / --fr-color 를 @property 로 등록해 둔 이유는 **애니메이션**이다.
- *   등록하지 않은 커스텀 속성은 트랜지션이 안 걸려서 괄호가 뚝뚝 끊긴다.
- *   (미지원 브라우저에서는 값이 즉시 바뀔 뿐 모양은 똑같다 — 기능은 안 깨진다.)
+ * ★ 내용은 z-index 로 띄운다. ::before 가 절대배치라 그냥 두면 글자를 덮는다 —
+ *   칠하는 순서상 인라인 글자가 z-index:0 절대배치보다 **먼저**다.
  */
-@property --fr-len {
-  syntax: "<length>";
-  inherits: false;
-  initial-value: 16px;
+.bevel {
+  position: relative;
+  --radius: 7px;
+  /* 변 가운데의 테두리 — 어둡다 */
+  --edge: rgba(255, 255, 255, 0.1);
+  /* 귀퉁이의 테두리 — 밝다. 이 둘의 차이가 프레임을 만든다 */
+  --edge-corner: rgba(255, 255, 255, 0.34);
+  /* 안쪽 면. 위가 밝고 아래가 어둡다 */
+  --fill-top: #16191c;
+  --fill-bottom: #0b0d0e;
+  border-radius: var(--radius);
+  background-color: var(--edge);
+  background-image:
+    radial-gradient(circle at 0% 0%, var(--edge-corner), transparent 42%),
+    radial-gradient(circle at 100% 0%, var(--edge-corner), transparent 42%),
+    radial-gradient(circle at 0% 100%, var(--edge-corner), transparent 42%),
+    radial-gradient(circle at 100% 100%, var(--edge-corner), transparent 42%);
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.45);
 }
-@property --fr-color {
+.bevel::before {
+  content: "";
+  position: absolute;
+  inset: 1px;
+  border-radius: calc(var(--radius) - 1px);
+  background-image: linear-gradient(180deg, var(--fill-top), var(--fill-bottom));
+  z-index: 0;
+}
+.bevel > * {
+  position: relative;
+  z-index: 1;
+}
+
+/*
+ * 빈자리에서 귀퉁이가 느리게 숨쉰다 — "아직 아무도 안 앉음".
+ * ★ @property 로 등록해야 색 트랜지션·애니메이션이 걸린다. 등록 안 하면 뚝뚝 끊긴다.
+ */
+@property --edge {
   syntax: "<color>";
   inherits: false;
-  initial-value: rgba(255, 255, 255, 0.14);
+  initial-value: rgba(255, 255, 255, 0.1);
 }
-
-.frame {
-  background-image:
-    linear-gradient(var(--fr-color), var(--fr-color)),
-    linear-gradient(var(--fr-color), var(--fr-color)),
-    linear-gradient(var(--fr-color), var(--fr-color)),
-    linear-gradient(var(--fr-color), var(--fr-color)),
-    linear-gradient(var(--fr-color), var(--fr-color)),
-    linear-gradient(var(--fr-color), var(--fr-color)),
-    linear-gradient(var(--fr-color), var(--fr-color)),
-    linear-gradient(var(--fr-color), var(--fr-color));
-  background-repeat: no-repeat;
-  /* 모서리마다 가로팔 + 세로팔 한 쌍 */
-  background-size:
-    var(--fr-len) 1px,
-    1px var(--fr-len),
-    var(--fr-len) 1px,
-    1px var(--fr-len),
-    var(--fr-len) 1px,
-    1px var(--fr-len),
-    var(--fr-len) 1px,
-    1px var(--fr-len);
-  background-position:
-    left top,
-    left top,
-    right top,
-    right top,
-    left bottom,
-    left bottom,
-    right bottom,
-    right bottom;
+@property --edge-corner {
+  syntax: "<color>";
+  inherits: false;
+  initial-value: rgba(255, 255, 255, 0.34);
 }
-
-/* 빈자리에서 괄호가 느리게 훑는다 — "아직 아무도 안 잡힘" */
-@keyframes reticleSearch {
+@keyframes edgeSearch {
   0%,
   100% {
-    --fr-len: 11px;
-    --fr-color: rgba(255, 255, 255, 0.08);
+    --edge-corner: rgba(255, 255, 255, 0.12);
   }
   50% {
-    --fr-len: 21px;
-    --fr-color: rgba(255, 255, 255, 0.17);
+    --edge-corner: rgba(255, 255, 255, 0.3);
   }
 }
 
+/* ── 좌석 카드 ────────────────────────────────────────────────────────── */
+
 .slot {
-  composes: frame;
+  composes: bevel;
   display: flex;
   flex-direction: column;
-  align-items: center;
-  justify-content: flex-start;
-  gap: 0.8rem;
-  padding: 1.6rem 0.8rem;
-  position: relative;
   height: 100%;
-  /* 앉은 자리는 아주 옅은 바닥만 깔린다. 테두리가 없으니 이게 유일한 덩어리감이다 */
-  background-color: rgba(255, 255, 255, 0.022);
-  --fr-len: 15px;
-  --fr-color: rgba(255, 255, 255, 0.2);
   transition:
-    --fr-len 0.35s cubic-bezier(0.2, 0.8, 0.2, 1),
-    --fr-color 0.35s ease,
-    background-color 0.25s;
-}
-/* 내 자리 */
-.slotMe {
-  background-color: rgba(0, 255, 102, 0.05);
-  --fr-color: rgba(0, 255, 102, 0.55);
-}
-/*
- * 아직 아무도 안 앉은 자리. 바닥을 지우고 괄호만 훑게 둔다.
- * ★ 사람이 앉으면 이 클래스가 빠지면서 위 transition 이 괄호를 안으로 물린다 —
- *   "포착" 연출을 위해 자바스크립트로 타이밍을 잡을 필요가 없다.
- */
-.slotEmpty {
-  background-color: transparent;
-  animation: reticleSearch 3.4s ease-in-out infinite;
+    --edge 0.3s ease,
+    --edge-corner 0.3s ease;
 }
 
+/*
+ * 초상 무대 — 말풍선 + 아바타. 여백은 여기가 갖는다 (이름판은 꽉 채워야 하므로).
+ * ★ 세로 가운데다. 카드가 화면 높이를 나눠 갖게 되면서(seatGrid) 위로 붙여 두면
+ *   아바타 아래가 통째로 비어 카드가 반만 쓰는 것처럼 보인다.
+ */
+.slotBody {
+  position: relative;
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.75rem;
+  padding: 1.1rem 0.7rem;
+}
+
+/* 방장 왕관. 네모 태그를 대신하므로 배경도 테두리도 없다 — 도형 하나만 남는다 */
+.hostMark {
+  position: absolute;
+  top: 0.5rem;
+  right: 0.55rem;
+  z-index: 2;
+  display: inline-flex;
+  color: var(--accent);
+  filter: drop-shadow(0 0 5px rgba(0, 255, 102, 0.45));
+}
+
+/*
+ * 이름판 — 카드 폭을 꽉 채우는 어두운 띠. 레퍼런스 슬롯의 이름 바와 같은 자리다.
+ * ★ 위쪽 1px 선이 초상과 명패를 가른다. 이 선이 없으면 카드가 그냥 글자 상자로 돌아간다.
+ * ★ 여기 드는 건 **닉네임 하나뿐이다** (2026-08-07). 자리 번호·상태를 같이 적던
+ *   작은 둘째 줄은 지웠다 — 그 정보는 왕관과 프레임 귀퉁이 색이 이미 말한다.
+ */
+.plate {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0.5rem;
+  background-color: rgba(0, 0, 0, 0.45);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.07);
+}
+.plateName {
+  display: block;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.88rem;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+}
+@media (min-width: 1280px) {
+  .plateName {
+    font-size: 0.98rem;
+  }
+}
+
+/*
+ * 내 자리 · 준비된 자리 — 레퍼런스에서 선택된 칸이 금색 테두리 + 글로우로
+ * 도드라지던 자리다. 우리는 그 역할을 형광 초록이 맡는다.
+ *
+ * ★ 글로우(box-shadow)는 **내 자리에만** 준다. 여덟 칸이 전부 빛나면 아무것도
+ *   도드라지지 않고, 레퍼런스에서도 빛나는 건 선택된 한 칸뿐이다.
+ */
+.slotMe {
+  --edge: rgba(0, 255, 102, 0.28);
+  --edge-corner: rgba(0, 255, 102, 0.75);
+  --fill-top: #0d1712;
+  --fill-bottom: #06100b;
+  box-shadow:
+    0 2px 10px rgba(0, 0, 0, 0.45),
+    0 0 16px -4px rgba(0, 255, 102, 0.4);
+}
+.slotSettled {
+  --edge: rgba(0, 255, 102, 0.16);
+  --edge-corner: rgba(0, 255, 102, 0.5);
+}
+/* 내 자리이면서 준비까지 됐으면 가장 밝다 (뒤에 오는 규칙이 이긴다) */
+.slotMe.slotSettled {
+  --edge: rgba(0, 255, 102, 0.32);
+  --edge-corner: rgba(0, 255, 102, 0.9);
+}
+
+/* 아직 아무도 안 앉은 자리 — 면을 눌러 어둡게 하고 귀퉁이만 숨쉬게 둔다 */
+.slotEmpty {
+  --edge: rgba(255, 255, 255, 0.06);
+  --fill-top: #0a0b0c;
+  --fill-bottom: #060708;
+  box-shadow: none;
+  animation: edgeSearch 3.4s ease-in-out infinite;
+}
+.slotEmpty .plate {
+  background-color: rgba(0, 0, 0, 0.25);
+}
+
+/*
+ * 아바타. 카드가 커진 만큼 같이 큰다 — 52px 로 고정해 두면 넓은 화면에서
+ * 카드 한가운데 작은 점 하나만 떠 있는 꼴이 된다.
+ */
 .person {
   width: 52px;
   height: 52px;
@@ -279,6 +357,18 @@
   border: 1px solid var(--border2);
   color: var(--muted);
   flex-shrink: 0;
+}
+@media (min-width: 640px) {
+  .person {
+    width: 62px;
+    height: 62px;
+  }
+}
+@media (min-width: 1280px) {
+  .person {
+    width: 72px;
+    height: 72px;
+  }
 }
 .personMe {
   background: var(--accent-dim);
@@ -439,7 +529,7 @@
  * │ **목록이 아니라 판때기**로 읽혔다 — 누를 수 있다는 신호가 없었다.      │
  * │                                                                       │
  * │ 그래서 테두리 대신 **두께**로 버튼을 만든다: 위 1px 하이라이트 +       │
- * │ 아래 2px 턱. 누르면 턱이 사라지며 2px 내려앉는다. 조준선(.frame)이     │
+ * │ 아래 2px 턱. 누르면 턱이 사라지며 2px 내려앉는다. 깎인 프레임(.bevel)이│
  * │ "틀"의 언어라면 이쪽은 "물건"의 언어라, 둘이 겹치지 않고 역할이 갈린다.│
  * └───────────────────────────────────────────────────────────────────────┘
  *
@@ -456,9 +546,11 @@
   background-color: var(--surface2);
   border: 0;
   cursor: pointer;
+  /* 좌석·준비 버튼과 같은 둥글기. 여기만 각지면 오른쪽 판이 따로 논다 */
+  border-radius: 5px;
   box-shadow:
     inset 0 1px 0 rgba(255, 255, 255, 0.07),
-    0 2px 0 rgba(0, 0, 0, 0.55);
+    inset 0 -2px 0 rgba(0, 0, 0, 0.55);
   transition:
     background-color 0.15s,
     color 0.15s,
@@ -470,8 +562,7 @@
   color: var(--accent);
   box-shadow:
     inset 0 1px 0 rgba(0, 255, 102, 0.2),
-    0 2px 0 rgba(0, 0, 0, 0.55),
-    0 0 14px rgba(0, 255, 102, 0.18);
+    inset 0 -2px 0 rgba(0, 0, 0, 0.55);
 }
 /* 누르는 순간 턱이 사라지고 그만큼 내려앉는다 — 실제로 눌린 것처럼 */
 .line:active:not(:disabled) {
@@ -490,9 +581,18 @@
   cursor: not-allowed;
 }
 
-/* 준비 완료 토글 — 좌석과 같은 조준선을 두른다 */
+/*
+ * 준비 완료 토글 — 좌석과 같은 프레임을 두른다 (레퍼런스의 「편성 / 해제」 자리).
+ * ★ 글자는 반드시 요소로 감싼다. .bevel 의 안쪽 면이 ::before(절대배치)라
+ *   맨 텍스트 노드는 덮인다 — room-lobby.tsx 에서 <span> 으로 감싸 뒀다.
+ */
 .ready {
-  composes: frame;
+  composes: bevel;
+  --radius: 5px;
+  --edge: rgba(255, 255, 255, 0.1);
+  --edge-corner: rgba(255, 255, 255, 0.34);
+  --fill-top: #16191c;
+  --fill-bottom: #0d0f11;
   width: 100%;
   padding: 0.7rem;
   font-family: inherit;
@@ -501,32 +601,28 @@
   letter-spacing: 0.18em;
   text-transform: uppercase;
   cursor: pointer;
-  background-color: transparent;
   color: var(--muted);
   border: 0;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   gap: 0.5rem;
-  --fr-len: 11px;
-  --fr-color: rgba(255, 255, 255, 0.18);
   transition:
-    background-color 0.2s,
     color 0.2s,
-    --fr-len 0.25s ease,
-    --fr-color 0.25s ease;
+    --edge 0.25s ease,
+    --edge-corner 0.25s ease;
 }
 .ready:hover:not(:disabled) {
   color: var(--text);
-  --fr-len: 16px;
-  --fr-color: rgba(255, 255, 255, 0.3);
+  --edge-corner: rgba(255, 255, 255, 0.55);
 }
-/* 눌린 상태 — 괄호가 끝까지 물린 것처럼 길어지고 초록으로 바뀐다 */
+/* 눌린 상태 — 귀퉁이가 형광으로 서고 안쪽이 옅게 물든다 */
 .readyOn {
-  background-color: var(--accent-dim);
   color: var(--accent);
-  --fr-len: 20px;
-  --fr-color: var(--accent);
+  --edge: rgba(0, 255, 102, 0.3);
+  --edge-corner: var(--accent);
+  --fill-top: #0d1712;
+  --fill-bottom: #06100b;
 }
 .ready:disabled {
   opacity: 0.4;
