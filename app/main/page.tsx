@@ -33,7 +33,7 @@ export default function MainPage() {
     <div className={space.variable}>
       {/* 로그인해야 들어온다 (SPEC §15-2-결정) */}
       <RequireLogin>
-        {/* 판 도중 나갔던 월드 방이 있으면 그리로 되돌린다 (CEO 결정 2026-08-06) */}
+        {/* 판 도중 나갔던 월드 방이 있으면 돌아갈지 물어본다 (CEO 결정 2026-08-06) */}
         <WorldRejoin />
         <Lobby />
       </RequireLogin>
