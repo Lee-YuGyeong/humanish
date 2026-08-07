@@ -160,7 +160,6 @@ export default function GameHud({
   onVote,
   onVerdict,
   onLeave,
-  onRematch,
 }: {
   /** 좌석을 골랐다. 실제로 소켓에 나갔을 때만 선택이 확정된다(page.tsx) */
   onVote: (targetId: string) => void;
@@ -168,8 +167,6 @@ export default function GameHud({
   onVerdict: (guilty: boolean) => void;
   /** 결과를 다 본 뒤 방을 떠난다 — 연결·스토어 정리는 page.tsx 의 몫 */
   onLeave: () => void;
-  /** 같은 방에서 한 판 더 — 서버가 새 판을 쏘면 결과 오버레이가 걷힌다 */
-  onRematch: () => void;
 }) {
   const phase = useRoundtableStore((s) => s.phase);
   const reveal = useRoundtableStore((s) => s.reveal);
@@ -184,7 +181,7 @@ export default function GameHud({
         ★ `phase === 'reveal'` 이 아니라 **결과가 실제로 도착했는지**로 띄운다.
           단계만 보고 띄우면 정체가 오기 전에 빈 표가 한 번 번쩍인다.
       */}
-      {reveal ? <RevealOverlay onLeave={onLeave} onRematch={onRematch} /> : null}
+      {reveal ? <RevealOverlay onLeave={onLeave} /> : null}
       {/* 카드는 결과(z-50) 아래·투표 패널(z-40) 위 — 확인 전에는 카드가 먼저다 */}
       <RoleCard />
     </>
@@ -851,7 +848,7 @@ const REVEAL_STEPS = 3;
  *   화면이 이 값을 읽기 시작하면 그 순간 I1이 무너진다 — 판이 끝나기 전에
  *   "정체를 아는 코드 경로"가 생기고, 그 경로는 언젠가 화면에 닿는다.
  */
-function RevealOverlay({ onLeave, onRematch }: { onLeave: () => void; onRematch: () => void }) {
+function RevealOverlay({ onLeave }: { onLeave: () => void }) {
   const reveal = useRoundtableStore((s) => s.reveal);
   const seats = useSeats();
   const selfId = useWorldStore((s) => s.selfId);
@@ -1013,26 +1010,20 @@ function RevealOverlay({ onLeave, onRematch }: { onLeave: () => void; onRematch:
             </ul>
 
             {/*
-              판이 끝난 방의 두 문. 마지막 겹과 같이 나타난다 —
+              판이 끝난 방의 문 하나. 마지막 겹과 같이 나타난다 —
               결과가 다 열리기 전에 문부터 보이면 읽다 만 채로 나가게 된다.
-              · 한 판 더 — 같은 방에서 새 판. 첫 신호에만 열리고(rematch, intro_done
-                과 같은 규칙) 서버가 새 판(topic)을 쏘면 이 오버레이가 걷힌다
-                (roundtable-store 의 applyRound). 방의 아무나 누르면 전원이 새 판이다.
               · 새로운 게임 시작하기 — 방을 떠나 입장 패널로. 연결·스토어 정리는
                 page.tsx 의 leave 가 한다(여기는 신호만 올린다).
+              ★ 「한 판 더」는 2026-08-07 사용자 결정으로 뺐다 — 방의 아무나 한 명이
+                누르면 전원이 동의 없이 새 판에 끌려 들어가는 구조였다. 프로토콜의
+                t:'rematch' 와 워커 핸들러는 남겨 뒀다(전방 호환) — 되살리려면
+                이 자리에 버튼 하나와 page.tsx 의 sendRematch 배선만 다시 단다.
             */}
-            <div className="mt-6 grid grid-cols-2 gap-2">
-              <button
-                type="button"
-                onClick={onRematch}
-                className="rounded-xl bg-[#d4a373]/90 px-4 py-3 text-sm font-bold text-black transition-colors hover:bg-[#d4a373]"
-              >
-                한 판 더
-              </button>
+            <div className="mt-6">
               <button
                 type="button"
                 onClick={onLeave}
-                className="rounded-xl bg-white/10 px-4 py-3 text-sm font-bold text-neutral-200 transition-colors hover:bg-white/20"
+                className="w-full rounded-xl bg-[#d4a373]/90 px-4 py-3 text-sm font-bold text-black transition-colors hover:bg-[#d4a373]"
               >
                 새로운 게임 시작하기
               </button>

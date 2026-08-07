@@ -497,11 +497,6 @@ export default function WorldPage() {
     [conn],
   );
 
-  /** 같은 방에서 한 판 더 — 서버가 새 판(topic)을 쏘면 결과 오버레이가 걷힌다 */
-  const rematch = useCallback(() => {
-    conn.sendRematch();
-  }, [conn]);
-
   /**
    * 방을 떠나 입장 패널로 돌아간다 — 결과 화면의 「새로운 게임 시작하기」가 쓴다.
    * 헤더의 「현재 방에서 퇴장하기」도 이 정리를 거친 뒤 방 목록(/main)으로 나간다 —
@@ -553,9 +548,10 @@ export default function WorldPage() {
 
   /**
    * 결과가 뜨면 몇 초 뒤 자동으로 방을 접고 로비로 나간다 (CEO 결정).
-   * ★ revealResult 가 채워졌을 때만 건다. 「한 판 더」로 새 판이 열리면 reveal 이
-   *   null 로 돌아가 이 효과가 정리(clearTimeout)되므로 삭제가 취소된다 —
-   *   재대국과 자동 삭제가 부딪히지 않는다.
+   * ★ revealResult 가 채워졌을 때만 건다. 새 판이 열리면 reveal 이 null 로 돌아가
+   *   이 효과가 정리(clearTimeout)되므로 삭제가 취소된다.
+   *   「한 판 더」 버튼은 2026-08-07 에 뺐지만(game-hud 의 RevealOverlay 상자) 이
+   *   가드는 남긴다 — 프로토콜의 rematch 경로가 살아 있어 새 판은 여전히 올 수 있다.
    */
   useEffect(() => {
     if (!live || !revealResult) return;
@@ -982,7 +978,6 @@ export default function WorldPage() {
             onVote={castVote}
             onVerdict={castVerdict}
             onLeave={endGameToLobby}
-            onRematch={rematch}
           />
 
           {/*
