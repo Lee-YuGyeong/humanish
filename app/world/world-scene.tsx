@@ -621,10 +621,28 @@ const RemoteAvatar = memo(function RemoteAvatar({
       >
         <div className="pointer-events-none flex flex-col items-center gap-1">
           {bubble ? (
-            // w-max 가 없으면 Html 래퍼(폭 0)에 눌려 **한 글자씩 세로로** 줄바꿈된다.
-            // 내용만큼 넓히되 220px 에서 멈춘다.
-            <div className="w-max max-w-[220px] rounded-2xl bg-black/80 px-3 py-1.5 text-center text-[13px] leading-snug text-neutral-100 ring-1 ring-white/15">
-              {bubble}
+            /*
+             * 말풍선 (시안 2026-08-07 — Bubbledesign). 검은 유리에서 **테두리 있는
+             * 짙은 회색 상자 + 꼬리**로 바뀌었다: 왼쪽에 옥색 점 하나, 흰 글자.
+             *
+             * ★ w-max 가 없으면 Html 래퍼(폭 0)에 눌려 **한 글자씩 세로로**
+             *   줄바꿈된다. 내용만큼 넓히되 220px 에서 멈춘다.
+             * ★ 시안의 꼬리는 왼쪽에서 20px 이지만 여기서는 **가운데**다 —
+             *   이 판은 머리 위에 center 로 뜨므로(Html center) 꼬리가 왼쪽에
+             *   있으면 짧은 말일 때 사람을 안 가리킨다.
+             * ★ 점은 장식이다. 말한 사람이 누구인지·무엇인지와 무관하게 **늘 같은
+             *   색**이다 — 좌석 색이나 상태를 여기 넣지 않는다 (I1).
+             */
+            <div className="relative w-max max-w-[220px] rounded-2xl border border-gray-700 bg-[#1E1E1E] px-6 py-3 shadow-lg">
+              <div className="flex items-center gap-3">
+                <span aria-hidden className="h-2 w-2 shrink-0 animate-pulse rounded-full bg-[#4FD1C5]" />
+                <span className="text-[14px] font-medium leading-snug text-white">{bubble}</span>
+              </div>
+              {/* 꼬리 — 아래를 향한 삼각형. 테두리 없이 몸통 색만 잇는다 (시안의 ::after) */}
+              <span
+                aria-hidden
+                className="absolute -bottom-2 left-1/2 h-0 w-0 -translate-x-1/2 border-x-8 border-t-8 border-x-transparent border-t-[#1E1E1E]"
+              />
             </div>
           ) : null}
           <div className="flex items-center gap-1">
