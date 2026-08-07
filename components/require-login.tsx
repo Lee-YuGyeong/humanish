@@ -39,9 +39,22 @@ export function RequireLogin({ children }: { children: React.ReactNode }) {
     router.replace(`/login?next=${encodeURIComponent(pathname)}`);
   }, [needsLogin, router, pathname]);
 
-  // 판정이 끝나기 전이나 보내는 중에는 아무것도 그리지 않는다.
-  // 로비를 한 번 번쩍 보여줬다가 걷어내면 그게 더 나쁘다.
-  if (isLoading || needsLogin) return null;
+  /*
+   * 판정이 끝나기 전이나 보내는 중에는 로비 대신 **어두운 덮개**를 그린다.
+   *
+   * ★ null 이면 안 된다 — 그 한 박자 동안 화면에 남는 것이 layout.tsx 의 창고
+   *   배경(황토색 텅스텐, globals.css 의 .room)이라, 새로고침·이동 때마다
+   *   창고가 번쩍 비쳐 보였다 (사용자 보고 2026-08-07). 이 게이트가 감싸는
+   *   화면(/main · /room)은 전부 어두운 취조실 팔레트라, 같은 계열의 빈 판으로
+   *   덮으면 그 틈이 사라진다. 색은 room-lobby.module.css 의 --bg2 와 같다
+   *   (모듈을 import 하면 번들이 늘어서 값만 맞춘다 — app/room 의 loading.tsx 와
+   *   같은 방식이다).
+   * ★ 로비를 한 번 번쩍 보여줬다가 걷어내는 것은 여전히 안 한다 — 덮개가
+   *   로그인 판정 동안 그 자리를 지킨다.
+   */
+  if (isLoading || needsLogin) {
+    return <div aria-hidden style={{ position: "fixed", inset: 0, zIndex: 1, background: "#08080a" }} />;
+  }
 
   return <>{children}</>;
 }

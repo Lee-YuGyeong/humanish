@@ -110,11 +110,13 @@ echo "── 시작 ──"
 S=$(post "$A_JAR" /api/room/start "$START_BODY")
 PHASE=$(echo "$S" | python3 -c 'import sys,json; print(json.load(sys.stdin)["room"]["phase"])' 2>/dev/null)
 chk "phase가 question" "question" "$PHASE"
-chk "5명이 됐다" "5" "$(psql "$DBURL" -tAqc "select count(*) from players where room_id='$ROOM';")"
-chk "봇 3명" "3" "$(psql "$DBURL" -tAqc "select count(*) from players where room_id='$ROOM' and is_bot;")"
-chk "역할 5개 배정" "5" "$(psql "$DBURL" -tAqc "select count(*) from player_roles where room_id='$ROOM';")"
+# ★ 사람 2 + AI 1 = 3 이다 (2026-08-06 결정 — 빈자리를 봇이 채우던 규칙은 폐기).
+#   이 수들이 "기대 5 / 실제 3" 으로 깨져 있었다 — 코드가 아니라 검사가 낡은 것이었다.
+chk "3명이 됐다 (사람 2 + AI 1)" "3" "$(psql "$DBURL" -tAqc "select count(*) from players where room_id='$ROOM';")"
+chk "봇 1명" "1" "$(psql "$DBURL" -tAqc "select count(*) from players where room_id='$ROOM' and is_bot;")"
+chk "역할 3개 배정" "3" "$(psql "$DBURL" -tAqc "select count(*) from player_roles where room_id='$ROOM';")"
 chk "스파이 1명" "1" "$(psql "$DBURL" -tAqc "select count(*) from player_roles where room_id='$ROOM' and role='spy';")"
-chk "봇 답변 3개" "3" "$(psql "$DBURL" -tAqc "select count(*) from answers where room_id='$ROOM';")"
+chk "봇 답변 1개" "1" "$(psql "$DBURL" -tAqc "select count(*) from answers where room_id='$ROOM';")"
 echo "  자리 배치: $(psql "$DBURL" -tAqc "select string_agg(case when is_bot then '봇' else '사람' end, ' ' order by seat) from players where room_id='$ROOM';")"
 
 # ★ 대기방 흔적이 게임까지 따라가면 안 된다 (I1). 대기방에는 사람만 있으므로
@@ -146,7 +148,7 @@ for want in target chat vote reveal; do
   GOT=$(psql "$DBURL" -tAqc "select phase from rooms where id='$ROOM';")
   [ "$GOT" = "$want" ] && ok "→ $want" || { bad "→ $want" "실제 $GOT"; break; }
 done
-chk "봇 투표 3건" "3" "$(psql "$DBURL" -tAqc "select count(*) from votes v join players p on p.id=v.voter_id where v.room_id='$ROOM' and p.is_bot;")"
+chk "봇 투표 1건" "1" "$(psql "$DBURL" -tAqc "select count(*) from votes v join players p on p.id=v.voter_id where v.room_id='$ROOM' and p.is_bot;")"
 
 echo ""
 echo "── anon으로 훔쳐보기 ──"
@@ -154,7 +156,7 @@ ANON=$(grep '^NEXT_PUBLIC_SUPABASE_ANON_KEY=' "$ROOT/.env.local" | cut -d= -f2-)
 URL=$(grep '^NEXT_PUBLIC_SUPABASE_URL=' "$ROOT/.env.local" | cut -d= -f2-)
 rest() { curl -s "$URL/rest/v1/$1" -H "apikey: $ANON" -H "authorization: Bearer $ANON"; }
 chk "players 테이블 직접 조회 막힘" "yes" "$(rest "players?select=is_bot" | grep -q 'message' && echo yes || echo no)"
-chk "public_players는 보임" "5" "$(rest "public_players?room_id=eq.$ROOM&select=id" | python3 -c 'import sys,json; print(len(json.load(sys.stdin)))' 2>/dev/null)"
+chk "public_players는 보임" "3" "$(rest "public_players?room_id=eq.$ROOM&select=id" | python3 -c 'import sys,json; print(len(json.load(sys.stdin)))' 2>/dev/null)"
 chk "public_players에 is_bot 없음" "yes" "$(rest "public_players?room_id=eq.$ROOM&select=*" | grep -q is_bot && echo no || echo yes)"
 chk "player_roles 막힘" "yes" "$(rest "player_roles?select=*" | grep -q 'message' && echo yes || echo no)"
 chk "bot_line_pool 막힘" "yes" "$(rest "bot_line_pool?select=*" | grep -q 'message' && echo yes || echo no)"
@@ -187,7 +189,8 @@ import json
 r = next((x for x in json.load(open('/tmp/admin_rooms.json'))['rooms'] if x['code'] == '$CODE'), None)
 print('방이 안 보임' if r is None else f\"{r['seated']}/{r['capacity']}|{str(r['roles_assigned']).lower()}\")
 " 2>/dev/null)
-chk "이 방이 좌석·역할과 함께 보인다" "5/5|true" "$ADMIN_ROW"
+# 앉은 자리 3(사람 2 + AI 1) / 정원 8 (default_room_capacity, 2026-08-06)
+chk "이 방이 좌석·역할과 함께 보인다" "3/8|true" "$ADMIN_ROW"
 
 # §12.5 — 만료 판정의 기준 시계는 DB 하나다. 두 시계 차이를 못 재면 어긋나도 모른다.
 chk "DB·앱 서버 시계 차이를 숫자로 보고한다 (§12.5)" "yes" \
