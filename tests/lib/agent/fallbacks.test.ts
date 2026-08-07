@@ -119,20 +119,50 @@ describe('isFallbackLine — 공용 풀만 보면 그물이 샌다', () => {
 describe('접객 말투는 폴백으로 바뀐다 — 정체 자백과 같은 취급', () => {
   const anyPersona = WORLD_PERSONAS[0];
 
-  it('신고된 그 문장이 걸린다', () => {
+  /**
+   * 인사 자리 — 누가 들어오거나 나간 **사건**에 반응하는 차례다.
+   * 접객 반사가 실제로 켜지는 곳이 여기 하나뿐이라, 감사 계열 금칙도 여기서만 건다.
+   */
+  const greetingCtx = (persona: (typeof ALL)[number]) => ({
+    ...ctxFor(persona),
+    worldEvent: '익명3이 방금 들어왔다',
+  });
+
+  it('신고된 그 문장이 걸린다 — 인사 자리다', () => {
     const out = parseOutput(
       JSON.stringify({ messages: ['안녕하세요, 즐겁게 놀러와서 감사합니다'] }),
-      ctxFor(anyPersona),
+      greetingCtx(anyPersona),
     );
     expect(out.messages[0]).not.toContain('감사');
     expect(isFallbackLine(out.messages[0], anyPersona)).toBe(true);
   });
 
-  it('가게 주인 말투를 걷는다', () => {
-    for (const line of ['환영합니다', '즐거운 시간 되세요', '무엇을 도와드릴까요', '잘 부탁드립니다']) {
+  it('가게 주인 말투는 자리를 안 가리고 걷는다', () => {
+    for (const line of ['환영합니다', '즐거운 시간 되세요', '무엇을 도와드릴까요']) {
       const out = parseOutput(JSON.stringify({ messages: [line] }), ctxFor(anyPersona));
       expect(isFallbackLine(out.messages[0], anyPersona), line).toBe(true);
     }
+  });
+
+  it('감사·부탁 계열은 인사 자리에서만 걷는다', () => {
+    for (const line of ['잘 부탁드립니다', '감사합니다']) {
+      const greet = parseOutput(JSON.stringify({ messages: [line] }), greetingCtx(anyPersona));
+      expect(isFallbackLine(greet.messages[0], anyPersona), `인사: ${line}`).toBe(true);
+    }
+  });
+
+  /*
+   * ★ 무조건 막았더니 **감사가 정답인 주제**까지 같이 죽었다 (2026-08-07).
+   *   월드 주제 풀에 "누군가에게 지금 딱 한마디 한다면?"·"오늘 누구한테 제일
+   *   고마웠어?"가 있는데, 거기서 고맙다고 답하는 건 접객이 아니라 그냥 답이다.
+   *   월드에서 폴백은 침묵이라 결과는 "그 주제만 오면 한 자리가 조용해지는"
+   *   조건부 침묵이었고, 그건 무작위 침묵과 달리 세면 갈린다 (I1).
+   */
+  it('감사가 정답인 자리에서는 안 걷는다 — 주제에 답한 것이다', () => {
+    const ctx = { ...ctxFor(anyPersona), question: '오늘 누구한테 제일 고마웠어?' };
+    const out = parseOutput(JSON.stringify({ messages: ['부장님한테 감사합니다'] }), ctx);
+    expect(isFallbackLine(out.messages[0], anyPersona)).toBe(false);
+    expect(out.messages[0]).toContain('감사');
   });
 
   /*

@@ -395,6 +395,58 @@ describe('parseOutput — 뭐가 오든 발화 가능한 모양으로 (§12.3)',
     }
   });
 
+  /*
+   * ★ 'AI' 는 **이 게임에서 제일 흔한 낱말**이다 (2026-08-07).
+   *   낱말로 막았더니 정상 발화 9개가 전부 막혔고, 월드에서 폴백은 침묵이라
+   *   결과가 "의심받는 순간 그 자리만 입을 닫는 것"이었다 — 막으려던 I1 을
+   *   정확히 그 방식으로 깬다. 이제는 **자백 꼴**일 때만 막는다.
+   */
+  it('AI 를 입에 올리는 정상 발화는 막지 않는다 — 부인·지목·잡담', () => {
+    for (const fine of [
+      '나 AI 아니야',
+      'AI 아니라고 몇 번을 말해',
+      '익명4가 AI 같은데',
+      'AI는 답이 너무 빠르잖아',
+      'AI 찾는 거 어렵다',
+      '너야말로 AI지',
+    ]) {
+      const out = parseOutput(JSON.stringify({ messages: [fine] }), ctx());
+      expect(isFallbackLine(out.messages[0], ctx().persona), fine).toBe(false);
+    }
+  });
+
+  it('그래도 자백 꼴은 막는다 — 1인칭 + 단정, 부정이 없을 때', () => {
+    for (const leak of ['난 AI야', '나는 AI 맞아', '제가 AI입니다', '사실 나 봇이야']) {
+      const out = parseOutput(JSON.stringify({ messages: [leak] }), ctx());
+      expect(isFallbackLine(out.messages[0], ctx().persona), leak).toBe(true);
+    }
+  });
+
+  /*
+   * ★ speak 창은 **전원이 같은 주제에 답하는** 자리라, 짧은 정상 답이 남의 문장
+   *   안에 그냥 들어간다. 그걸 베끼기로 잡으면 "사람이 먼저 답한 창에서만 그
+   *   자리가 조용해지는" 조건부 침묵이 된다 (I1).
+   */
+  it('같은 주제에 같은 답을 한 것은 에코가 아니다 — 짧게 겹치는 건 봐준다', () => {
+    const c = ctx({
+      visibleHistory: [
+        { speaker: '익명1', text: '나는 김밥 먹었어' },
+        { speaker: '익명2', text: '나 아까 편의점 갔다왔어' },
+      ],
+      question: '오늘 아침에 처음 먹은 것은?',
+    });
+    for (const fine of ['김밥 먹었어', '편의점 갔다왔어', '나도 김밥 먹었어']) {
+      const out = parseOutput(JSON.stringify({ messages: [fine] }), c);
+      expect(isFallbackLine(out.messages[0], c.persona), fine).toBe(false);
+    }
+  });
+
+  it('통째로 같은 문장은 짧아도 에코다 — 남의 줄을 그대로 다시 치지는 않는다', () => {
+    const c = ctx({ visibleHistory: [{ speaker: '익명1', text: '나는 김밥 먹었어' }] });
+    const out = parseOutput(JSON.stringify({ messages: ['나는 김밥 먹었어'] }), c);
+    expect(isFallbackLine(out.messages[0], c.persona)).toBe(true);
+  });
+
   it('짧은 맞장구와 새로 만든 문장은 에코가 아니다 — 오탐 확인', () => {
     const c = ctx({
       visibleHistory: [{ speaker: '익명2', text: '나는 무조건 엽떡 ㅋㅋ' }],
