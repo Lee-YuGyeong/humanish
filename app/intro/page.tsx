@@ -16,7 +16,8 @@
  * │ 아이콘은 인라인 SVG 다 — 배포본(Workers)에서 외부 요청이 나가지 않는다. │
  * │                                                                        │
  * │ 사진 두 장(스톡 이미지)도 뺐다. 위에서 떨어지는 취조등 하나를 CSS       │
- * │ 그라디언트로 세웠다 (intro.module.css 의 .heroLight).                   │
+ * │ 그라디언트로 세웠다 (intro.module.css 의 .heroLamp — 나가기 직전처럼    │
+ * │ 깜빡인다. 바닥 어둠은 .heroLight 로 따로 두어 같이 흐려지지 않는다).    │
  * └────────────────────────────────────────────────────────────────────────┘
  *
  * 규칙 카드는 상단 "규칙" 을 눌렀을 때 열린다 → ./rules.tsx
@@ -143,6 +144,8 @@ export default function IntroPage() {
           className="relative flex min-h-screen flex-col items-center justify-center overflow-hidden px-6 pb-28 pt-32 text-center"
         >
           <div aria-hidden className={styles.heroBg} />
+          {/* 등(깜빡인다) → 바닥 어둠(가만히 있다) 순서를 지킨다 — intro.module.css 의 .heroLamp */}
+          <div aria-hidden className={styles.heroLamp} />
           <div aria-hidden className={styles.heroLight} />
 
           <div className="relative z-10 max-w-3xl">
