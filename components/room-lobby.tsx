@@ -25,7 +25,7 @@ import { useEffect, useState } from "react";
 
 import { AccountName, TopBar } from "@/components/top-bar";
 import type { MeResponse } from "@/lib/api/room";
-import { MIN_HUMANS_TO_START, START_BLOCK_MESSAGE, startBlock } from "@/lib/game/rules";
+import { START_BLOCK_MESSAGE, startBlock } from "@/lib/game/rules";
 import { useProfile } from "@/lib/queries/auth";
 import type { PublicPlayer, Room } from "@/lib/game/types";
 import {
@@ -272,8 +272,12 @@ export function RoomLobby({
             ★ 이름을 고치는 판을 여기 두지 않는다. 이름은 계정에서 한 번 짓고
               못 바꾼다 — 앉는 순간 profiles 에서 lobby_name 으로 베껴져 오므로
               대기실에서 다시 물을 것이 없다. 머리말 오른쪽이 그 이름을 보여준다.
+
+            ★ **규칙판도 여기 두지 않는다** (2026-08-07 사용자 지시). 정원·AI·연기자·
+              승리 조건을 늘어놓던 판이 좌석 아래를 통째로 차지하고 있었다. 규칙은
+              /intro 에서 이미 읽고 들어오고, 대기실에서 할 일은 앉은 사람을 보는
+              것뿐이다. 다시 넣고 싶어지면 좌석을 밀어내지 않는 자리를 먼저 찾을 것.
           */}
-          <RulePanel capacity={room.capacity} />
         </main>
 
         {/* ── 오른쪽 ───────────────────────────────────────────────── */}
@@ -292,17 +296,24 @@ export function RoomLobby({
           <div className="border-t p-4" style={{ borderColor: "var(--border)" }}>
             <div className="mb-2 flex items-center justify-between">
               <span className="text-[0.6rem]" style={{ color: "var(--muted)" }}>
-                지금 {seated}명
+                {seated}명
               </span>
               <span className={`${styles.mono} text-[0.6rem]`} style={{ color: "var(--muted)" }}>
                 정원 {room.capacity}
               </span>
             </div>
-            <div className={`${styles.bar} mb-4`}>
-              <div
-                className={styles.barFill}
-                style={{ width: `${Math.min(100, (seated / room.capacity) * 100)}%` }}
-              />
+            {/*
+              눈금 한 칸 = 자리 하나 (2026-08-07 사용자 지시). 칸 수는 정원에서 온다 —
+              여기 8을 박으면 정원 3~5 인 옛 방에서 눈금과 자리 수가 어긋난다.
+              수는 바로 위 「{seated}명 / 정원 {capacity}」 이 글자로 읽어주므로 aria 에서는 뺀다.
+            */}
+            <div className={`${styles.pips} mb-4`} aria-hidden>
+              {Array.from({ length: room.capacity }, (_, i) => (
+                <span
+                  key={i}
+                  className={`${styles.pip} ${i < seated ? styles.pipOn : ""}`}
+                />
+              ))}
             </div>
 
             {/*
@@ -405,7 +416,10 @@ function CopyCodeButton({ code }: { code: string }) {
  *
  * ★ 빈 칸이 곧 "시작하면 AI가 앉을 자리"라는 건 이 화면이 막을 수 없는 구멍이다.
  *   인원을 감춰도 빈칸 수가 같은 값을 준다. 그래서 최소한 문구로 그걸 알려주지는
- *   않는다 — 아래 RulePanel 의 표현을 여기서 뒤집지 말 것.
+ *   않는다 — 빈칸에 "AI 자리" 같은 말을 붙이지 말 것.
+ *
+ * ★ 열은 4칸 고정이다 (styles.seatGrid). 정원 8이 4+4 두 줄로 접힌다.
+ *   그리는 **개수**는 여전히 capacity 에서 온다 — 여기 숫자를 박지 않는다.
  *
  * ★ **방장 표시는 전원에게 보인다** (2026-08-07). 예전에는 내가 방장일 때 내 칸에만
  *   붙였는데, 방장이 준비에서 빠지면서(lib/game/rules.ts의 startBlock) 그 자리만
@@ -427,10 +441,7 @@ function SeatGrid({
   const bySeat = new Map(players.map((p) => [p.seat, p]));
 
   return (
-    <ul
-      className="grid gap-2"
-      style={{ gridTemplateColumns: `repeat(auto-fit, minmax(9.5rem, 1fr))` }}
-    >
+    <ul className={styles.seatGrid}>
       {Array.from({ length: capacity }, (_, i) => i + 1).map((seat) => {
         const p = bySeat.get(seat) ?? null;
         const isMe = p != null && p.id === meId;
@@ -524,96 +535,10 @@ function SeatGrid({
   );
 }
 
-/* ─────────────────────────────── 규칙 ─────────────────────────────── */
-
-/**
- * 방 규칙.
- *
- * ★ AI 수를 여기 적어도 된다 (§15-3 — **수는 공개, 자리는 비밀**). 2026-08-06 부터
- *   어느 방이든 1대라 감출 것 자체가 없다. 금지되는 건 그 수를 **자리와 묶는 것**이다.
- */
-function RulePanel({ capacity }: { capacity: number }) {
-  return (
-    <div className={styles.panel}>
-      <div
-        className="flex items-center justify-between border-b px-5 py-3"
-        style={{ borderColor: "var(--border)" }}
-      >
-        <span className={`${styles.label} ${styles.labelStrong}`}>방 규칙</span>
-        <span className={styles.tag}>표준</span>
-      </div>
-
-      <div className={styles.ruleRow}>
-        <span className={styles.ruleIcon}>
-          <UsersIcon />
-        </span>
-        <div>
-          <div className={`${styles.label} mb-1`}>정원</div>
-          <div className="text-[0.82rem]">사람 {capacity}자리</div>
-          <div className="mt-1 text-[0.75rem]" style={{ color: "var(--muted)" }}>
-            {MIN_HUMANS_TO_START}명부터 시작할 수 있다 — 방장을 뺀 전원이 준비를 눌렀을 때.
-          </div>
-        </div>
-      </div>
-
-      <div className={styles.ruleRow}>
-        <span className={styles.ruleIcon}>
-          <UserPlusIcon />
-        </span>
-        <div>
-          <div className={`${styles.label} mb-1`}>AI</div>
-          <div className="text-[0.82rem]">
-            시작할 때 1명이 합류한다.{" "}
-            <span style={{ color: "var(--muted)" }}>빈자리는 그대로 빈자리다.</span>
-          </div>
-        </div>
-      </div>
-
-      <div className={`${styles.ruleRow}`}>
-        <span className={`${styles.ruleIcon} ${styles.ruleIconAccent}`}>
-          <EyeOffIcon />
-        </span>
-        <div>
-          <div className={`${styles.label} mb-1`}>숨는 것</div>
-          <div className="text-[0.82rem]">
-            어느 자리가 AI인지.{" "}
-            <span style={{ color: "var(--muted)" }}>시작할 때 모두의 자리가 다시 섞인다.</span>
-          </div>
-        </div>
-      </div>
-
-      <div className={styles.ruleRow}>
-        <span className={styles.ruleIcon}>
-          <MaskIcon />
-        </span>
-        <div>
-          <div className={`${styles.label} mb-1`}>연기자</div>
-          <div className="text-[0.82rem]">
-            사람 중 1명. <span style={{ color: "var(--muted)" }}>사람이 2명 이상일 때만 생긴다.</span>
-          </div>
-        </div>
-      </div>
-
-      <div className={styles.ruleRow}>
-        <span className={`${styles.ruleIcon} ${styles.ruleIconAccent}`}>
-          <CheckIcon />
-        </span>
-        <div>
-          <div className={`${styles.label} mb-1`}>승리</div>
-          <div className="text-[0.82rem]">진짜 AI를 지목하면 사람들의 승리.</div>
-          <div className="mt-1 text-[0.75rem]" style={{ color: "var(--muted)" }}>
-            연기자에게 표가 몰리면 연기자의 승리다.
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-}
-
 /* ────────────────────────────── 말하기 ────────────────────────────── */
 
 /**
- * 대기실에서 말하기 — 정해진 문구만 누른다 (SPEC §15-3-결정).
+ * 대기실에서 대화하기 — 정해진 문구만 누른다 (SPEC §15-3-결정).
  *
  * 시안에는 자유 입력 채팅이 있었지만 이 게임에서는 그걸 열 수 없다. 대기실에서
  * 미리 짜면 게임이 죽는다. 담합의 두 축(자리·역할)은 이미 구조가 끊어놨고
@@ -665,7 +590,7 @@ function SayPanel({
         className="flex shrink-0 items-center justify-between border-b px-4 py-3"
         style={{ borderColor: "var(--border)" }}
       >
-        <span className={styles.label}>대기실 말하기</span>
+        <span className={styles.label}>대화하기</span>
         <span className="flex items-center gap-1.5">
           <span className={styles.dot} style={{ width: 5, height: 5 }} />
           <span className={`${styles.mono} text-[0.52rem]`} style={{ color: "var(--accent)" }}>
@@ -765,40 +690,6 @@ function UserPlusIcon() {
       <circle cx="7.4" cy="5.6" r="3.1" stroke="currentColor" strokeWidth="1.3" />
       <path d="M1 16c0-3.3 2.9-5.2 6.4-5.2 1.2 0 2.3.2 3.2.6" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
       <path d="M15 9.5v6M12 12.5h6" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
-    </svg>
-  );
-}
-
-function UsersIcon() {
-  return (
-    <svg width="12" height="11" viewBox="0 0 14 12" fill="none" aria-hidden>
-      <circle cx="5" cy="3.6" r="2.4" stroke="currentColor" strokeWidth="1.2" />
-      <path d="M1 11c0-2.2 1.8-3.5 4-3.5S9 8.8 9 11" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
-      <path d="M10.2 2.1a2.2 2.2 0 010 3.2M11.4 11c0-1.6-.5-2.6-1.4-3.2" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
-    </svg>
-  );
-}
-
-function EyeOffIcon() {
-  return (
-    <svg width="13" height="11" viewBox="0 0 14 12" fill="none" aria-hidden>
-      <path d="M1 6s2.2-3.6 6-3.6S13 6 13 6s-2.2 3.6-6 3.6S1 6 1 6z" stroke="currentColor" strokeWidth="1.2" />
-      <circle cx="7" cy="6" r="1.5" stroke="currentColor" strokeWidth="1.2" />
-      <path d="M1.5 11L12.5 1" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
-    </svg>
-  );
-}
-
-function MaskIcon() {
-  return (
-    <svg width="13" height="12" viewBox="0 0 14 12" fill="none" aria-hidden>
-      <path
-        d="M1 3.2C1 2 2 1.3 3.2 1.6c1.3.3 2.5.5 3.8.5s2.5-.2 3.8-.5C12 1.3 13 2 13 3.2c0 3.4-2.7 7.2-6 7.2S1 6.6 1 3.2z"
-        stroke="currentColor"
-        strokeWidth="1.2"
-        strokeLinejoin="round"
-      />
-      <path d="M4.6 4.8h1.6M7.8 4.8h1.6" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
     </svg>
   );
 }
