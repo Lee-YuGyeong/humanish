@@ -287,6 +287,22 @@ function RoleCard() {
   );
 }
 
+/* ─────────────────────────── 곁에 두는 판 (메모 · 기록) ─────────────────────────── */
+
+/**
+ * 화면 가장자리에 **조용히 서는** 판의 껍데기 (2026-08-07 요청).
+ *
+ * ★ 역할 카드·투표 패널이 쓰는 cardStyles.panel 을 여기 쓰지 않는다. 그건 화면
+ *   한가운데에서 **읽어 달라고** 서는 물건이라 금색 테두리와 광채가 있다.
+ *   가장자리에 같은 껍데기를 두르면 3D 장면보다 판이 먼저 눈에 들어온다 —
+ *   이 게임은 사람이 움직이는 걸 보는 게임이다.
+ * ★ 그래서 여기는 **어두운 유리 한 겹**뿐이다: 살짝 흐린 검정 + 머리카락 굵기의
+ *   흰 테. 글자는 배경 위에서 읽히기만 하면 된다.
+ */
+const GLASS =
+  'rounded-xl bg-black/25 ring-1 ring-white/[0.06] backdrop-blur-[2px] ' +
+  'transition-opacity duration-200 opacity-80 hover:opacity-100';
+
 /* ─────────────────────────────── 좌석 메모 ─────────────────────────────── */
 
 /**
@@ -353,39 +369,16 @@ export function SeatNotes() {
   const accent = mine?.color ?? '#d4a373';
 
   return (
-    <div
-      className={`${cardStyles.panel} mt-3 w-[11.5rem] overflow-hidden rounded-2xl`}
-      style={{ '--rc': accent } as React.CSSProperties}
-    >
+    <div className={`${GLASS} pointer-events-auto mt-3 w-[10.5rem] overflow-hidden`}>
       {/* ── 맨 위: 내 역할. 짐작이 아니라 아는 값이라 못 누른다 ── */}
-      <div
-        className="flex items-center gap-2.5 px-3 py-2.5"
-        style={{ borderBottom: `1px solid color-mix(in srgb, ${accent} 22%, transparent)` }}
-      >
-        <span
-          aria-hidden
-          className="grid h-9 w-9 shrink-0 place-items-center rounded-full"
-          style={{
-            color: accent,
-            border: `1px solid color-mix(in srgb, ${accent} 50%, transparent)`,
-            background: `radial-gradient(circle, color-mix(in srgb, ${accent} 18%, transparent), transparent 70%)`,
-            boxShadow: `0 0 16px color-mix(in srgb, ${accent} 25%, transparent)`,
-          }}
-        >
+      <div className="flex items-center gap-2 border-b border-white/[0.06] px-2.5 py-2">
+        <span aria-hidden className="shrink-0 opacity-80" style={{ color: accent }}>
           {/* 확인 전에는 가면을 미리 보여주지 않는다 — 그림도 역할을 말한다 */}
-          {mine && myRole === 'actor' ? <MaskIcon size={18} /> : <EyeIcon size={18} />}
+          {mine && myRole === 'actor' ? <MaskIcon size={15} /> : <EyeIcon size={15} />}
         </span>
         <span className="min-w-0 leading-tight">
-          <span className="block text-[8px] uppercase tracking-[0.22em] text-neutral-500">
-            내 역할
-          </span>
-          <span
-            className="block truncate text-[15px] font-black"
-            style={{
-              color: mine ? accent : '#8a8378',
-              textShadow: mine ? `0 0 18px color-mix(in srgb, ${accent} 45%, transparent)` : undefined,
-            }}
-          >
+          {/* 판에서 제일 크고 유일하게 색이 있는 글자 — 조용한 판에서는 이걸로 충분하다 */}
+          <span className="block truncate text-[13px] font-bold" style={{ color: accent }}>
             {/* 역할이 아직 안 온 것과 카드를 안 누른 것은 다른 상태다 */}
             {mine ? mine.name : myRole ? '카드 확인' : '대기 중'}
           </span>
@@ -398,7 +391,7 @@ export function SeatNotes() {
       </div>
 
       {/* ── 그 밑: 남의 자리. 눌러서 찍는다 ── */}
-      <ul className="flex flex-col gap-1 p-1.5">
+      <ul className="flex flex-col p-1">
         {others.map((s) => {
           const look = GUESS_LOOK[guesses[s.id] ?? 'none'];
           // '?' 는 값이 아니라 **키가 없는 것**이다 (roundtable-store) — 그래서
@@ -410,28 +403,24 @@ export function SeatNotes() {
                 type="button"
                 onClick={() => cycleGuess(s.id)}
                 aria-label={`${s.nickname} — 지금 ${look.label}`}
-                className="flex w-full cursor-pointer items-center gap-2 rounded-lg px-2 py-1.5 text-left transition-colors hover:bg-white/[0.07]"
-                style={
-                  marked
-                    ? { background: `color-mix(in srgb, ${look.color} 10%, transparent)` }
-                    : undefined
-                }
+                className="flex w-full cursor-pointer items-center gap-1.5 rounded-md px-1.5 py-1 text-left transition-colors hover:bg-white/[0.05]"
               >
                 <span
                   aria-hidden
-                  className="h-2 w-2 shrink-0 rounded-full"
-                  style={{ backgroundColor: seatColor(s.seat) }}
+                  className="h-1.5 w-1.5 shrink-0 rounded-full"
+                  style={{ backgroundColor: seatColor(s.seat), opacity: 0.75 }}
                 />
-                <span className="min-w-0 flex-1 truncate text-[11px] text-neutral-300">
+                <span className="min-w-0 flex-1 truncate text-[10px] text-neutral-400">
                   {s.nickname}
                 </span>
+                {/*
+                  칩이 아니라 글자다. 테두리·바탕을 두르면 좌석 수만큼 작은 상자가
+                  화면에 서고, 그게 3D 위에서 제일 먼저 눈에 띈다.
+                  안 찍은 칸은 색까지 죽여서 **찍은 것만 읽히게** 한다.
+                */}
                 <span
-                  className="w-[2.9rem] shrink-0 rounded-md py-[1px] text-center text-[9px] font-bold leading-normal"
-                  style={{
-                    color: look.color,
-                    background: `color-mix(in srgb, ${look.color} 16%, transparent)`,
-                    border: `1px solid color-mix(in srgb, ${look.color} ${marked ? 45 : 22}%, transparent)`,
-                  }}
+                  className="w-[2.4rem] shrink-0 text-right text-[10px] font-bold leading-normal"
+                  style={{ color: look.color, opacity: marked ? 0.95 : 0.5 }}
                 >
                   {look.label}
                 </span>
@@ -443,7 +432,7 @@ export function SeatNotes() {
 
       {/* 처음 한 번만. 한 칸이라도 찍었으면 조작법을 설명할 이유가 없다 */}
       {Object.keys(guesses).length === 0 ? (
-        <p className="px-3 pb-2 text-[8px] leading-relaxed text-neutral-600">
+        <p className="px-2.5 pb-1.5 text-[8px] leading-relaxed text-neutral-600">
           눌러서 표시 — ? → 사람 → 연기자 → AI
         </p>
       ) : null}
@@ -499,20 +488,12 @@ export function ChatTranscript() {
   if (messages.length === 0) return null;
 
   return (
-    <div className="absolute bottom-24 right-6 top-28 z-[35] hidden w-[19rem] lg:flex">
-      <div
-        className={`${cardStyles.panel} flex min-h-0 w-full flex-col overflow-hidden rounded-2xl`}
-        style={{ '--rc': '#d4a373' } as React.CSSProperties}
-      >
-        <div
-          className="flex shrink-0 items-baseline justify-between px-3 py-2"
-          style={{ borderBottom: '1px solid color-mix(in srgb, #d4a373 22%, transparent)' }}
-        >
-          <p className={cardStyles.kicker}>Log — 대화 기록</p>
-          <span className="font-mono text-[9px] text-neutral-500 tabular-nums">
-            {messages.length}
-          </span>
-        </div>
+    <div className="absolute bottom-24 right-6 top-28 z-[35] hidden w-[17.5rem] lg:flex">
+      <div className={`${GLASS} flex min-h-0 w-full flex-col overflow-hidden`}>
+        {/* 이름만 적는다. 개수를 옆에 세우면 읽을 것이 하나 더 는다 */}
+        <p className="shrink-0 border-b border-white/[0.06] px-3 py-2 text-[9px] tracking-[0.14em] text-neutral-500">
+          전체 대화 기록
+        </p>
 
         {/* 굴려서 읽는 자리. 여기만 스크롤이 붙는다 */}
         <div ref={boxRef} className="min-h-0 flex-1 overflow-y-auto px-3 py-2">
@@ -525,20 +506,19 @@ export function ChatTranscript() {
                     <span
                       aria-hidden
                       className="h-1.5 w-1.5 shrink-0 rounded-full"
-                      style={{ backgroundColor: seat === undefined ? '#525252' : seatColor(seat) }}
+                      style={{
+                        backgroundColor: seat === undefined ? '#525252' : seatColor(seat),
+                        opacity: 0.75,
+                      }}
                     />
-                    <span className="truncate font-bold text-[#d4a373]">{m.nickname}</span>
+                    <span className="truncate font-semibold text-[#b99168]">{m.nickname}</span>
                   </span>
-                  <span className="block break-words pl-3 text-neutral-300">{m.text}</span>
+                  <span className="block break-words pl-3 text-neutral-400">{m.text}</span>
                 </li>
               );
             })}
           </ul>
         </div>
-
-        <p className="shrink-0 px-3 pb-2 text-[8px] text-neutral-600">
-          굴려서 처음까지 읽는다 · 화면을 클릭하면 이어서 걷는다
-        </p>
       </div>
     </div>
   );

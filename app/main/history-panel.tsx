@@ -21,32 +21,10 @@
 
 import { useState } from "react";
 
-import type { MatchRecord } from "@/lib/game/types";
 import { useMatchHistory, useProfileStats } from "@/lib/queries/auth";
 import styles from "./lobby.module.css";
-
-/**
- * 역할 이름. 'spy'(옛 2D 판)와 'actor'(월드 판)는 같은 역할의 옛/새 이름이라 같은
- * 문구로 접는다 (§18.2 — 지난 행은 고쳐 쓰지 않는다).
- */
-const ROLE_NAME: Record<MatchRecord["role"], string> = {
-  citizen: "시민",
-  spy: "연기자",
-  actor: "연기자",
-};
-
-/**
- * 얼마 전인지. 표시용이라 클라이언트 시계를 써도 된다 — I2 는 페이즈 전환 판정의
- * 규칙이다. 미래로 나오면 '방금'으로 접는다. (왼쪽 기둥 timeAgo 와 같은 규칙)
- */
-function timeAgo(iso: string, now: number): string {
-  const min = Math.floor((now - new Date(iso).getTime()) / 60_000);
-  if (!Number.isFinite(min) || min < 1) return "방금";
-  if (min < 60) return `${min}분 전`;
-  const hour = Math.floor(min / 60);
-  if (hour < 24) return `${hour}시간 전`;
-  return `${Math.floor(hour / 24)}일 전`;
-}
+// 판 문구·역할 이름·경과 시간은 왼쪽 기둥과 **같은 것을 읽는다** (./match-label.ts)
+import { MATCH_LABEL, ROLE_NAME, timeAgo } from "./match-label";
 
 export function HistoryPanel() {
   const { data: stats } = useProfileStats();
@@ -60,33 +38,26 @@ export function HistoryPanel() {
   return (
     <div className="flex flex-1 flex-col">
       {/*
-        ── 합계 띠 ─────────────────────────────────────────────────────
-        방 목록의 도구 띠와 **같은 자리**다. 화면을 바꾸는 게 아니라 가운데 칸만
-        바뀌는 것이라, 위아래 경계가 같은 높이에 있어야 탭이 갈아끼워진 것으로 읽힌다.
+        ── 합계 한 줄 ───────────────────────────────────────────────────
+        방 목록의 도구 띠와 **같은 자리·같은 높이**다. 화면을 바꾸는 게 아니라
+        가운데 칸만 바뀌는 것이라, 위아래 경계가 어긋나면 화면이 갈린 것처럼 보인다.
+
+        ★ 네모 칸 네 개를 세우지 않는다. 숫자 넷을 각각 상자에 넣으면 **읽을 것이
+          늘 뿐 뜻은 그대로**다 — 이 화면은 표 하나를 보러 오는 자리다.
+          레벨과 EXP 는 붙여 놓는다. 서로를 설명하는 값이라 떨어뜨릴 이유가 없다.
       */}
       <div className="shrink-0 border-b px-5 py-4 sm:px-8" style={{ borderColor: "var(--border)" }}>
-        <div className="flex flex-wrap items-center gap-x-3 gap-y-3">
-          <Stat label="판수" value={stats ? String(stats.games) : "–"} />
-          <Stat label="승" value={stats ? String(stats.wins) : "–"} />
-          {/* 한 판도 없으면 win_rate 가 null 이다. 0% 로 접으면 아직 안 해 본 사람과
-              다 진 사람이 같아 보인다 (lib/game/types.ts) */}
-          <Stat
-            label="승률"
-            value={
-              stats?.win_rate == null ? "–" : `${Math.round(stats.win_rate * 100)}%`
-            }
-          />
-          <Stat label="레벨" value={stats ? `LV ${stats.level}` : "–"} />
+        <div className="flex flex-wrap items-center gap-x-5 gap-y-3">
+          <span
+            className={`${styles.mono} text-[0.86rem] font-bold`}
+            style={{ color: "var(--accent)" }}
+          >
+            LV {stats?.level ?? "–"}
+          </span>
 
           {/* EXP 막대 — 왼쪽 기둥과 같은 표기(이번 레벨에서 몇/몇)다 */}
-          <div className="ml-auto flex min-w-[180px] flex-1 flex-col justify-center gap-1 sm:max-w-[260px]">
-            <div className="flex items-baseline justify-between">
-              <span className={styles.label}>exp</span>
-              <span className={`${styles.mono} text-[0.72rem]`} style={{ color: "var(--muted)" }}>
-                {stats ? `${stats.level_into}/${stats.level_need}` : "–"}
-              </span>
-            </div>
-            <div className="h-0.5" style={{ background: "var(--border2)" }}>
+          <div className="flex min-w-[120px] max-w-[200px] flex-1 items-center gap-2">
+            <div className="h-0.5 flex-1" style={{ background: "var(--border2)" }}>
               <div
                 className="h-full"
                 style={{
@@ -96,7 +67,27 @@ export function HistoryPanel() {
                 }}
               />
             </div>
+            <span className={`${styles.mono} text-[0.7rem]`} style={{ color: "var(--muted)" }}>
+              {stats ? `${stats.level_into}/${stats.level_need}` : "–"}
+            </span>
           </div>
+
+          {/*
+            판수 · 승 · 승률 한 줄. 한 판도 없으면 승률이 null 이다 — 0% 로 접으면
+            아직 안 해 본 사람과 다 진 사람이 같아 보인다 (lib/game/types.ts).
+          */}
+          <span className={`${styles.mono} ml-auto text-[0.76rem]`} style={{ color: "var(--muted)" }}>
+            {stats ? (
+              <>
+                {stats.games}판 · {stats.wins}승 ·{" "}
+                <span style={{ color: "var(--text)" }}>
+                  {stats.win_rate == null ? "–" : `${Math.round(stats.win_rate * 100)}%`}
+                </span>
+              </>
+            ) : (
+              "…"
+            )}
+          </span>
         </div>
       </div>
 
@@ -106,15 +97,18 @@ export function HistoryPanel() {
           className={styles.matchRow}
           style={{ background: "transparent", border: "none", padding: "0.5rem 1.2rem" }}
         >
-          <span />
+          {/* 번호는 방 목록과 같다 — 세어 보여줄 뿐이라 누를 것이 없다 */}
+          <div className={styles.label}>번호</div>
           <div className={styles.label}>역할</div>
           <div className={styles.label}>결과</div>
-          <div className={styles.label}>사람</div>
+          <div className={styles.label} style={{ textAlign: "right" }}>
+            인원
+          </div>
           <div className={styles.label} style={{ textAlign: "right" }}>
             exp
           </div>
           <div className={styles.label} style={{ textAlign: "right" }}>
-            언제
+            시간
           </div>
         </div>
 
@@ -122,10 +116,10 @@ export function HistoryPanel() {
           {history.isLoading ? (
             [0, 1, 2].map((i) => (
               <div key={i} className={styles.matchRow} style={{ opacity: 0.5 }}>
-                <span />
+                <div className="h-3 w-4 animate-pulse" style={{ background: "var(--surface3)" }} />
                 <div className="h-3 w-10 animate-pulse" style={{ background: "var(--surface3)" }} />
                 <div className="h-3 w-24 animate-pulse" style={{ background: "var(--surface3)" }} />
-                <div className="h-3 w-8 animate-pulse" style={{ background: "var(--surface3)" }} />
+                <div className="h-3 w-8 animate-pulse justify-self-end" style={{ background: "var(--surface3)" }} />
                 <div className="h-3 w-6 animate-pulse justify-self-end" style={{ background: "var(--surface3)" }} />
                 <div className="h-3 w-12 animate-pulse justify-self-end" style={{ background: "var(--surface3)" }} />
               </div>
@@ -157,27 +151,34 @@ export function HistoryPanel() {
               </p>
             </div>
           ) : (
-            matches.map((m) => (
+            matches.map((m, i) => (
               <div key={m.room_id} className={styles.matchRow}>
-                <span
-                  aria-hidden
-                  className={`${styles.dot} ${m.won ? styles.dotGreen : styles.dotRed}`}
-                />
-                <span className={`${styles.tag} ${m.role === "citizen" ? "" : styles.tagGreen}`}>
-                  {ROLE_NAME[m.role]}
+                {/* 최신이 1번이다. 목록 순서를 세는 수지 판 번호가 아니다 */}
+                <span className={`${styles.mono} text-[0.72rem]`} style={{ color: "var(--dim)" }}>
+                  {String(i + 1).padStart(2, "0")}
                 </span>
+                <span className={styles.tag}>{ROLE_NAME[m.role]}</span>
+                {/*
+                  ★ 「승리/패배」라고 적지 않는다. 그건 결과를 한 번 더 번역한 말이고,
+                    왼쪽 기둥은 이미 "AI 적중 · 연기 성공" 처럼 **그 판에서 무슨 일이
+                    있었는지**로 부른다 (match-label.ts). 같은 판을 두 자리에서 다른
+                    말로 부르지 않는다. 이긴 판인지는 색이 말한다.
+                */}
                 <span
-                  className="text-[0.84rem] font-semibold"
+                  className="truncate text-[0.84rem]"
                   style={{ color: m.won ? "var(--accent)" : "var(--red)" }}
                 >
-                  {m.won ? "승리" : "패배"}
+                  {MATCH_LABEL[m.role][m.won ? "won" : "lost"]}
                 </span>
-                <span className={`${styles.mono} text-[0.74rem]`} style={{ color: "var(--muted)" }}>
-                  {m.humans}명
+                <span
+                  className={`${styles.mono} text-right text-[0.74rem]`}
+                  style={{ color: "var(--muted)" }}
+                >
+                  {m.humans}
                 </span>
                 {/* 진 판은 -1 이다 (2026-08-07, lib/server/match.ts) — 0 으로 접지 않는다 */}
                 <span
-                  className={`${styles.mono} text-right text-[0.82rem] font-bold`}
+                  className={`${styles.mono} text-right text-[0.8rem] font-bold`}
                   style={{ color: m.won ? "var(--accent)" : "var(--red)" }}
                 >
                   {m.score > 0 ? `+${m.score}` : String(m.score)}
@@ -207,16 +208,6 @@ export function HistoryPanel() {
           </button>
         ) : null}
       </div>
-    </div>
-  );
-}
-
-/** 합계 한 칸. 왼쪽 기둥의 Stat 과 같은 모양이지만 가로로 눕는다 */
-function Stat({ label, value }: { label: string; value: string }) {
-  return (
-    <div className={`${styles.inset} flex min-w-[74px] flex-col items-center gap-0.5 px-3 py-2`}>
-      <span className={styles.label}>{label}</span>
-      <span className={`${styles.mono} text-[0.86rem] font-bold`}>{value}</span>
     </div>
   );
 }
