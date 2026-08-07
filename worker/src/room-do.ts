@@ -54,6 +54,7 @@ import {
   isChatLocked,
   mayMove,
   mayChat,
+  shouldGather,
 } from '../../lib/mp/constants';
 import type { ErrorCode, PlayerSnapshot, RoundPhase, S2CMessage } from '../../lib/mp/protocol';
 import { verifyTicket } from '../../lib/mp/ticket';
@@ -577,8 +578,9 @@ export class RoomDO {
         //    확률적 잡음이 없으므로 사람이 한 줄만 쳐도 그 자리가 사람으로 확정되고,
         //    총 자리·AI 수가 공개라 소거법으로 나머지가 따라 갈린다.
         //    클라 UI 도 같은 함수로 막지만 그건 편의고, 방어선은 여기다.
-        //    ★ 유일한 예외는 defense 의 지목된 본인이다 — 그 자리는 봇이든 사람이든
-        //      똑같이 말할 수 있어야 한다(안 그러면 최후변론이 정체 판별기가 된다).
+        //    ★ 지금 잠기는 단계는 reveal 하나다 — defense 에 이어 vote·verdict 도
+        //      열었다 (2026-08-07, 사용자 지시). 여는 방식은 언제나 같다: 목록에서
+        //      빼서 **봇과 사람을 동시에** 연다. 한쪽만 열면 그게 곧 I1 누출이다.
         if (!mayChat(this.phase(), snap.id === this.round?.nomineeId)) return;
 
         const now = Date.now();
@@ -837,9 +839,11 @@ export class RoomDO {
     //   그래서 여기서 한 번에 정하지 못하고 루프 안에서 봇마다 묻는다 (mayMove).
     const nomineeId = this.round?.nomineeId ?? null;
     const phase = this.phase();
-    // 판이 도는 동안에는 목적지를 라운드테이블 주변으로 좁힌다. 주제를 읽으러 모인
-    // 사람들 사이에서 혼자 창고 구석으로 걸어가면 그게 곧 표식이다 (randomPoint, I1).
-    const gather = this.roundActive();
+    // 중앙 스크린에 읽을 것이 떠 있는 단계에서만 목적지를 테이블 주변으로 좁힌다.
+    // 주제를 읽으러 모인 사람들 사이에서 혼자 창고 구석으로 걸어가면 그게 곧 표식이다
+    // (randomPoint, I1). **반대로 freechat 에서는 사람이 흩어지므로 봇도 푼다** —
+    // 단계 목록은 lib/mp/constants.ts 의 BOT_GATHER_PHASES 하나뿐이다.
+    const gather = shouldGather(phase);
 
     for (const bot of bots) {
       // ① 말할 때가 됐으면 **예약만** 한다. 여기서 바로 broadcast하면 걸어가면서
@@ -928,7 +932,8 @@ export class RoomDO {
   private reactToHuman(now: number, trigger: string): void {
     const bots = this.bots;
     if (!bots || bots.length === 0) return;
-    // 투표·변론·판결 중에는 대꾸하지 않는다 — 그 화면에서 사람은 채팅을 못 친다.
+    // 말이 잠긴 단계(지금은 reveal 하나)에서는 대꾸하지 않는다 — 거기선 사람도
+    // 채팅을 못 친다. 목록은 CHAT_LOCKED_PHASES 하나뿐이다 (mayChat).
     if (!this.botsMayChat()) return;
 
     // 답할 거리가 없는 말("ㅋㅋ", "ㅇㅇ")에는 자리를 잡지 않는다 (bots.ts의 hasContent).

@@ -35,7 +35,9 @@ import {
   BOT_TYPE_CHARS_MIN,
   LOUNGE_TYPE_MAX_MS,
   MOVE_THROTTLE_MS,
+  RUN_SPEED,
   SPEAK_JITTER_MS,
+  WALK_SPEED,
 } from '../../lib/mp/constants';
 import { COLLIDERS, STEP_UP, groundHeightAt, isBlocked } from '../../lib/mp/collide';
 import { typingDelayMs } from '../../lib/agent/disguise';
@@ -56,8 +58,17 @@ function walkingBot(now: number): BotState {
   bot.waitUntil = 0; // 바로 걷는다
   bot.tx = 8; // 한참 먼 목적지 — 테스트 동안 도착하지 않는다
   bot.tz = LANE_Z;
+  // ★ 걸음걸이를 못 박는다. createBot 은 BOT_RUN_CHANCE 로 달리기를 뽑을 수 있고,
+  //   그러면 anim 이 'run' 이라 아래 검사들이 22% 확률로 깨진다. 이 픽스처가 보려는
+  //   것은 걸음걸이가 아니라 **발이 묶이는가**다 — 달리기는 따로 검사한다.
+  bot.running = false;
   bot.speed = 2;
   return bot;
+}
+
+/** 걷든 뛰든 "이동 중"인가. 봇 anim 에 'run' 이 생긴 뒤로 둘을 같이 봐야 한다. */
+function isMoving(bot: BotState): boolean {
+  return bot.anim === 'walk' || bot.anim === 'run';
 }
 
 /** dt=0.1 로 n 틱 굴린다. 실제 BOT_TICK_MS 와 같은 간격이다. */
@@ -74,9 +85,36 @@ describe('가구 충돌', () => {
   /** 회전 없는 소파 — 이 위를 정면으로 가로지르게 시켜 본다. */
   const SOFA = COLLIDERS.find((c) => c.rot === 0 && c.top === 0.99)!;
 
+  /**
+   * 이 스위트는 **수평 충돌만** 본다. 점프를 봉인한다.
+   *
+   * ┌─ ★ 왜 필요해졌나 (2026-08-07) ────────────────────────────────────────────┐
+   * │ BOT_JUMP_MIN_MS 를 20초 → 10초로 당기자 이 검사들이 25% 확률로 깨졌다.     │
+   * │ 검사가 20~30초를 굴리는데 그 사이 봇이 뛰어서 **소파를 넘어 들어가** 버린   │
+   * │ 것이다. 소파 윗면(0.99)은 점프 최고점(≈1.05)보다 낮으니 넘는 것 자체는      │
+   * │ 의도된 동작이다 — 사람도 그렇게 가구 위에 올라선다 (JUMP_SPEED 의 상자).    │
+   * │                                                                          │
+   * │ 즉 깨진 건 규칙이 아니라 **검사의 축**이었다. 아래 「점프·낙하」 스위트가    │
+   * │ waitUntil 을 무한대로 밀어 수평을 봉인하는 것과 정확히 거울상이다.          │
+   * │                                                                          │
+   * │ ★ 다만 그때 **진짜 결함이 하나 드러났다** — 내려오는 도중에 가구 footprint  │
+   * │   안으로 걸어 들어가면 발밑이 0 으로 잡혀 그대로 가구 **안에** 내려앉고,    │
+   * │   드물게 못 빠져나온다(적대적 픽스처 300판 중 3판). 사람도 같은 코드·같은   │
+   * │   상수라 똑같이 겪으므로 I1 비대칭은 아니고, 고칠 자리는 봇이 아니라        │
+   * │   lib/mp/collide 를 함께 읽는 양쪽 수직 처리다. **여기서 봉인하는 것으로**  │
+   * │   **그 결함이 사라지지는 않는다** — 별건으로 남겨 둔 것이다.               │
+   * └──────────────────────────────────────────────────────────────────────────┘
+   */
+  function groundBound(bot: BotState): BotState {
+    bot.nextJumpAt = Number.MAX_SAFE_INTEGER;
+    return bot;
+  }
+
   it('가구를 뚫고 지나가지 않는다', () => {
     const t0 = 1_000_000;
-    const bot = createBot(SEED, 5, t0, { id: SEED.id, x: SOFA.x, z: SOFA.z - 2.5, heading: 0 });
+    const bot = groundBound(
+      createBot(SEED, 5, t0, { id: SEED.id, x: SOFA.x, z: SOFA.z - 2.5, heading: 0 }),
+    );
     bot.waitUntil = 0;
     bot.speed = 2.5;
     // 소파 정반대편 — 직선으로 가면 반드시 소파를 통과해야 한다
@@ -97,7 +135,9 @@ describe('가구 충돌', () => {
 
   it('막히면 몇 초 뒤 목적지를 다시 잡는다 — 영원히 비비지 않는다', () => {
     const t0 = 1_000_000;
-    const bot = createBot(SEED, 5, t0, { id: SEED.id, x: SOFA.x, z: SOFA.z - 2.5, heading: 0 });
+    const bot = groundBound(
+      createBot(SEED, 5, t0, { id: SEED.id, x: SOFA.x, z: SOFA.z - 2.5, heading: 0 }),
+    );
     bot.waitUntil = 0;
     bot.speed = 2.5;
     bot.tx = SOFA.x;
@@ -109,7 +149,9 @@ describe('가구 충돌', () => {
 
   it("가구에 눌려 못 가면 'walk' 로 제자리걸음하지 않는다", () => {
     const t0 = 1_000_000;
-    const bot = createBot(SEED, 5, t0, { id: SEED.id, x: SOFA.x, z: SOFA.z - 1.1, heading: 0 });
+    const bot = groundBound(
+      createBot(SEED, 5, t0, { id: SEED.id, x: SOFA.x, z: SOFA.z - 1.1, heading: 0 }),
+    );
     bot.waitUntil = 0;
     bot.speed = 2.5;
     bot.tx = SOFA.x; // 소파 정면 — 밀고 들어갈 수 없다
@@ -122,7 +164,8 @@ describe('가구 충돌', () => {
       now += MOVE_THROTTLE_MS;
       stepBot(bot, now, MOVE_THROTTLE_MS / 1000);
       const moved = Math.hypot(bot.x - before.x, bot.z - before.z);
-      if (bot.anim === 'walk' && moved < 0.01) walkedInPlace += 1;
+      // 걷기든 달리기든 "이동 클립인데 제자리"면 같은 증상이다.
+      if (isMoving(bot) && moved < 0.01) walkedInPlace += 1;
     }
     expect(walkedInPlace).toBe(0);
   });
@@ -130,11 +173,27 @@ describe('가구 충돌', () => {
   it('걷는 방향과 보는 방향이 크게 어긋나지 않는다 — 옆걸음처럼 보이면 안 된다', () => {
     const t0 = 1_000_000;
     // 소파를 비스듬히 지나가게 해서 미끄러지는 구간을 만든다
-    const bot = createBot(SEED, 5, t0, { id: SEED.id, x: SOFA.x - 3, z: SOFA.z - 1.4, heading: 0 });
+    // 시작·목적지를 넉넉히 벌려 **한 번의 걸음**으로 50틱 넘게 걷게 한다 (아래 상자).
+    const bot = groundBound(
+      createBot(SEED, 5, t0, { id: SEED.id, x: SOFA.x - 6, z: SOFA.z - 2.8, heading: 0 }),
+    );
     bot.waitUntil = 0;
     bot.speed = 2.5;
-    bot.tx = SOFA.x + 3;
-    bot.tz = SOFA.z + 1.4;
+    bot.tx = SOFA.x + 6;
+    bot.tz = SOFA.z + 2.8;
+
+    /*
+     * ┌─ ★ 목적지에 닿는 순간 **표본 수집을 끝낸다** ────────────────────────────┐
+     * │ 닿으면 stepBot 이 randomPoint 로 새 목적지를 잡고 pickGait 으로 속도도    │
+     * │ 다시 뽑는다. 그 직후 몇 틱은 **크게 꺾는 구간**이라 정렬이 당연히 흐트러   │
+     * │ 지고, 방향이 랜덤이라 흐트러지는 정도까지 판마다 다르다. 그 표본이 섞이면 │
+     * │ 이 검사가 80회 중 1회씩 랜덤하게 깨진다(실측).                           │
+     * │                                                                        │
+     * │ 이 검사의 주제는 **가구를 스치며 미끄러지는 동안** 몸이 가는 쪽을 보는가다. │
+     * │ 꺾을 때의 회전은 다른 문제이고 turnToward(속도 배율)가 따로 진다.         │
+     * └──────────────────────────────────────────────────────────────────────┘
+     */
+    const leg = { tx: bot.tx, tz: bot.tz };
 
     let now = t0;
     const diffs: number[] = [];
@@ -142,9 +201,10 @@ describe('가구 충돌', () => {
       const before = { x: bot.x, z: bot.z };
       now += MOVE_THROTTLE_MS;
       stepBot(bot, now, MOVE_THROTTLE_MS / 1000);
+      if (bot.tx !== leg.tx || bot.tz !== leg.tz) break; // 걸음이 끝났다
       const mx = bot.x - before.x;
       const mz = bot.z - before.z;
-      if (bot.anim !== 'walk' || Math.hypot(mx, mz) < 0.05) continue;
+      if (!isMoving(bot) || Math.hypot(mx, mz) < 0.05) continue;
 
       let diff = Math.abs(((Math.atan2(mx, mz) - bot.heading + Math.PI) % (Math.PI * 2)) - Math.PI);
       if (diff > Math.PI) diff = Math.PI * 2 - diff;
@@ -163,6 +223,66 @@ describe('가구 충돌', () => {
     const t0 = 1_000_000;
     const bot = createBot(SEED, 5, t0, { id: SEED.id, x: SOFA.x, z: SOFA.z, heading: 0 });
     expect(isBlocked(bot.x, bot.z, bot.y, STEP_UP)).toBe(false);
+  });
+
+  /*
+   * ┌─ ★ 갇힘 회귀 (2026-08-07) ───────────────────────────────────────────────┐
+   * │ 걷기 블록은 *후보* 자리만 본다 — 막히면 **안 움직이는 것**이 전부라, 일단  │
+   * │ 밀어내기 범위 안에 들어가면 후보도 전부 막혀서 영원히 얼어붙었다.          │
+   * │ 들어가는 길은 실재했다: 소파 위에서 **가장자리 밖으로 걸어 나오는** 순간.   │
+   * │ 점프를 잦게 만들자 적대적 픽스처 300판 중 3판이 60초 내내 못 나왔다.       │
+   * │                                                                          │
+   * │ 답은 사람 클라가 매 프레임 하는 그것이다 — 지금 서 있는 자리를 밀어낸다     │
+   * │ (world-scene.tsx 의 resolveColliders). 그래서 이 검사는 **탈출**만 본다.   │
+   * └──────────────────────────────────────────────────────────────────────────┘
+   */
+  /**
+   * **실측된 얼어붙음 상태 그대로다.** 오른쪽 소파 둘(4.8,-8.0 · 7.9,-6.4)이 ㄱ 자로
+   * 만나는 구석이고, 목적지 방향까지 있어야 재현된다 — 후보 자리가 **그 방향으로**
+   * 막혀 있어야 걷기 블록이 이동을 거절하기 때문이다.
+   *
+   * ★ 자리만으로는 재현되지 않는다. 소파 한가운데처럼 한 번에 깔끔히 밀려나는
+   *   자리에서는 후보가 열려서 옛 코드도 그냥 걸어 나온다. 그래서 좌표와 목적지를
+   *   **둘 다** 박는다 (적대적 픽스처 1000판 중 8판에서 나온 값이고, 그 판들은
+   *   좌표가 틱마다 소수점까지 완전히 같았다 = 한 틱도 안 움직였다).
+   * ★ 가구를 옮기면 이 값은 무의미해진다. 아래 첫 expect 가 그때 먼저 걸린다.
+   */
+  const WEDGE = { x: 6.8, z: -7.55, tx: 2.2, tz: -1.7 };
+
+  it('가구에 끼면 빠져나온다 — 얼어붙지 않는다', () => {
+    const t0 = 1_000_000;
+    const bot = groundBound(
+      createBot(SEED, 5, t0, { id: SEED.id, x: SOFA.x, z: SOFA.z - 2.5, heading: 0 }),
+    );
+    bot.waitUntil = 0;
+    bot.speed = 2.5;
+
+    // 실측된 상태를 그대로 세팅한다 — 가구 윗면에서 걸어 나오다 끼는 경로의 종착점이다.
+    bot.x = WEDGE.x;
+    bot.z = WEDGE.z;
+    bot.tx = WEDGE.tx;
+    bot.tz = WEDGE.tz;
+    bot.y = 0;
+    bot.grounded = true;
+    bot.bestDist = Infinity;
+    bot.progressAt = t0;
+    bot.blockedAt = t0;
+
+    // 전제 확인: 여기는 실제로 막힌 자리여야 한다. 깨지면 가구가 움직인 것이다.
+    expect(isBlocked(bot.x, bot.z, bot.y, STEP_UP)).toBe(true);
+
+    /*
+     * ★★ 검사의 핵심은 **한 틱**이다. 여러 틱을 굴려 "빠져나왔나"를 보면 안 된다 —
+     *    6틱(BLOCKED_MS)이 지나면 randomPoint 로 목적지를 새로 잡고, 그 방향이
+     *    운 좋게 열려 있으면 **옛 코드도 걸어 나온다.** 실제로 옛 코드의 갇힘은
+     *    1000판 중 8판이라, 시행 하나로는 검사가 동전 던지기가 된다.
+     *
+     *    반면 첫 틱은 결정적이다. 옛 코드는 후보 자리가 막혀 있으면 **좌표를 아예
+     *    건드리지 않는다** — 소수점 넷째 자리까지 그대로다(실측). 지금은 사람 클라처럼
+     *    지금 자리를 밀어내므로 반드시 움직인다. 그 차이 하나만 본다.
+     */
+    stepBot(bot, t0 + MOVE_THROTTLE_MS, MOVE_THROTTLE_MS / 1000);
+    expect(bot.x === WEDGE.x && bot.z === WEDGE.z).toBe(false);
   });
 
   it('목적지를 가구 안에 잡지 않는다', () => {
@@ -214,6 +334,89 @@ describe('가구 충돌', () => {
     expect(bot.y).toBeCloseTo(SOFA_TOP, 5);
     expect(bot.vy).toBe(0);
     expect(bot.y).toBeCloseTo(groundHeightAt(bot.x, bot.z, bot.y), 5);
+  });
+});
+
+describe('걸음걸이 — 봇도 달린다 (I1)', () => {
+  /*
+   * 왜 이 검사가 있나: 봇의 anim 은 'idle'·'walk' 둘뿐이었다. 사람은 Shift 로
+   * 'run' 을 실어 보내므로 **한 번이라도 달린 자리는 사람 확정**이었고, 뒤집으면
+   * "판 내내 한 번도 안 달린 자리"가 봇 후보 명단이다. 점프(BOT_JUMP_*)와 같은 구멍이다.
+   */
+  it('목적지를 여러 번 잡으면 걷기와 달리기가 둘 다 나온다', () => {
+    const gaits = new Set<string>();
+    for (let i = 0; i < 400; i += 1) {
+      const bot = createBot(SEED, 5, 1_000_000 + i, { id: SEED.id, x: -6, z: LANE_Z, heading: 0 });
+      gaits.add(bot.running ? 'run' : 'walk');
+    }
+    // 400번이면 한쪽만 나올 확률은 사실상 0이다 (BOT_RUN_CHANCE 는 0과 1 사이).
+    expect([...gaits].sort()).toEqual(['run', 'walk']);
+  });
+
+  it('달리는 걸음은 anim 이 run 이고 사람의 RUN_SPEED 언저리로 간다', () => {
+    const t0 = 1_000_000;
+    const bot = walkingBot(t0);
+    bot.running = true;
+    bot.speed = RUN_SPEED;
+
+    run(bot, t0, 5);
+    expect(bot.anim).toBe('run');
+    // 사람이 달릴 때와 같은 속도 규모다 — 여기가 갈리면 속도만으로 자리가 갈린다.
+    expect(bot.speed).toBeGreaterThan(WALK_SPEED);
+  });
+
+  /*
+   * ┌─ ★ 달리면서 꺾어도 옆걸음이 안 나온다 (2026-08-07 회귀) ───────────────────┐
+   * │ TURN_RATE 는 고정값이었다. 걷기(≈2.6m/s)에서는 충분했는데 달리기(5.6m/s)를  │
+   * │ 넣자 **몸이 가는 쪽을 못 따라갔다** — 방향은 즉시 바뀌는데 회전은 그대로라   │
+   * │ 90° 를 도는 0.46초 동안 2.6m 를 옆걸음으로 갔다. 무빙워크처럼 보인다.       │
+   * │                                                                          │
+   * │ 그래서 재는 값이 **시간이 아니라 거리**다: 몸이 가는 쪽을 보게 되기까지      │
+   * │ 몇 미터를 갔는가. 이 값이 걸음걸이와 무관해야 화면에서 같아 보인다.         │
+   * └──────────────────────────────────────────────────────────────────────────┘
+   */
+  it('달리면서 꺾어도 걷기와 같은 거리 안에 몸이 돌아간다 — 옆걸음 방지', () => {
+    /** 90° 꺾어 걷게 하고, 몸이 가는 쪽을 볼 때까지 간 거리(m)를 잰다. */
+    function turnDistance(speed: number, running: boolean): number {
+      const t0 = 1_000_000;
+      // 가구 없는 통로 (walkingBot 과 같은 줄). heading 0 = +z 를 보고 시작한다.
+      const bot = createBot(SEED, 5, t0, { id: SEED.id, x: -6, z: LANE_Z, heading: 0 });
+      bot.nextJumpAt = Number.MAX_SAFE_INTEGER;
+      bot.waitUntil = 0;
+      bot.running = running;
+      bot.speed = speed;
+      bot.tx = 8; // +x 방향 — 시작 방향과 90° 어긋난다
+      bot.tz = LANE_Z;
+
+      const from = { x: bot.x, z: bot.z };
+      let now = t0;
+      for (let i = 0; i < 200; i += 1) {
+        now += MOVE_THROTTLE_MS;
+        stepBot(bot, now, MOVE_THROTTLE_MS / 1000);
+        // 목표 방향(+x = atan2(1,0) = π/2)과 몸이 보는 쪽의 차이
+        const diff = Math.abs(Math.PI / 2 - bot.heading);
+        if (diff < 0.1) return Math.hypot(bot.x - from.x, bot.z - from.z);
+      }
+      return Infinity;
+    }
+
+    const walk = turnDistance(WALK_SPEED, false);
+    const run = turnDistance(RUN_SPEED, true);
+
+    expect(walk).toBeLessThan(2);
+    // 옛 코드에서는 run 이 walk 의 2배가 넘었다 (속도비 그대로). 오차를 넉넉히 봐도 1.3배면 충분하다.
+    expect(run).toBeLessThan(walk * 1.3);
+  });
+
+  it('말하려고 서면 걸음걸이와 무관하게 idle 이다 — 달리다 말하면 안 된다', () => {
+    const t0 = 1_000_000;
+    const bot = walkingBot(t0);
+    bot.running = true;
+    bot.speed = RUN_SPEED;
+
+    scheduleSpeech(bot, '나는 아닌 것 같은데', t0);
+    run(bot, t0, 40);
+    expect(bot.anim).toBe('idle');
   });
 });
 

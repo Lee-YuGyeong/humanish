@@ -982,14 +982,22 @@ export default function WorldPage() {
             </div>
           ) : null}
 
-          {/* 아래 가운데 — 말하기와 안내가 같은 자리를 쓴다 */}
-          <div className="absolute inset-x-0 bottom-6 z-30 flex justify-center px-6">
+          {/*
+            아래 가운데 — 말하기와 안내가 같은 자리를 쓴다.
+
+            ★ z 는 투표·판결 패널(game-hud 의 PanelShell, z-40)보다 **위**다. 그 두
+              단계에서도 말이 열려 있어서(mayChat) 입력줄이 패널과 같이 뜨는데,
+              아래에 깔리면 클릭이 패널에 먹혀 커서로는 입력줄을 못 잡는다.
+              결과 오버레이(z-50)보다는 아래다 — 거긴 말이 잠긴 단계다.
+          */}
+          <div className="absolute inset-x-0 bottom-6 z-[45] flex justify-center px-6">
             {composing ? (
               <ChatLine
                 inputRef={lineRef}
                 draft={draft}
                 onDraft={setDraft}
                 onSend={sendLine}
+                cancelOnBlur={!uiOpen}
                 onCancel={() => {
                   setComposing(false);
                   setDraft('');
@@ -1004,15 +1012,18 @@ export default function WorldPage() {
                 묶인 상태라 "WASD 이동"이 그대로 거짓말이 된다 (world-scene 의 LocalRig
                 가 잠금이 풀린 동안 이동키를 무시한다).
 
-                ★ 단 하나 예외가 최후변론이다 — 지목된 본인은 이 구간에도 말할 수 있고
-                  (mayChat), 말할 수 있다는 걸 모르면 침묵한다. **침묵한 지목자 = 사람**
-                  이 되면 이 단계가 통째로 정체 판별기가 된다 (I1).
+                ★ 단 **다리는 묶여도 입은 열린** 단계가 있다 — 최후변론에 이어 이제
+                  지목 투표·판결까지다 (mayChat, 2026-08-07 사용자 지시). 말할 수 있다는
+                  걸 모르면 침묵하고, 한쪽 진영만 침묵하면 그 단계가 통째로 정체
+                  판별기가 된다 (I1). 그래서 이 안내는 **말이 열린 동안 반드시 떠 있어야
+                  한다** — 감추는 최적화를 여기에 얹지 말 것.
                 ★ 역할 카드가 떠서 열린 uiOpen 은 뺀다 — topic·speak 은 말이 열린
                   단계라 canSpeak 이 참인데, 그때 이 문구가 뜨면 거짓말이 된다.
               */
               canSpeak && !cardOpen ? (
                 <p className="rounded-full border border-amber-500/40 bg-black/70 px-5 py-2.5 text-[12px] text-amber-200 backdrop-blur">
-                  <span className="font-bold">Enter</span> 로 최후변론
+                  <span className="font-bold">Enter</span> 로{' '}
+                  {phase === 'defense' ? '최후변론' : '말하기'}
                 </p>
               ) : null
             ) : (
@@ -1044,12 +1055,23 @@ function ChatLine({
   onDraft,
   onSend,
   onCancel,
+  cancelOnBlur,
 }: {
   inputRef: React.RefObject<HTMLInputElement | null>;
   draft: string;
   onDraft: (v: string) => void;
   onSend: () => void;
   onCancel: () => void;
+  /**
+   * 포커스를 잃으면 무를 것인가.
+   *
+   * ★ 걷는 중에는 참이다 — 포커스가 없으면 애초에 칠 수가 없으니 줄만 남으면 거짓말이다.
+   * ★ 패널이 떠 있는 동안에는 **거짓**이다. 지목 투표·판결에서도 말할 수 있게 된 뒤로
+   *   (mayChat, 2026-08-07) 치던 중에 좌석 카드를 누르는 일이 생기는데, 그 클릭이
+   *   blur 라 여기서 무르면 **치던 말이 통째로 날아간다.** 표를 던지고 이어서 치는 게
+   *   이 단계에서 제일 흔한 동작이다.
+   */
+  cancelOnBlur: boolean;
 }) {
   return (
     <div className="pointer-events-auto flex w-full max-w-xl items-center gap-3 rounded-full border border-[#d4a373]/40 bg-black/75 px-4 py-2.5 backdrop-blur">
@@ -1078,7 +1100,7 @@ function ChatLine({
             onCancel();
           }
         }}
-        onBlur={onCancel}
+        onBlur={cancelOnBlur ? onCancel : undefined}
         maxLength={200}
         placeholder="Enter 로 보내기 · ESC 로 취소"
         className="min-w-0 flex-1 bg-transparent text-[13px] text-white outline-none placeholder:text-neutral-600"

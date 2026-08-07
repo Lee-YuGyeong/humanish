@@ -44,6 +44,9 @@ import {
   BOT_REACT_COOLDOWN_MS,
   COMPANION_REACT_CHANCE,
   COMPANION_REACT_COOLDOWN_MS,
+  BOT_RUN_CHANCE,
+  BOT_RUN_SPEED_MAX,
+  BOT_RUN_SPEED_MIN,
   BOT_SPEED_MAX,
   BOT_SPEED_MIN,
   BOT_TYPE_CHARS_MAX,
@@ -52,6 +55,7 @@ import {
   JUMP_SPEED,
   MOVE_THROTTLE_MS,
   SPEAK_JITTER_MS,
+  WALK_SPEED,
   WORLD,
 } from '../../lib/mp/constants';
 import type { AnimState, PlayerSnapshot } from '../../lib/mp/protocol';
@@ -142,6 +146,14 @@ export interface BotState {
   /** 이 시각까지는 서 있는다 (epoch ms) */
   waitUntil: number;
   speed: number;
+  /**
+   * 이번 목적지를 **달려서** 가는가. speed 와 짝이고 목적지마다 다시 뽑는다 (pickGait).
+   *
+   * ★ 속도로 역산하지 않고 따로 들고 있는다. anim 은 발이 실제로 얼마나 갔는지가
+   *   아니라 "지금 달리는 중인가"로 정해야 하기 때문이다 — 가구에 눌려 느려진
+   *   달리기가 walk 로 보이면, 사람 쪽(Shift 를 누르면 무조건 run)과 규칙이 갈린다.
+   */
+  running: boolean;
 
   /** 마지막으로 내보낸 값. 사람의 lastSent와 같은 역할이다 */
   sentX: number;
@@ -307,7 +319,7 @@ export function createBot(
   const free = isBlocked(pushed.x, pushed.z, 0, BOT_STEP_UP) ? randomPoint(false) : pushed;
   const start = { ...raw, x: free.x, z: free.z };
   const target = randomPoint(false);
-  return {
+  const bot: BotState = {
     ...seed,
     x: start.x,
     z: start.z,
@@ -320,6 +332,8 @@ export function createBot(
     tz: target.z,
     // 전부 동시에 출발하면 그 순간 8명이 똑같이 움직여서 바로 들킨다. 흩뿌린다.
     waitUntil: now + rand(0, BOT_IDLE_MAX_MS),
+    // 아래 pickGait 이 곧바로 덮어쓴다 (객체가 있어야 부를 수 있어서 자리만 잡아 둔다).
+    running: false,
     speed: rand(BOT_SPEED_MIN, BOT_SPEED_MAX),
     sentX: start.x,
     sentZ: start.z,
@@ -343,6 +357,10 @@ export function createBot(
     progressAt: now,
     blockedAt: now,
   };
+  // 첫 걸음도 걷기/달리기를 뽑는다 — 전원이 걸어서 출발하면 그 첫 몇 초가 통째로
+  // 대칭을 깬다(사람은 처음부터 달리는 사람이 섞인다).
+  pickGait(bot);
+  return bot;
 }
 
 /**
@@ -355,6 +373,19 @@ export function createBot(
  */
 export function gatherBot(bot: BotState, now: number): void {
   retarget(bot, now, true);
+}
+
+/**
+ * 이번 걸음을 걷기로 갈지 달리기로 갈지 정한다. **목적지를 새로 잡을 때마다** 부른다.
+ *
+ * ★ 좌석에 고정하지 않는다 (BOT_RUN_CHANCE 의 주석, I1) — "늘 걷는 자리"가 생기면
+ *   그 성향이 곧 좌석 지문이다. 속도까지 같이 뽑아야 걸음걸이와 anim 이 안 갈린다.
+ */
+function pickGait(bot: BotState): void {
+  bot.running = Math.random() < BOT_RUN_CHANCE;
+  bot.speed = bot.running
+    ? rand(BOT_RUN_SPEED_MIN, BOT_RUN_SPEED_MAX)
+    : rand(BOT_SPEED_MIN, BOT_SPEED_MAX);
 }
 
 /** 다음 목적지를 잡고 막힘 판정을 초기화한다. */
@@ -370,11 +401,23 @@ function retarget(bot: BotState, now: number, gather: boolean): void {
 /**
  * 원하는 방향으로 서서히 돈다. 사람이 마우스를 홱 돌리는 것보다 느려야 자연스럽다.
  * atan2(dx, dz) 는 three.js 의 y회전과 축이 맞는다 (app/world/avatar.tsx 의 정면 축 주석).
+ *
+ * ┌─ ★ 빠를수록 빨리 돈다 (2026-08-07 — 달리기를 넣으면서) ────────────────────┐
+ * │ TURN_RATE 는 고정값이었다. 걷기(1.7~2.9m/s)에서는 그걸로 충분했는데,        │
+ * │ 달리기(4.2~5.6m/s)가 생기자 **몸이 옆으로 미끄러졌다** — 목적지에 닿아       │
+ * │ 방향을 크게 꺾는 순간 속도 방향은 즉시 바뀌는데 몸은 3.4rad/s 로 따라가서,   │
+ * │ 180° 를 도는 0.92초 동안 5m 를 옆걸음·뒷걸음으로 갔다. 무빙워크처럼 보인다. │
+ * │ (「옆걸음」 검사가 이걸 잡았다 — 40회 중 4회. 검사가 옳았다.)               │
+ * │                                                                          │
+ * │ 그래서 **1미터를 가는 동안 도는 각도**를 걸음걸이와 무관하게 맞춘다. 이게    │
+ * │ 저 검사가 실제로 재는 값이기도 하다("가는 쪽을 보고 있는가"는 시간이 아니라  │
+ * │ 거리의 문제다). 걷기에서는 배율이 1 이라 예전 값 그대로다.                  │
+ * └──────────────────────────────────────────────────────────────────────────┘
  */
 function turnToward(bot: BotState, want: number, dt: number): void {
   let diff = ((want - bot.heading + Math.PI) % (Math.PI * 2)) - Math.PI;
   if (diff < -Math.PI) diff += Math.PI * 2;
-  const maxTurn = TURN_RATE * dt;
+  const maxTurn = TURN_RATE * Math.max(1, bot.speed / WALK_SPEED) * dt;
   bot.heading += Math.max(-maxTurn, Math.min(maxTurn, diff));
 }
 
@@ -415,10 +458,10 @@ export function stepBot(
     const dist = Math.hypot(dx, dz);
 
     if (dist < ARRIVE_EPS) {
-      // 도착 — 잠깐 서 있다가 다음 목적지로. 속도도 다시 뽑아 걸음걸이를 바꾼다.
+      // 도착 — 잠깐 서 있다가 다음 목적지로. 걸음걸이(걷기/달리기+속도)도 다시 뽑는다.
       retarget(bot, now, gather);
       bot.waitUntil = now + rand(BOT_IDLE_MIN_MS, BOT_IDLE_MAX_MS);
-      bot.speed = rand(BOT_SPEED_MIN, BOT_SPEED_MAX);
+      pickGait(bot);
       bot.anim = 'idle';
     } else if (dist >= bot.bestDist - PROGRESS_EPS && now - bot.progressAt > STUCK_MS) {
       // 몇 초째 가까워지지 못했다 = 가구에 막혔다. 사람은 못 가는 데를 계속 밀지 않는다.
@@ -464,13 +507,42 @@ export function stepBot(
         if (now - bot.blockedAt > BLOCKED_MS) retarget(bot, now, gather);
       } else {
         bot.blockedAt = now;
-        bot.anim = 'walk';
+        // ★ 실제로 간 거리가 아니라 **이번 걸음의 걸음걸이**로 고른다 (BotState.running).
+        //   사람 쪽도 Shift 를 누르고 있으면 가구에 끼어 못 가도 anim='run' 이다
+        //   (world-scene.tsx 의 LocalRig) — 여기서 규칙이 갈리면 그게 곧 표식이다.
+        bot.anim = bot.running ? 'run' : 'walk';
         // ★ 목적지가 아니라 **실제로 간 방향**으로 돈다. 가구를 따라 미끄러지는 동안
         //   목적지를 보고 있으면 옆걸음·뒷걸음처럼 보인다. 사람은 가는 쪽을 본다.
         turnToward(bot, Math.atan2(mx, mz), dt);
       }
     }
   }
+
+  /*
+   * ┌─ ★★ 끼었으면 빠져나온다. **사람 클라와 같은 한 줄이다** ────────────────────┐
+   * │ world-scene.tsx 의 LocalRig 는 매 프레임 `resolveColliders(pos, pos.y)` 로   │
+   * │ **지금 서 있는 자리**를 밀어낸다. 봇에는 그게 없었다 — 위 걷기 블록은 *후보*  │
+   * │ 자리만 보고, 막히면 **안 움직이는 것**이 전부다. 그래서 일단 가구 밀어내기    │
+   * │ 범위(hw+PLAYER_R) 안에 들어가면 나올 길이 없다: 거기서 만드는 후보 자리도     │
+   * │ 전부 막혀 있으니 영원히 얼어붙는다.                                          │
+   * │                                                                            │
+   * │ 들어가는 길은 실제로 있다 — 소파 위에 올라섰다가 **가장자리 밖으로 걸어       │
+   * │ 나오는** 순간이다. 발이 떨어지는 동안 발 높이가 윗면 밑으로 내려가는데, 그때  │
+   * │ 몸은 아직 밀어내기 범위 안이다. (BOT_JUMP_* 를 당겨 점프가 잦아지자           │
+   * │ 적대적 픽스처 300판 중 3판이 그렇게 갇혔다 — 2026-08-07 실측.)               │
+   * │                                                                            │
+   * │ ★ 그래도 위의 `isBlocked` 가드는 **남긴다.** 저건 "쐐기(A에서 밀면 B 안,      │
+   * │   B에서 밀면 A 안)에 제 발로 걸어 들어가지 않는다"는 예방이고, 이건 이미      │
+   * │   들어간 뒤의 탈출구다. 둘은 다른 일을 한다 — 하나로 합치려 들지 말 것.       │
+   * │                                                                            │
+   * │ ★ I1 — 사람이 매 프레임 하는 일을 봇도 하게 만드는 변경이다. 봇에만 넣으면    │
+   * │   비대칭이 아니라 **대칭 복구**다. 반대로 여기를 빼면 "가구 옆에서 굳는       │
+   * │   아바타 = 봇" 이 된다.                                                     │
+   * └──────────────────────────────────────────────────────────────────────────┘
+   */
+  const free = resolveCollisions(bot.x, bot.z, bot.y, BOT_STEP_UP);
+  bot.x = free.x;
+  bot.z = free.z;
 
   // 타이핑 중이면 새로 뛰지 않는다 — 사람도 Space가 입력줄로 먹힌다. 이미 공중이었다면
   // 착지까지는 물리를 굴린다(사람도 뛰던 중에 Enter를 칠 수 있다).
