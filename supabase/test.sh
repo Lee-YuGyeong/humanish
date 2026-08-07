@@ -30,7 +30,10 @@ trap cleanup EXIT
 export PGHOST=127.0.0.1 PGPORT="$PORT" PGUSER=postgres PGDATABASE=whois_test
 
 echo "▸ 일회용 Postgres 기동 (포트 $PORT)"
-initdb -D "$PGDIR/data" -U postgres --auth=trust >/dev/null 2>&1
+# --lc-messages=C — 서버 메시지를 영어로 고정한다. 머신 로케일을 따르게 두면
+# 한국어 macOS 에서 에러가 '오류:' 로 시작해 blocked() 의 ERROR* 패턴이 빗나간다.
+# 메시지만 고정한다 — 인코딩·정렬은 기본값 그대로라 한글 데이터에 영향이 없다.
+initdb -D "$PGDIR/data" -U postgres --auth=trust --lc-messages=C >/dev/null 2>&1
 pg_ctl -D "$PGDIR/data" -o "-p $PORT -c listen_addresses=127.0.0.1" -l "$PGDIR/pg.log" start >/dev/null 2>&1
 for _ in $(seq 1 20); do psql -d postgres -c 'select 1' >/dev/null 2>&1 && break; sleep 0.5; done
 
@@ -84,9 +87,13 @@ q()     { psql -tAq -c "$1"; }
 check() { if [ "$2" = "$3" ]; then printf '  ✓ %s\n' "$1"; else printf '  ✗ %s  (기대 %s / 실제 %s)\n' "$1" "$2" "$3"; FAIL=1; fi; }
 # anon으로 실행해서 "에러 또는 0행"이면 통과.
 # psql은 에러 시 non-zero로 끝나고 pipefail이 켜져 있으므로 || true로 받아야 한다.
+# ★ '오류'도 에러다 — 한국어 로케일의 Postgres 는 ERROR 대신 '오류:' 라고 말해서,
+#   막혀 있는데도(정답인데도) 전부 ✗ 로 떴다. 아래 initdb 의 --lc-messages=C 가
+#   원천을 막지만, NLS 없이 빌드된 서버가 그 플래그를 무시할 수 있어 둘 다 둔다.
+#   가짜 빨간불은 진짜 빨간불을 무시하게 만든다 — 실제로 한동안 그랬다 (2026-08-07).
 blocked() {
   local out; out="$(psql -tAq -c "set role anon; $2" 2>&1 | head -1 || true)"
-  case "$out" in ERROR*|0) printf '  ✓ %s\n' "$1";; *) printf '  ✗ %s → %s\n' "$1" "$out"; FAIL=1;; esac
+  case "$out" in ERROR*|오류*|0) printf '  ✓ %s\n' "$1";; *) printf '  ✗ %s → %s\n' "$1" "$out"; FAIL=1;; esac
 }
 # 에러 메시지에 특정 문구가 있으면 denied. 마찬가지로 pipefail을 피해 먼저 받아둔다.
 denied_if() {
