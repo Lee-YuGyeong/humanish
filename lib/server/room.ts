@@ -109,7 +109,7 @@ function normalizeCode(code: string): string {
 }
 
 /*
- * 시작 조건(사람 2~8명 + 전원 준비)은 lib/game/rules.ts 의 startBlock 하나다.
+ * 시작 조건(사람 2~8명 + 방장 뺀 전원 준비)은 lib/game/rules.ts 의 startBlock 하나다.
  * 화면의 시작 버튼과 시작 라우트가 **같은 함수**를 본다 — 여기 상수로 두면
  * 클라이언트가 못 읽어서 화면 쪽에 복사본이 생긴다.
  * advance_phase 의 lobby 분기에도 "사람 2명" 검사가 남아 있다(두 겹). 준비 상태는

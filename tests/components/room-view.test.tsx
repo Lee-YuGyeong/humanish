@@ -376,10 +376,23 @@ describe('대기실에서 말하기 (SPEC §15-3-결정)', () => {
   });
 
   it('준비 완료를 누르면 서버로 간다', async () => {
+    // 방장이 아닌 사람의 화면이다 — 방장에게는 이 버튼이 없다 (바로 아래 검사).
+    db.fetchRoomByCode.mockResolvedValue(room({ host_id: 'p2' }));
+    api.fetchMe.mockResolvedValue(me({ is_host: false }));
+
     renderRoom();
     // 정규식으로 두면 켜진 뒤의 '준비 완료'까지 걸린다. 이름 그대로 찾는다.
     fireEvent.click(await screen.findByRole('button', { name: '준비' }));
     await waitFor(() => expect(api.setLobbyReady).toHaveBeenCalledWith(ROOM_ID, true));
+  });
+
+  it('★ 방장에게는 준비 버튼이 없다 — 「게임 시작」이 그 자리다 (2026-08-07)', async () => {
+    // 준비를 누르고 시작을 또 누르는 건 같은 뜻의 조작을 두 번 하는 것이다.
+    // 버튼만 없애고 조건을 남기면 방이 영영 안 열리므로 startBlock 도 같이 뺐다
+    // (아래 「방장이 준비를 안 눌러도 시작할 수 있다」가 그 짝이다).
+    renderRoom();
+    await screen.findByRole('button', { name: /게임 시작/ });
+    expect(screen.queryByRole('button', { name: '준비' })).not.toBeInTheDocument();
   });
 
   it('★ 게임이 시작되면 말하기 판이 사라진다', async () => {
@@ -429,12 +442,18 @@ describe('★ 시작 버튼', () => {
   });
 
   /*
-   * ── 시작 조건 (2026-08-06 결정: 사람 2~8명 + 전원 준비) ──────────────────
+   * ── 시작 조건 (2026-08-07 결정: 사람 2~8명 + 방장 뺀 전원 준비) ──────────
    * 화면에서 먼저 막는 이유는 요청을 아끼려는 게 아니라 **이유를 보여주기** 위해서다.
    * 서버도 같은 함수로 거절하므로(start-world 라우트) 여기만 뚫려도 판은 안 열린다.
    */
+  /** 방장(p1)만 준비 전인 명단. 방장은 준비에서 빠지므로 이건 **시작할 수 있는** 상태다 */
+  const HOST_NOT_READY = [PLAYERS[0], { ...PLAYERS[1], is_ready: true }];
+  /** 방장이 아닌 p2 가 준비 전인 명단. 이쪽이 진짜로 막히는 상태다 */
+  const GUEST_NOT_READY = [{ ...PLAYERS[0], is_ready: true }, { ...PLAYERS[1], is_ready: false }];
+
   it('한 명이라도 준비를 안 했으면 눌리지 않는다', async () => {
-    // 기본 PLAYERS 는 p1(나·방장)이 준비 전이다.
+    db.fetchRoster.mockResolvedValue(GUEST_NOT_READY);
+
     renderRoom();
     const button = await screen.findByRole('button', { name: /게임 시작/ });
 
@@ -444,8 +463,19 @@ describe('★ 시작 버튼', () => {
   });
 
   it('왜 못 누르는지 화면에 적는다', async () => {
+    db.fetchRoster.mockResolvedValue(GUEST_NOT_READY);
     renderRoom();
     expect(await screen.findByText(/아직 준비하지 않은 사람이 있다/)).toBeTruthy();
+  });
+
+  it('★ 방장이 준비를 안 눌러도 시작할 수 있다 (2026-08-07)', async () => {
+    // 방장에게는 준비 버튼이 없다. 조건에서 안 빼면 **자기 버튼이 자기 때문에**
+    // 잠긴 채로 남아, 그 방은 아무도 열 수 없다.
+    db.fetchRoster.mockResolvedValue(HOST_NOT_READY);
+
+    renderRoom();
+    fireEvent.click(await screen.findByRole('button', { name: /게임 시작/ }));
+    await waitFor(() => expect(api.startWorld).toHaveBeenCalledWith(ROOM_ID));
   });
 
   it('혼자면 전원이 준비해도 눌리지 않는다 — 사람 2명부터다', async () => {

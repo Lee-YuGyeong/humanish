@@ -7,13 +7,49 @@
  */
 import { describe, expect, it } from 'vitest';
 import {
+  MAX_HUMANS_PER_ROOM,
   SCORE_RULE,
   assignRoles,
   calcScores,
   humanVotesReceived,
   mostSuspectedHuman,
+  startBlock,
 } from '@/lib/game/rules';
 import type { Role } from '@/lib/game/types';
+
+describe('startBlock — 시작 조건 (2026-08-07: 사람 2~8명 + 방장 뺀 전원 준비)', () => {
+  const 준비 = (id: string) => ({ id, is_ready: true });
+  const 대기 = (id: string) => ({ id, is_ready: false });
+
+  it('★ 방장은 준비를 안 눌러도 된다 — 방장에게는 「게임 시작」이 그 자리다', () => {
+    expect(startBlock([대기('host'), 준비('p2')], 'host')).toBeNull();
+  });
+
+  it('방장이 아닌 사람이 안 눌렀으면 막는다', () => {
+    expect(startBlock([준비('host'), 대기('p2')], 'host')).toBe('not_ready');
+  });
+
+  it('★ 방장이 넘어가면 예외도 같이 넘어간다 (leave_room 의 승계)', () => {
+    // 준비 상태를 미리 켜 두는 방식이었다면, 넘겨받은 사람은 누를 버튼도 없이
+    // 준비 전으로 남아 그 방이 영영 안 열린다.
+    const seats = [대기('p2'), 준비('p3')];
+    expect(startBlock(seats, 'host')).toBe('not_ready');
+    expect(startBlock(seats, 'p2')).toBeNull();
+  });
+
+  it('방장을 모르면 아무도 빠지지 않는다', () => {
+    expect(startBlock([대기('p1'), 준비('p2')], null)).toBe('not_ready');
+  });
+
+  it('혼자면 전원이 준비해도 못 연다 — 연기자가 안 뽑혀 아무나 찍어도 정답이 된다', () => {
+    expect(startBlock([준비('host')], 'host')).toBe('too_few');
+  });
+
+  it('사람 상한을 넘으면 막는다', () => {
+    const seats = Array.from({ length: MAX_HUMANS_PER_ROOM + 1 }, (_, i) => 준비(`p${i}`));
+    expect(startBlock(seats, 'p0')).toBe('too_many');
+  });
+});
 
 describe('assignRoles — SPEC §8', () => {
   it('봇 자리는 전부 ai다', () => {

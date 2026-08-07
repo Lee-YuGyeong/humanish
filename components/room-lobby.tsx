@@ -98,14 +98,17 @@ export function RoomLobby({
   const starting = useRoomUi(selectIsPending(REQUEST.start));
 
   /*
-   * 지금 시작할 수 있나 (2026-08-06 결정 — 사람 2~8명 + 전원 준비).
+   * 지금 시작할 수 있나 (2026-08-07 결정 — 사람 2~8명 + 방장 뺀 전원 준비).
    *
    * ★ 서버와 **같은 함수**를 본다 (lib/game/rules.ts). 여기서 따로 세면 눌리는데
    *   409 로 거절당하거나, 눌리지 않는데 서버는 받아주는 상태가 생긴다.
    * ★ players 는 public_players 라 **사람만 온다** (대기방에는 아직 AI 가 없다).
    *   AI 는 시작 순간에 붙는다 — 그래서 여기 세는 수가 곧 사람 수다.
+   * ★ 방장은 준비에서 빠진다. 그래서 room.host_id 를 같이 넘긴다 — 내가 방장인지
+   *   (me.is_host)가 아니라 **누가 방장인지**가 필요하다. 남의 화면에서도 같은
+   *   판정이 나와야 "왜 저 사람은 준비 안 했는데 시작이 되지"가 안 생긴다.
    */
-  const blocked = startBlock(players);
+  const blocked = startBlock(players, room.host_id);
 
   /*
    * 나가기. **링크가 아니라 버튼이어야 한다** — 자리를 실제로 빼는 쓰기이기 때문이다.
@@ -261,8 +264,7 @@ export function RoomLobby({
               players={players}
               capacity={room.capacity}
               meId={me.player.id}
-              hostSeat={mine?.seat ?? null}
-              isHost={me.is_host}
+              hostId={room.host_id}
             />
           </section>
 
@@ -279,7 +281,13 @@ export function RoomLobby({
           className="hidden w-[300px] shrink-0 flex-col border-l lg:flex"
           style={{ background: "var(--surface)", borderColor: "var(--border)" }}
         >
-          <SayPanel code={code} roomId={room.id} mine={mine} seated={seated} />
+          <SayPanel
+            code={code}
+            roomId={room.id}
+            mine={mine}
+            seated={seated}
+            isHost={me.is_host}
+          />
 
           <div className="border-t p-4" style={{ borderColor: "var(--border)" }}>
             <div className="mb-2 flex items-center justify-between">
@@ -398,19 +406,23 @@ function CopyCodeButton({ code }: { code: string }) {
  * ★ 빈 칸이 곧 "시작하면 AI가 앉을 자리"라는 건 이 화면이 막을 수 없는 구멍이다.
  *   인원을 감춰도 빈칸 수가 같은 값을 준다. 그래서 최소한 문구로 그걸 알려주지는
  *   않는다 — 아래 RulePanel 의 표현을 여기서 뒤집지 말 것.
+ *
+ * ★ **방장 표시는 전원에게 보인다** (2026-08-07). 예전에는 내가 방장일 때 내 칸에만
+ *   붙였는데, 방장이 준비에서 빠지면서(lib/game/rules.ts의 startBlock) 그 자리만
+ *   준비 표시가 비게 됐다. 누구인지 안 보이면 남들 눈에는 "안 누른 사람이 있는데
+ *   시작이 되는" 화면이 된다. 대기방에는 봇이 없어서 이걸 드러내도 I1과 무관하다.
  */
 function SeatGrid({
   players,
   capacity,
   meId,
-  hostSeat,
-  isHost,
+  hostId,
 }: {
   players: PublicPlayer[];
   capacity: number;
   meId: string;
-  hostSeat: number | null;
-  isHost: boolean;
+  /** 방장의 player id (rooms.host_id). 방장 자리에만 표가 붙고, 준비 줄이 「방장」이 된다 */
+  hostId: string | null;
 }) {
   const bySeat = new Map(players.map((p) => [p.seat, p]));
 
@@ -422,6 +434,13 @@ function SeatGrid({
       {Array.from({ length: capacity }, (_, i) => i + 1).map((seat) => {
         const p = bySeat.get(seat) ?? null;
         const isMe = p != null && p.id === meId;
+        const isHostSeat = p != null && p.id === hostId;
+        /*
+         * 시작을 막지 않는 자리인가. 방장은 준비를 누르지 않으므로(startBlock) 여기서
+         * 준비한 사람과 **같이 친다** — 안 그러면 시작은 되는데 화면에는 안 누른
+         * 자리가 하나 남아, 조건과 표시가 어긋난다.
+         */
+        const settled = p != null && (isHostSeat || p.is_ready);
 
         return (
           <li key={seat}>
@@ -432,7 +451,7 @@ function SeatGrid({
                 p == null ? styles.slotEmpty : "",
               ].join(" ")}
             >
-              {isMe && isHost && seat === hostSeat && (
+              {isHostSeat && (
                 <span className="absolute right-2 top-2">
                   <span className={`${styles.tag} ${styles.tagGreen}`}>host</span>
                 </span>
@@ -452,7 +471,7 @@ function SeatGrid({
                   styles.person,
                   isMe ? styles.personMe : "",
                   p == null ? styles.personEmpty : "",
-                  p?.is_ready ? styles.pulse : "",
+                  settled ? styles.pulse : "",
                 ].join(" ")}
               >
                 {p == null ? <UserPlusIcon /> : <UserIcon />}
@@ -480,12 +499,13 @@ function SeatGrid({
 
               {p ? (
                 <span className="flex items-center gap-1.5">
-                  <span className={styles.dot} style={p.is_ready ? undefined : { opacity: 0.35 }} />
+                  <span className={styles.dot} style={settled ? undefined : { opacity: 0.35 }} />
                   <span
                     className="text-[0.55rem] tracking-[0.1em]"
-                    style={{ color: p.is_ready ? "var(--accent)" : "var(--muted)" }}
+                    style={{ color: settled ? "var(--accent)" : "var(--muted)" }}
                   >
-                    {p.is_ready ? "준비 완료" : "접속중"}
+                    {/* 방장 자리에는 준비가 없다. 「접속중」으로 두면 안 누른 사람처럼 보인다 */}
+                    {isHostSeat ? "방장" : p.is_ready ? "준비 완료" : "접속중"}
                   </span>
                 </span>
               ) : (
@@ -531,7 +551,7 @@ function RulePanel({ capacity }: { capacity: number }) {
           <div className={`${styles.label} mb-1`}>정원</div>
           <div className="text-[0.82rem]">사람 {capacity}자리</div>
           <div className="mt-1 text-[0.75rem]" style={{ color: "var(--muted)" }}>
-            {MIN_HUMANS_TO_START}명부터 시작할 수 있다 — 전원이 준비를 눌렀을 때.
+            {MIN_HUMANS_TO_START}명부터 시작할 수 있다 — 방장을 뺀 전원이 준비를 눌렀을 때.
           </div>
         </div>
       </div>
@@ -608,11 +628,14 @@ function SayPanel({
   roomId,
   mine,
   seated,
+  isHost,
 }: {
   code: string;
   roomId: string;
   mine: PublicPlayer | null;
   seated: number;
+  /** 방장에게는 준비 버튼이 없다 — 바로 밑의 「게임 시작」이 그 자리다 (2026-08-07) */
+  isHost: boolean;
 }) {
   const { data: cfg } = useLobbyLines(true);
   const say = useSayLobbyLine(code, roomId);
@@ -685,19 +708,27 @@ function SayPanel({
       {/*
         준비 완료는 발화가 아니라 상태다. 말풍선으로 흐르지 않고 좌석 카드에 붙는다 —
         켜고 끄는 순서가 그대로 신호가 되기 때문이다.
-        시작을 막지도 않는다. 한 명이 자리를 비우면 방이 영영 시작되지 않는다.
+        시작을 막는다. 한 명이 자리를 비우면 그 방은 시작되지 않는다.
+
+        ★ **방장에게는 이 버튼이 없다** (2026-08-07 결정). 바로 밑에 「게임 시작」이
+          있어서, 준비를 누르고 시작을 또 누르는 건 같은 뜻의 조작을 두 번 하는 것이다.
+          안 눌렀을 때는 자기 버튼이 자기 때문에 잠겨서 고장으로 보였다.
+          시작 조건에서도 같이 빠진다 (lib/game/rules.ts 의 startBlock) — 한쪽만
+          빼면 버튼은 없는데 조건은 남아 방이 영영 안 열린다.
       */}
-      <div className="shrink-0 border-t p-4" style={{ borderColor: "var(--border)" }}>
-        <button
-          type="button"
-          disabled={busy}
-          onClick={() => ready.run(!mine?.is_ready)}
-          className={`${styles.ready} ${mine?.is_ready ? styles.readyOn : ""}`}
-        >
-          {mine?.is_ready && <CheckIcon />}
-          {mine?.is_ready ? "준비 완료" : "준비"}
-        </button>
-      </div>
+      {!isHost && (
+        <div className="shrink-0 border-t p-4" style={{ borderColor: "var(--border)" }}>
+          <button
+            type="button"
+            disabled={busy}
+            onClick={() => ready.run(!mine?.is_ready)}
+            className={`${styles.ready} ${mine?.is_ready ? styles.readyOn : ""}`}
+          >
+            {mine?.is_ready && <CheckIcon />}
+            {mine?.is_ready ? "준비 완료" : "준비"}
+          </button>
+        </div>
+      )}
     </>
   );
 }

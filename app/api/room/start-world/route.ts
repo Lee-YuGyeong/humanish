@@ -12,7 +12,7 @@
  *   2. buildWorldRoster 가 이 값을 보고 빈 좌석을 월드 AI 로 **즉시** 채운다
  *      (lib/server/world-ai.ts — 시작 전에는 지연 합류).
  *
- * 시작 조건은 2D 와 같다 — **사람 2~8명이 전부 준비 완료**여야 한다
+ * 시작 조건은 2D 와 같다 — **사람 2~8명이고, 방장을 뺀 전원이 준비 완료**여야 한다
  * (lib/game/rules.ts 의 startBlock). 화면의 시작 버튼도 같은 함수를 본다.
  *
  * 2D 시작이 하는 나머지는 전부 하지 않는다:
@@ -52,22 +52,24 @@ export async function POST(req: Request): Promise<Response> {
     if (room.phase !== 'lobby') throw new ApiError(409, '이미 시작된 방이다');
 
     /*
-     * 사람 2~8명 · 전원 준비 완료 (2026-08-06 결정, lib/game/rules.ts).
+     * 사람 2~8명 · 방장 뺀 전원 준비 완료 (2026-08-07 결정, lib/game/rules.ts).
      *
      * ★ **이미 시작된 방에서는 다시 보지 않는다.** 아래 멱등 분기가 그대로 성공을
      *   돌려줘야 한다 — 시작 뒤에 들어온 사람은 준비를 누른 적이 없어서, 여기서
      *   같이 검사하면 재전송 한 번이 409 가 되고 화면이 월드로 못 넘어간다.
      * ★ is_bot = false 만 센다 (I5). 봇을 세면 준비하지 않는 자리 때문에 영영 못 연다.
+     * ★ host_id 를 같이 넘긴다. 방장은 준비 대신 이 버튼을 누르는 사람이라
+     *   여기서 빠진다 — 안 넘기면 방장 자신 때문에 자기 요청이 409 가 된다.
      */
     if (!room.world_started_at) {
       const { data: humans, error: humansErr } = await db
         .from('players')
-        .select('is_ready')
+        .select('id, is_ready')
         .eq('room_id', roomId)
         .eq('is_bot', false);
       if (humansErr) throw new ApiError(500, `참가자 조회 실패: ${humansErr.message}`);
 
-      const blocked = startBlock(humans as { is_ready: boolean }[]);
+      const blocked = startBlock(humans as { id: string; is_ready: boolean }[], room.host_id);
       if (blocked) throw new ApiError(409, START_BLOCK_MESSAGE[blocked]);
     }
 

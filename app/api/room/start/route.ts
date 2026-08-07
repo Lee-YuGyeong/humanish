@@ -3,7 +3,7 @@
  *
  * POST /api/room/start  { room_id }  →  { room }
  *
- * 방장만 부를 수 있다. 시작 조건은 **사람 2~8명이 전부 준비 완료**다
+ * 방장만 부를 수 있다. 시작 조건은 **사람 2~8명이고, 방장을 뺀 전원이 준비 완료**다
  * (lib/game/rules.ts 의 startBlock — 화면의 시작 버튼도 같은 함수를 본다).
  *
  * 그다음 순서가 중요하다.
@@ -46,8 +46,10 @@ export async function POST(req: Request): Promise<Response> {
     // 2D 상태머신을 겹쳐 돌리면 월드 판 위로 question 전환이 덮친다.
     if (room.world_started_at) throw new ApiError(409, '월드로 시작된 방이다');
 
-    // 0. 사람 2~8명 · 전원 준비 완료인가 (2026-08-06 결정, lib/game/rules.ts).
+    // 0. 사람 2~8명 · 방장 뺀 전원 준비 완료인가 (2026-08-07 결정, lib/game/rules.ts).
     //
+    //    ★ 방장은 준비를 누르지 않는다 — 이 라우트를 부르는 것이 그 자리다.
+    //      host_id 를 같이 넘겨서 빼지 않으면 방장 자신 때문에 자기 요청이 409 가 된다.
     //    ★ fillWithBots **앞**이어야 한다. 뒤에 두면 거절하기 전에 봇이 이미 앉아버리고,
     //      그 방은 lobby인데 자리가 하나 늘어난 이상한 상태로 남는다.
     //    ★ 준비 상태는 **여기서만** 볼 수 있다. 바로 아래 shuffleSeats 가 is_ready 를
@@ -58,12 +60,12 @@ export async function POST(req: Request): Promise<Response> {
     //    is_bot = false 만 센다 (I5) — 봇을 세면 준비하지 않는 자리 때문에 영영 못 연다.
     const { data: humans, error: humansErr } = await db
       .from('players')
-      .select('is_ready')
+      .select('id, is_ready')
       .eq('room_id', roomId)
       .eq('is_bot', false);
     if (humansErr) throw new ApiError(500, `참가자 조회 실패: ${humansErr.message}`);
 
-    const blocked = startBlock(humans as { is_ready: boolean }[]);
+    const blocked = startBlock(humans as { id: string; is_ready: boolean }[], room.host_id);
     if (blocked) throw new ApiError(409, START_BLOCK_MESSAGE[blocked]);
 
     // 1. AI 자리 하나 (딱 1대 — supabase/functions/room.sql 의 fill_with_bots).

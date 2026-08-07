@@ -47,21 +47,32 @@ export const MAX_SEATS_PER_ROOM = MAX_HUMANS_PER_ROOM + AI_SEATS_PER_ROUND;
 export type StartBlock = 'too_few' | 'too_many' | 'not_ready';
 
 /**
- * 지금 시작할 수 있나 (2026-08-06 결정 — **사람 2~8명 + 전원 준비 완료**).
+ * 지금 시작할 수 있나 (2026-08-06 결정 — **사람 2~8명 + 방장 뺀 전원 준비 완료**).
  *
  * 화면(시작 버튼)과 서버(시작 라우트)가 **같은 함수**를 본다. 한쪽만 고치면
  * 눌리는데 거절당하거나, 눌리지 않는데 서버는 받아주는 상태가 된다.
  *
- * ★ 방장도 사람이라 준비를 눌러야 한다. "모두"에 예외를 두면 화면에 뜬 준비 표시와
- *   실제 조건이 어긋난다 — 남들은 방장이 왜 안 눌러도 되는지 알 방법이 없다.
+ * ★ **방장은 준비를 누르지 않는다** (2026-08-07 결정). 방장에게는 「게임 시작」이
+ *   그 자리다 — 준비를 누른 다음 시작을 또 누르는 건 같은 뜻의 조작을 두 번
+ *   하는 것이고, 안 누르면 자기 버튼이 자기 때문에 잠겨 고장으로 보인다.
+ *   대신 **방장 자리는 화면에서 방장으로 표시한다** (components/room-lobby.tsx의
+ *   SeatGrid). 남들이 "쟤는 왜 준비를 안 했는데 시작이 되지"를 묻지 않으려면
+ *   빠지는 자리가 누구인지 화면에 보여야 한다.
+ * ★ 방장이 나가면 자리가 넘어가고(room.sql의 leave_room), 그때부터는 **새 방장이**
+ *   이 예외를 받는다. 준비 상태를 미리 켜 두는 방식이었다면 넘겨받은 사람이
+ *   누를 버튼도 없이 준비 전으로 남아 방이 영영 안 열렸다.
  * ★ **사람만 넘긴다.** AI를 세면 시작 자체가 막힌다 (I5 와 같은 이유).
  *
- * @param humans 사람 좌석의 준비 상태. 봇·AI 좌석은 넣지 않는다.
+ * @param humans 사람 좌석의 id·준비 상태. 봇·AI 좌석은 넣지 않는다.
+ * @param hostId 방장의 player id (`rooms.host_id`). null 이면 아무도 안 빠진다.
  */
-export function startBlock(humans: { is_ready: boolean }[]): StartBlock | null {
+export function startBlock(
+  humans: { id: string; is_ready: boolean }[],
+  hostId: string | null,
+): StartBlock | null {
   if (humans.length < MIN_HUMANS_TO_START) return 'too_few';
   if (humans.length > MAX_HUMANS_PER_ROOM) return 'too_many';
-  if (humans.some((h) => !h.is_ready)) return 'not_ready';
+  if (humans.some((h) => h.id !== hostId && !h.is_ready)) return 'not_ready';
   return null;
 }
 

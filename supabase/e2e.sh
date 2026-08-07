@@ -93,6 +93,8 @@ psql "$DBURL" -q -c "update players set lobby_line_count = 10, lobby_line_at = n
 C=$(code_of "$A_JAR" /api/lobby/line "$HI_LINE"); chk "총량을 다 쓰면 거절" "409" "$C"
 grep -q "횟수" /tmp/last_body.txt && ok "총량 때문이라고 말해준다" || bad "총량 메시지" "$(cat /tmp/last_body.txt)"
 
+# ★ A(방장)는 준비를 누르지 않는다 — 2026-08-07 부터 방장은 시작 조건에서 빠진다
+#   (lib/game/rules.ts 의 startBlock). 아래 「시작」이 그대로 200 이면 그 예외가 산 것이다.
 C=$(code_of "$B_JAR" /api/lobby/ready "$READY_ON");  chk "준비 완료" "200" "$C"
 C=$(code_of "$B_JAR" /api/lobby/ready "$READY_ON");  chk "다시 눌러도 멀쩡하다" "200" "$C"
 C=$(code_of "$B_JAR" /api/lobby/ready "$READY_OFF"); chk "준비 해제" "200" "$C"
