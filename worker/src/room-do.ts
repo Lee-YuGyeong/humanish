@@ -225,11 +225,23 @@ const MIN_AGENT_BUDGET_MS = 900;
 /**
  * 월드 AI 방에서 LLM을 기다려 주는 상한 (ms). 예약 시각(speakAt)에 매이지 않는다 —
  * 풀 문구가 없는 방이라 자리를 놓친 답은 버리면 그냥 침묵인데, 사용자 결정은
- * "어색한 풀 문구 < 침묵 < 늦은 진짜 답"이다. 월드 AI 의 LLM 컷 10초
- * (world-agent 가 deadline_ms 로 늘린다 — 게임 방은 8초 그대로, SPEC §12.3)
- * + self-fetch 왕복 여유.
+ * "어색한 풀 문구 < 침묵 < 늦은 진짜 답"이다.
+ *
+ * ★ 12초 → 26초 (2026-08-07). **모델이 실제로 쓰는 시간을 재 보고 고쳤다** —
+ *   gemma-4-31b 가 7~11초를 쓰는데(실측 4건: 7.4 · 7.5 · 10.9 · 30.0) 오리진 컷이
+ *   10초, 여기가 12초였다. 절반이 만들어 놓고 버려졌고, 여기서 끊긴 요청은
+ *   world_agent_logs 의 after() insert 까지 같이 죽어서 **왜 조용한지 기록조차
+ *   안 남았다.** 오리진 상한(MAX_DEADLINE_MS, 22초) + self-fetch·명단·기록 여유.
+ *
+ * ★ 판이 도는 동안에는 이 값이 그대로 쓰이지 않는다 — **남은 단계 시간**으로 한 번
+ *   더 조인다 (upgradeSpeech). 주제가 바뀐 뒤에 오는 답은 동문서답이다.
  */
-const COMPANION_AGENT_TIMEOUT_MS = 12_000;
+const COMPANION_AGENT_TIMEOUT_MS = 26_000;
+
+/**
+ * 단계 경계에 남겨 두는 여유 (ms). 답이 딱 마감에 오면 말풍선이 다음 단계로 넘어간다.
+ */
+const PHASE_EDGE_MARGIN_MS = 2_000;
 
 interface CachedMeta extends RoomMeta {
   fetchedAt: number;
@@ -1103,6 +1115,32 @@ export class RoomDO {
     const budget = bot.speakAt - Date.now();
     if (!companion && budget < MIN_AGENT_BUDGET_MS) return;
 
+    /*
+     * ┌─ 기다리는 시간은 **이 단계가 끝나기 전까지**다 ────────────────────────────┐
+     * │ (신고 2026-08-07: "익명5가 주제에 한마디도 안 한다" — 로그로 확인했다)      │
+     * │                                                                            │
+     * │ 모델(gemma-4-31b)이 실제로 7~11초를 쓴다(실측). 그런데 오리진 컷이 10초,    │
+     * │ 워커 대기가 12초였다 — **절반이 만들어 놓고 버려졌다.** 게다가 워커가 12초에 │
+     * │ 끊으면 오리진 요청이 통째로 취소돼서 world_agent_logs 의 after() insert 까지 │
+     * │ 같이 죽는다. 그래서 그 판에는 **기록조차 한 줄도 안 남았다** — 조용한 이유를 │
+     * │ 볼 수 없게 만든 것도 이 컷이다.                                            │
+     * │                                                                            │
+     * │ 그래서 상한을 26초로 올리되(COMPANION_AGENT_TIMEOUT_MS), 판이 도는 동안에는  │
+     * │ **남은 단계 시간**으로 한 번 더 조인다. 주제가 이미 바뀐 뒤에 오는 답은      │
+     * │ 화면에서 동문서답이고, speak 창(45초)이 그보다 짧은 단계에서는 더 짧게 잡혀야 │
+     * │ 한다.                                                                      │
+     * │                                                                            │
+     * │ ★ 남은 시간이 문턱보다 적으면 **아예 안 부른다.** 어차피 버릴 답이라         │
+     * │   남의 지갑만 쓴다 (MIN_AGENT_BUDGET_MS 의 원래 취지).                      │
+     * └──────────────────────────────────────────────────────────────────────────┘
+     */
+    let wait = companion ? Math.max(budget, COMPANION_AGENT_TIMEOUT_MS) : budget;
+    const s = this.round;
+    if (s && !s.done) {
+      wait = Math.min(wait, s.phaseEndsAt - Date.now() - PHASE_EDGE_MARGIN_MS);
+      if (wait < MIN_AGENT_BUDGET_MS) return;
+    }
+
     const lines = await fetchAgentLines(
       this.env,
       roomId,
@@ -1115,7 +1153,7 @@ export class RoomDO {
       //   월드의 판은 rooms.phase 를 'lobby' 로 둔 채 돌아서, 오리진 혼자서는
       //   주제가 떠 있는 45초와 라운지 잡담을 구분할 방법이 없다.
       { active: this.roundActive(), topic: this.speakTopic() },
-      companion ? Math.max(budget, COMPANION_AGENT_TIMEOUT_MS) : budget,
+      wait,
     );
     const line = lines.find((l) => l.player_id === bot.id);
     if (!line?.text) return;

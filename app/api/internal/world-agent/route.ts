@@ -319,15 +319,19 @@ export async function POST(req: Request): Promise<Response> {
         // 월드 AI 는 players 행이 없어 agent_logs 외래키에 걸린다 (lib/server/world-ai.ts).
         no_log: synthetic,
         /*
-         * ★ 월드 AI 는 LLM 컷을 8초에서 10초로 늘린다 (신고: "말을 안 할 때가 많다").
-         *   그 방은 자리를 놓친 답도 말하고(room-do.ts 의 upgradeSpeech — "어색한 풀
-         *   문구 < 침묵 < 늦은 진짜 답"), 워커는 이미 12초를 기다려 준다
-         *   (COMPANION_AGENT_TIMEOUT_MS). 그런데 기본 8초 컷이 먼저 끊으면 8~12초에
-         *   올 답이 전부 침묵이 된다 — gemma 실측이 정확히 그 구간을 1/3쯤 쓴다.
+         * ★ 월드 AI 는 LLM 컷을 8초에서 **22초**로 늘린다 (신고: "말을 안 할 때가 많다"
+         *   → 그래도 안 해서 로그로 재 봤다). 그 방은 자리를 놓친 답도 말하고
+         *   (room-do.ts 의 upgradeSpeech — "어색한 풀 문구 < 침묵 < 늦은 진짜 답"),
+         *   워커는 26초를 기다려 준다 (COMPANION_AGENT_TIMEOUT_MS).
+         *
+         *   처음엔 10초로 늘렸는데 **여전히 모자랐다** — gemma-4-31b 실측이 7~11초라
+         *   (4건: 7.4 · 7.5 · 10.9 · 30.0) 절반이 컷에 걸렸고, 월드에는 대신 낼 풀
+         *   문구가 없어 그대로 침묵이었다. 값을 어림하지 말고 **재고 정한다.**
+         *
          *   게임 방의 진짜 봇은 그대로 8초다 (§12.3) — 어차피 speakAt 을 넘긴 답은
          *   버려지므로 더 기다릴 이유가 없다.
          */
-        ...(synthetic ? { deadline_ms: 10_000 } : {}),
+        ...(synthetic ? { deadline_ms: 22_000 } : {}),
       }),
     });
     if (!res.ok) {
