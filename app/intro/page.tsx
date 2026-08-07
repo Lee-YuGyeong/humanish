@@ -4,10 +4,10 @@
  * ┌─ 시안과 달라진 점 ──────────────────────────────────────────────────────┐
  * │ 화면(형광 초록 취조실 · Space Grotesk · 카드형 규칙)은 시안 그대로다.   │
  * │ **문구만 실제 규칙에 맞췄다.** 시안에는 "5명 중 단 1명이 AI" 라고 적혀  │
- * │ 있었는데 이 게임에서는 셋 다 틀린 말이다 (근거는 SPEC §18):             │
+ * │ 있었는데 자리 수가 틀렸고 연기자가 빠져 있었다 (근거는 SPEC §18):       │
  * │   - 자리 수는 고정이 아니다. 시작할 때 모인 사람 수가 정한다 (§18.1)    │
- * │   - AI는 1~2대다. 빈자리를 채우는 게 아니라 사람 수가 정한다 (§18.1)    │
- * │   - 사람 중 일부는 AI인 척하는 연기자다. **몇인지는 숨긴다** (§18.2)    │
+ * │   - AI는 언제나 1대다 (2026-08-06 결정). 여기만 시안이 맞았다           │
+ * │   - 연기자가 섞일 수 있다(0명도 정상). **몇인지는 숨긴다** (§18.2)      │
  * │ 첫 화면에 적힌 숫자가 방에 들어가서 틀리면 그 뒤 화면을 전부 의심하게   │
  * │ 되므로, 고정 숫자 대신 범위와 기호(N · ?)로 적는다.                     │
  * │                                                                        │
@@ -61,41 +61,46 @@ const AI_IN_EXAMPLE = 1;
 const setup: { index: string; title: string; body: string; seats: Seat[] }[] = [
   {
     index: "01",
-    title: "방을 만들고 사람이 모인다",
-    body: `사람은 8자리까지 들어온다. 2명만 모이면 시작할 수 있다 — ${HUMANS_IN_EXAMPLE}명이 모인 방을 예로 든다.`,
+    title: "방을 만들고 대기방에 모인다",
+    body: `사람은 8자리까지 들어온다. 2명만 모여 전원이 준비하면 시작할 수 있다 — ${HUMANS_IN_EXAMPLE}명이 모인 방을 예로 든다.`,
     seats: seatsOf(HUMANS_IN_EXAMPLE, "human"),
   },
   {
     index: "02",
-    title: "시작하면 AI가 섞여 앉는다",
-    body: "사람인 척하며 사람들 사이에 앉는다. 언제나 한 대이고, 어느 자리인지만 숨긴다.",
+    title: "게임이 시작되면 다 같이 입장한다",
+    body: "전원이 캐릭터로 한 공간에 입장하고, 그 사이에 AI 1명이 사람인 척 섞여 들어온다. 언제나 한 대이고, 어느 자리인지만 숨긴다.",
     seats: [...seatsOf(HUMANS_IN_EXAMPLE, "human"), "plus", ...seatsOf(AI_IN_EXAMPLE, "ai")],
   },
   {
     index: "03",
-    title: "자리가 섞이고, 추리가 시작된다",
-    body: "누가 어디 앉았는지 아무도 모른다. 게다가 사람 중 누군가는 AI인 척 연기하는 중일 수 있다.",
+    title: "역할 카드를 받고, 추리가 시작된다",
+    body: "겉모습으로는 누가 누군지 알 수 없다. 게다가 사람 중 누군가는 AI인 척 연기 중일지도 모른다.",
     seats: seatsOf(HUMANS_IN_EXAMPLE + AI_IN_EXAMPLE, "unknown"),
   },
 ];
 
 /**
  * 배역 — 한 줄씩. 승리 조건만 적는다.
- * 셋 다 **투표로 지목된 한 명이 누구였나** 하나로 갈린다 (SPEC §18.4).
+ * 셋 다 **처형된 한 명이 누구였나** 하나로 갈린다 (worker/src/roundtable.ts 의
+ * decideWinner). 아무도 처형하지 못한 판은 AI 승이다.
  */
 const roles = [
-  { tag: "AI", name: "AI", line: "사람인 척한다. 애먼 사람이 지목되면 승리." },
-  { tag: "Actor", name: "연기자", line: "사람이면서 AI인 척한다. 자기가 지목되면 승리." },
-  { tag: "Citizen", name: "시민", line: "질문하고 의심한다. 진짜 AI를 지목하면 승리." },
+  { tag: "AI", name: "AI", line: "사람인 척한다. 시민이 처형되거나 아무도 처형되지 않으면 승리." },
+  { tag: "Actor", name: "연기자", line: "사람이면서 AI인 척한다. 연기자 중 누구든 처형되면 승리." },
+  { tag: "Citizen", name: "시민", line: "질문하고 의심한다. 진짜 AI를 처형하면 승리." },
 ];
 
-/** 한 판의 흐름. 자세한 내용은 규칙 카드에 있다 (§5.1) */
+/**
+ * 한 판의 흐름 — 3D 월드 라운드테이블 기준 (lib/mp/constants.ts 의 ROUND_*).
+ * 이름은 게임 HUD(app/world/game-hud.tsx 의 PHASE_LABEL)와 같은 말을 쓴다.
+ */
 const flow = [
-  { name: "공통 질문", sec: "60s ×2" },
-  { name: "지목 질문", sec: "30s" },
-  { name: "자유 채팅", sec: "120s" },
-  { name: "투표", sec: "30s" },
-  { name: "공개", sec: "—" },
+  { name: "다같이 말하기", sec: "45s ×2" },
+  { name: "자유 대화", sec: "60s" },
+  { name: "지목 투표", sec: "30s" },
+  { name: "최후변론", sec: "20s" },
+  { name: "생사 투표", sec: "20s" },
+  { name: "결과", sec: "—" },
 ];
 
 export default function IntroPage() {
@@ -111,7 +116,7 @@ export default function IntroPage() {
         <nav className="fixed left-0 top-0 z-50 flex w-full items-center justify-between bg-gradient-to-b from-[#080808f2] to-transparent px-6 py-6 backdrop-blur-[6px] sm:px-10 lg:px-16">
           <Link
             href="#hero"
-            className="text-[0.95rem] font-bold uppercase tracking-[0.15em] text-[#e8e8e8] no-underline"
+            className="text-[1.05rem] font-bold uppercase tracking-[0.15em] text-[#e8e8e8] no-underline"
           >
             Who is AI
           </Link>
@@ -126,7 +131,7 @@ export default function IntroPage() {
             <RulesTrigger className={styles.navLink}>규칙</RulesTrigger>
             <span className="hidden items-center gap-2 md:flex">
               <span aria-hidden className={styles.glowDot} />
-              <span className="text-[0.6rem] uppercase tracking-[0.25em] text-[#00ff66]">Live</span>
+              <span className="text-[0.8rem] uppercase tracking-[0.25em] text-[#00ff66]">Live</span>
             </span>
           </div>
         </nav>
@@ -156,13 +161,13 @@ export default function IntroPage() {
             </h1>
 
             <p
-              className={`${styles.fadeUp} ${styles.d2} mx-auto mb-11 max-w-md text-[0.95rem] font-light leading-[1.95] text-[#777]`}
+              className={`${styles.fadeUp} ${styles.d2} mx-auto mb-11 max-w-md text-[1.05rem] font-light leading-[1.95] text-[#b3b3b3]`}
             >
               사람들 사이에 <span className="text-[#e8e8e8]">AI가</span> 섞여 있다.
               <br />
-              사람 중 누군가는 <span className="text-[#e8e8e8]">AI인 척 연기한다.</span>
+              사람 중 누군가는 <span className="text-[#e8e8e8]">AI인 척 연기 중일지도 모른다.</span>
               <br />
-              <span className="font-semibold text-[#00ff66]">진짜 AI를 지목하면 이긴다.</span>
+              <span className="font-semibold text-[#00ff66]">진짜 AI를 처형하면 이긴다.</span>
             </p>
 
             <div className={`${styles.fadeUp} ${styles.d3} flex flex-wrap justify-center gap-4`}>
@@ -179,9 +184,9 @@ export default function IntroPage() {
 
           <div
             aria-hidden
-            className="absolute bottom-10 left-1/2 z-10 flex -translate-x-1/2 flex-col items-center gap-2 opacity-30"
+            className="absolute bottom-10 left-1/2 z-10 flex -translate-x-1/2 flex-col items-center gap-2 opacity-60"
           >
-            <span className="text-[0.55rem] uppercase tracking-[0.4em]">Scroll</span>
+            <span className="text-[0.75rem] uppercase tracking-[0.4em]">Scroll</span>
             <svg width="10" height="7" viewBox="0 0 10 7">
               <path
                 d="M1 1l4 4 4-4"
@@ -211,18 +216,18 @@ export default function IntroPage() {
                   세 줄이면 이 게임은 설명된다: 섞인 AI · 흉내 내는 사람 · 찾아내면 승리.
                   나머지(시간·순서)는 '규칙' 카드에 있다.
               */}
-              <div className="mt-10 flex flex-col gap-5 text-[1rem] font-light leading-[1.9] text-[#777]">
+              <div className="mt-10 flex flex-col gap-5 text-[1.1rem] font-light leading-[1.9] text-[#b3b3b3]">
                 <p>
                   사람들 사이에 <span className="text-[#e8e8e8]">AI가</span> 섞여 앉는다. AI는 사람인
                   척한다.
                 </p>
                 <p>
                   그리고 사람 중 누군가는 반대로{" "}
-                  <span className="text-[#e8e8e8]">AI인 척 연기한다.</span>
+                  <span className="text-[#e8e8e8]">AI인 척 연기 중일지도 모른다.</span>
                 </p>
                 <p>
                   시민 · 연기자 · 진짜 AI —{" "}
-                  <span className="text-[#00ff66]">이 셋 중에서 진짜 AI를 지목하면 시민이 이긴다.</span>
+                  <span className="text-[#00ff66]">이 셋 중에서 진짜 AI를 처형하면 시민이 이긴다.</span>
                 </p>
               </div>
 
@@ -230,10 +235,10 @@ export default function IntroPage() {
                 <div className="flex items-start gap-5">
                   <span aria-hidden className="mt-1 h-10 w-px shrink-0 bg-[rgba(0,255,102,0.3)]" />
                   <div>
-                    <div className="mb-1.5 text-[0.68rem] uppercase tracking-[0.2em] text-[#00ff66]">
+                    <div className="mb-1.5 text-[0.88rem] uppercase tracking-[0.2em] text-[#00ff66]">
                       One Of Us Is Acting
                     </div>
-                    <p className="text-[0.8rem] leading-[1.8] text-[#555]">
+                    <p className="text-[0.9rem] leading-[1.8] text-[#b3b3b3]">
                       연기자는 AI처럼 말하려 한다. &lsquo;AI 같은 답&rsquo;이 곧 함정이다.
                     </p>
                   </div>
@@ -241,10 +246,10 @@ export default function IntroPage() {
                 <div className="flex items-start gap-5">
                   <span aria-hidden className="mt-1 h-10 w-px shrink-0 bg-[rgba(0,255,102,0.3)]" />
                   <div>
-                    <div className="mb-1.5 text-[0.68rem] uppercase tracking-[0.2em] text-[#00ff66]">
+                    <div className="mb-1.5 text-[0.88rem] uppercase tracking-[0.2em] text-[#00ff66]">
                       Human Imperfection
                     </div>
-                    <p className="text-[0.8rem] leading-[1.8] text-[#555]">
+                    <p className="text-[0.9rem] leading-[1.8] text-[#b3b3b3]">
                       감정, 모순, 즉흥성이 무기다. 너무 매끄러운 문장은 의심을 산다.
                     </p>
                   </div>
@@ -274,11 +279,11 @@ export default function IntroPage() {
                 접속자 수를 세는 곳이 아직 없다. 대신 이 방의 구성을 같은 자리에 놓는다.
               */}
               <div className={styles.figureBadge}>
-                <div className="mb-2 text-[0.6rem] uppercase tracking-[0.3em] text-[#00ff66]">
+                <div className="mb-2 text-[0.8rem] uppercase tracking-[0.3em] text-[#00ff66]">
                   In This Room
                 </div>
-                <div className="text-3xl font-bold tracking-[-0.03em]">AI + 1</div>
-                <div className="mt-1 text-[0.65rem] text-[#555]">누구인지는 끝까지 모른다</div>
+                <div className="text-4xl font-bold tracking-[-0.03em]">AI + 1</div>
+                <div className="mt-1 text-[0.85rem] text-[#b3b3b3]">누구인지는 끝까지 모른다</div>
               </div>
             </div>
           </div>
@@ -291,8 +296,8 @@ export default function IntroPage() {
           */}
           <div className="mt-24 overflow-hidden rounded-3xl border border-white/[0.07]">
             <div className="flex flex-wrap items-baseline justify-between gap-3 border-b border-white/[0.06] px-7 py-5">
-              <p className="text-[0.6rem] uppercase tracking-[0.3em] text-[#00ff66]">How It Works</p>
-              <p className="text-[0.7rem] text-[#555]">
+              <p className="text-[0.8rem] uppercase tracking-[0.3em] text-[#00ff66]">How It Works</p>
+              <p className="text-[0.9rem] text-[#b3b3b3]">
                 예: 사람 {HUMANS_IN_EXAMPLE}명이 모인 방
               </p>
             </div>
@@ -302,14 +307,14 @@ export default function IntroPage() {
                 key={s.index}
                 className="flex flex-col gap-6 border-b border-white/[0.06] px-7 py-8 last:border-b-0 lg:flex-row lg:items-center lg:gap-10"
               >
-                <span className="text-[0.7rem] tracking-[0.2em] text-[#3d3d3d] lg:w-10">
+                <span className="text-[0.9rem] tracking-[0.2em] text-[#9a9a9a] lg:w-10">
                   {s.index}
                 </span>
                 <div className="lg:flex-1">
-                  <p className="text-[1.05rem] font-semibold tracking-tight text-[#e8e8e8]">
+                  <p className="text-[1.15rem] font-semibold tracking-tight text-[#e8e8e8]">
                     {s.title}
                   </p>
-                  <p className="mt-2 text-[0.82rem] font-light leading-[1.8] text-[#666]">
+                  <p className="mt-2 text-[0.92rem] font-light leading-[1.8] text-[#9a9a9a]">
                     {s.body}
                   </p>
                 </div>
@@ -340,23 +345,23 @@ export default function IntroPage() {
           </div>
 
           {/* 그래서 어떻게 이기나 — 위 세 걸음의 결론 한 줄 */}
-          <p className="mt-8 text-center text-[0.9rem] font-light leading-[1.9] text-[#666]">
-            <span className="text-[#00ff66]">진짜 AI를 지목하면 시민의 승리.</span> 연기자에게 표가
-            몰리면 연기자의 승리, 애먼 사람이 지목되면 AI의 승리다.
+          <p className="mt-8 text-center text-[1rem] font-light leading-[1.9] text-[#9a9a9a]">
+            <span className="text-[#00ff66]">진짜 AI를 처형하면 시민의 승리.</span> 연기자가 처형되면
+            연기자의 승리, 시민이 처형되거나 아무도 처형하지 못하면 AI의 승리다.
           </p>
 
           <div className="mt-14 overflow-hidden rounded-3xl border border-white/[0.07] px-7 py-8">
             <div className="flex flex-wrap items-baseline justify-between gap-3">
-              <p className="text-[0.6rem] uppercase tracking-[0.3em] text-[#00ff66]">Sequence</p>
-              <p className="text-[0.7rem] text-[#555]">시작하면 이 순서로 흐른다</p>
+              <p className="text-[0.8rem] uppercase tracking-[0.3em] text-[#00ff66]">Sequence</p>
+              <p className="text-[0.9rem] text-[#b3b3b3]">시작하면 이 순서로 흐른다</p>
             </div>
             <ol className="mt-5 flex flex-wrap gap-x-10 gap-y-4">
               {flow.map((f, i) => (
                 <li key={f.name} className="flex items-baseline gap-2">
-                  <span className="text-[0.6rem] text-[#3d3d3d]">{`0${i + 1}`}</span>
+                  <span className="text-[0.8rem] text-[#9a9a9a]">{`0${i + 1}`}</span>
                   <span>
-                    <span className="block text-[0.82rem] font-medium text-[#e8e8e8]">{f.name}</span>
-                    <span className="block text-[0.65rem] tracking-wider text-[#00ff66]/70">
+                    <span className="block text-[0.92rem] font-medium text-[#e8e8e8]">{f.name}</span>
+                    <span className="block text-[0.85rem] tracking-wider text-[#00ff66]/70">
                       {f.sec}
                     </span>
                   </span>
@@ -381,7 +386,7 @@ export default function IntroPage() {
                   남의 역할을 모른다.
                 </h2>
               </div>
-              <p className="max-w-[280px] text-[0.8rem] font-light leading-[1.9] text-[#444] sm:text-right">
+              <p className="max-w-[280px] text-[0.9rem] font-light leading-[1.9] text-[#9a9a9a] sm:text-right">
                 역할은 시작할 때 무작위로 배정된다.
                 <br />
                 진행 순서는 상단 &lsquo;규칙&rsquo;에 있다.
@@ -392,8 +397,8 @@ export default function IntroPage() {
               {roles.map((role) => (
                 <article key={role.name} className={styles.ruleCard}>
                   <span className={`${styles.tag} ${styles.tagLive}`}>{role.tag}</span>
-                  <h3 className="text-2xl font-semibold tracking-tight">{role.name}</h3>
-                  <p className="text-[0.83rem] font-light leading-[1.95] text-[#6a6a6a]">
+                  <h3 className="text-3xl font-semibold tracking-tight">{role.name}</h3>
+                  <p className="text-[0.93rem] font-light leading-[1.95] text-[#9a9a9a]">
                     {role.line}
                   </p>
                 </article>
@@ -414,7 +419,7 @@ export default function IntroPage() {
           <div className="relative z-10">
             <div className="mb-12 flex items-center justify-center gap-3">
               <span aria-hidden className={styles.glowDot} />
-              <span className="text-[0.6rem] uppercase tracking-[0.4em] text-[#00ff66]">
+              <span className="text-[0.8rem] uppercase tracking-[0.4em] text-[#00ff66]">
                 서버 접속 가능
               </span>
             </div>
@@ -436,7 +441,7 @@ export default function IntroPage() {
 
         {/* ── 바닥 ──────────────────────────────────────────────────────── */}
         <footer className="flex flex-wrap items-center justify-between gap-6 border-t border-white/5 px-6 py-12 sm:px-10">
-          <span className="text-[0.62rem] uppercase tracking-[0.25em] text-[#333]">
+          <span className="text-[0.82rem] uppercase tracking-[0.25em] text-[#888]">
             Who is AI? — 사람인 척
           </span>
           <div className="flex gap-8">
