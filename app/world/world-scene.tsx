@@ -17,7 +17,7 @@
 
 import { Html, PointerLockControls } from '@react-three/drei';
 import { Canvas, useFrame, useThree } from '@react-three/fiber';
-import { Suspense, memo, useCallback, useEffect, useMemo, useRef } from 'react';
+import { Suspense, memo, useCallback, useEffect, useMemo, useReducer, useRef } from 'react';
 import * as THREE from 'three';
 
 import { Avatar } from './avatar';
@@ -519,6 +519,28 @@ const RemoteAvatar = memo(function RemoteAvatar({
   const bubble = !eliminated && player.bubbleUntil > performance.now() ? player.bubbleText : '';
   void bubbleTick;
 
+  /*
+   * ┌─ ★ 수명이 끝나는 **그 시각에** 한 번 다시 그린다 ────────────────────────┐
+   * │ bubbleUntil 은 Map 안에서 제자리 변형되는 값이라(store.ts) 시간이 지났다고 │
+   * │ 리렌더가 나지 않는다. 이 타이머가 없으면 판을 걷는 유일한 계기가 **다음    │
+   * │ 채팅**(bubbleTick)이라, 마지막으로 말한 사람의 말풍선은 아무도 말하지      │
+   * │ 않는 동안 머리 위에 영영 떠 있는다 (사용자 2026-08-07: "너무 오랫동안      │
+   * │ 남아있어"). BUBBLE_MS 를 줄이는 것만으로는 안 고쳐지는 쪽이 이것이다.     │
+   * │                                                                          │
+   * │ 매 프레임(useFrame)에서 검사하지 않는다 — 8명 × 60fps 로 상태를 건드리면   │
+   * │ 그게 곧 초당 480번 리렌더다. 판이 뜨는 동안 타이머 하나면 족하다.          │
+   * └──────────────────────────────────────────────────────────────────────────┘
+   */
+  const [, expire] = useReducer((n: number) => n + 1, 0);
+  useEffect(() => {
+    if (!bubble) return;
+    const left = player.bubbleUntil - performance.now();
+    if (left <= 0) return;
+    // +16ms — 프레임 하나만큼 넉넉히 준다. 딱 맞추면 아직 안 지난 채로 깨어난다.
+    const id = window.setTimeout(expire, left + 16);
+    return () => window.clearTimeout(id);
+  }, [bubble, player.bubbleUntil, player]);
+
   useFrame((_, delta) => {
     const g = group.current;
     if (!g) return;
@@ -630,18 +652,19 @@ const RemoteAvatar = memo(function RemoteAvatar({
              * ★ 시안의 꼬리는 왼쪽에서 20px 이지만 여기서는 **가운데**다 —
              *   이 판은 머리 위에 center 로 뜨므로(Html center) 꼬리가 왼쪽에
              *   있으면 짧은 말일 때 사람을 안 가리킨다.
-             * ★ 점은 장식이다. 말한 사람이 누구인지·무엇인지와 무관하게 **늘 같은
-             *   색**이다 — 좌석 색이나 상태를 여기 넣지 않는다 (I1).
+             * ★ 시안 왼쪽의 옥색 점은 뺐다 (사용자 2026-08-07). 말풍선 안에 말이
+             *   아닌 표식이 있으면 그게 뭘 뜻하는지 읽게 되는데, 뜻하는 게 없다.
              */
-            <div className="relative w-max max-w-[220px] rounded-2xl border border-gray-700 bg-[#1E1E1E] px-6 py-3 shadow-lg">
-              <div className="flex items-center gap-3">
-                <span aria-hidden className="h-2 w-2 shrink-0 animate-pulse rounded-full bg-[#4FD1C5]" />
-                <span className="text-[14px] font-medium leading-snug text-white">{bubble}</span>
-              </div>
-              {/* 꼬리 — 아래를 향한 삼각형. 테두리 없이 몸통 색만 잇는다 (시안의 ::after) */}
+            <div className="relative w-max max-w-[220px] rounded-2xl border border-gray-700 bg-[rgba(30,30,30,0.82)] px-6 py-3 shadow-lg">
+              <span className="block text-[14px] font-medium leading-snug text-white">{bubble}</span>
+              {/*
+                꼬리 — 아래를 향한 삼각형. 테두리 없이 몸통 색만 잇는다 (시안의 ::after).
+                ★ 투명도를 **몸통과 똑같이** 준다. 다르면 이음매에 색이 한 겹 더 겹쳐
+                  꼬리만 진하게 떠 보인다.
+              */}
               <span
                 aria-hidden
-                className="absolute -bottom-2 left-1/2 h-0 w-0 -translate-x-1/2 border-x-8 border-t-8 border-x-transparent border-t-[#1E1E1E]"
+                className="absolute -bottom-2 left-1/2 h-0 w-0 -translate-x-1/2 border-x-8 border-t-8 border-x-transparent border-t-[rgba(30,30,30,0.82)]"
               />
             </div>
           ) : null}

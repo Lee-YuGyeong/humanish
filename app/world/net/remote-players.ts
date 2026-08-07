@@ -59,8 +59,15 @@ export function pushMove(
   pushSample(player.buffer, { t: now, x, z, y, heading });
 }
 
-/** 말풍선 수명. 채팅 최소 간격(600ms)보다 충분히 길다 */
-export const BUBBLE_MS = 5_000;
+/**
+ * 말풍선 수명. 채팅 최소 간격(600ms)보다 충분히 길다.
+ *
+ * ★ 5초에서 3초로 줄였다 (사용자 2026-08-07 — "너무 오랫동안 남아있어").
+ *   여덟이 한 바퀴 도는 동안 판이 머리 위에 겹겹이 남아서 사람이 안 보였다.
+ *   지나간 말을 되짚는 건 흐르는 줄과 전체 기록이 맡는다 — 말풍선은 **지금
+ *   누가 말하고 있는가**만 가리키면 된다.
+ */
+export const BUBBLE_MS = 3_000;
 
 export function setBubble(player: RemotePlayer, text: string, now: number): void {
   player.bubbleText = text;
