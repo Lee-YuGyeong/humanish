@@ -3,7 +3,7 @@
  *
  * GET /api/profile/matches?before=<ISO>  →  MatchHistoryPage (lib/game/types.ts)
  *
- * 기록 화면(/account/history)이 부른다. 로비의 /api/profile/stats 가 최근 다섯
+ * 로비의 「기록」 탭 (app/main/history-panel.tsx)이 부른다. 로비의 /api/profile/stats 가 최근 다섯
  * 줄만 주는 것과 달리 여기는 끝까지 넘겨 가며 읽는다 — 쪽 크기와 커서 규칙은
  * lib/server/match.ts 의 readMatchHistory 에 있다.
  *

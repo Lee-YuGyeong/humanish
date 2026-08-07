@@ -54,7 +54,7 @@ export async function fetchProfileStats(): Promise<ProfileStats> {
 }
 
 /**
- * 내 전체 기록, 한 쪽 (기록 화면 /account/history).
+ * 내 전체 기록, 한 쪽 (로비의 「기록」 탭 — app/main/history-panel.tsx).
  *
  * ★ 남의 기록을 받는 방법은 없다 — 라우트가 쿠키 세션의 계정 하나만 본다 (I1, I9).
  * ★ 401 을 빈 쪽으로 접지 않는다 — 기록 화면은 RequireLogin 뒤에 있어서

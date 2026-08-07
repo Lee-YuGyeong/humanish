@@ -154,7 +154,7 @@ export interface ProfileStats {
 }
 
 /**
- * 기록 화면(/account/history)의 한 판. RecentMatch 에 그 판의 사람 수를 더한 것 —
+ * 로비의 「기록」 탭 (app/main/history-panel.tsx)의 한 판. RecentMatch 에 그 판의 사람 수를 더한 것 —
  * 로비의 다섯 줄에는 안 들어가지만 전체 기록에서는 "몇 명 판이었나"가 승패의
  * 맥락이다. RecentMatch 와 같은 I1 규칙을 따른다 — **내 행만 다룬다.**
  */

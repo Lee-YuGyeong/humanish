@@ -253,6 +253,25 @@
 }
 
 /*
+  기록 한 줄 — 승패점 · 역할 · 결과 · 사람 수 · exp · 언제 (history-panel.tsx).
+
+  ★ 목록 머리와 내용 줄이 **같은 클래스**를 쓴다 (.roomRow 와 같은 규약). 열 너비를
+    두 군데 적으면 제목과 값이 한 칸씩 어긋나고, 그건 눈으로만 보인다.
+  ★ 누를 것이 없어서 .roomRow 와 달리 버튼 기본값을 되돌리지 않는다 — 이 줄은
+    <div> 다. 여기에 클릭을 붙이려면 그때 .roomRow 처럼 font/text-align 을 같이 적을 것.
+*/
+.matchRow {
+  display: grid;
+  grid-template-columns: 14px 76px 1fr 72px 64px 84px;
+  gap: 1rem;
+  align-items: center;
+  padding: 0.85rem 1.2rem;
+  border: 1px solid var(--border);
+  border-radius: 0.85rem;
+  background: var(--surface);
+}
+
+/*
   방 한 줄 — 번호 · 제목 · 상태 · 인원.
 
   ★ 줄 전체가 <button> 이다 (lobby.tsx 의 RoomRow). 그래서 브라우저가 버튼에 기본으로

@@ -84,7 +84,7 @@ export function useProfileStats(): UseQueryResult<ProfileStats> {
 }
 
 /**
- * 내 전체 게임 기록, 쪽 단위 (기록 화면 /account/history).
+ * 내 전체 게임 기록, 쪽 단위 (로비의 「기록」 탭 — app/main/history-panel.tsx).
  *
  * ★ useProfileStats 와 같은 이유로 폴링하지 않는다 — 기록은 판이 끝날 때만 늘고,
  *   그때 사용자는 이 화면에 없다. 화면을 열 때마다 첫 쪽부터 새로 읽는다.

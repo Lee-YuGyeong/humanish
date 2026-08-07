@@ -35,10 +35,11 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { AccountName, Avatar, MainTabs, TopBar } from "@/components/top-bar";
+import { AccountName, Avatar, TopBar } from "@/components/top-bar";
 import { signOut } from "@/lib/auth";
 import type { Phase } from "@/lib/game/types";
 import { useInvalidateAuthUser, useProfile, useProfileStats } from "@/lib/queries/auth";
+import { HistoryPanel } from "./history-panel";
 import styles from "./lobby.module.css";
 
 /**
@@ -182,8 +183,16 @@ async function errorOf(res: Response, fallback: string): Promise<string> {
   }
 }
 
+/**
+ * 가운데 칸에 무엇이 드는가 (2026-08-07). **화면을 옮기는 게 아니다** — 머리말과
+ * 왼쪽 기둥은 그대로 있고 이 칸만 갈아끼운다. 그래서 주소도 안 바뀐다.
+ */
+type MainTab = "lobby" | "history";
+
 export function Lobby() {
   const router = useRouter();
+
+  const [tab, setTab] = useState<MainTab>("lobby");
 
   /** null이면 아직 한 번도 못 읽은 상태다. 빈 배열(방이 없다)과 구분해야 한다. */
   const [rooms, setRooms] = useState<OpenRoom[] | null>(null);
@@ -320,22 +329,31 @@ export function Lobby() {
       <div aria-hidden className={styles.noise} />
       <div aria-hidden className={styles.scanlines} />
 
-      <LobbyHeader />
+      <LobbyHeader tab={tab} onTab={setTab} />
 
       <div className="flex flex-1 overflow-hidden">
-        <PlayerSidebar />
+        <PlayerSidebar onSeeHistory={() => setTab("history")} />
 
         <main className={`${styles.scroll} flex flex-1 flex-col overflow-y-auto`}>
           {/*
-            ── 화면은 목록 하나다 (2026-08-06) ──────────────────────────
+            ── 탭은 화면이 아니라 이 칸이다 (2026-08-07) ────────────────
+            「기록」이 예전에는 /account/history 라는 다른 화면이었다. 누르면 로비가
+            통째로 사라지고 머리말도 팔레트도 다른 페이지가 떴다가 「← 로비로」로
+            되돌아와야 했다. 지금은 여기만 바뀐다 — 머리말·왼쪽 기둥은 그대로다.
+          */}
+          {/*
+            ── 방 목록 쪽은 화면이 하나다 (2026-08-06) ──────────────────
             예전에는 「방 만들기」가 목록을 통째로 갈아치우는 두 번째 화면이었고,
             그 위에 되돌아가는 띠를 따로 세워야 했다. 물어보는 것이 이름 하나로
             줄어든 지금 그건 **한 칸을 받자고 화면을 떠나는 꼴**이다.
             그래서 「코드로 입장」과 같은 모양의 팝업으로 바꿨다 — 둘 다 방으로
             들어가는 짧은 물음이라 같은 모양이어야 헷갈리지 않는다.
           */}
-          <RoomListPanel
-            rooms={rooms}
+          {tab === "history" ? (
+            <HistoryPanel />
+          ) : (
+            <RoomListPanel
+              rooms={rooms}
               visible={visible}
               query={query}
               busy={busy}
@@ -349,16 +367,17 @@ export function Lobby() {
               onSort={(col) => setSort((cur) => nextSort(cur, col))}
               onRetry={() => void loadRooms()}
               onEnter={(c) => void enterRoom(c)}
-            onCreate={(seed) => {
-              setSeedName(seed ?? "");
-              setCreateError(null);
-              setCreateOpen(true);
-            }}
-            onOpenCode={() => {
-              setJoinError(null);
-              setCodeOpen(true);
-            }}
-          />
+              onCreate={(seed) => {
+                setSeedName(seed ?? "");
+                setCreateError(null);
+                setCreateOpen(true);
+              }}
+              onOpenCode={() => {
+                setJoinError(null);
+                setCodeOpen(true);
+              }}
+            />
+          )}
         </main>
       </div>
 
@@ -388,11 +407,21 @@ export function Lobby() {
 
 /* ─────────────────────────────── 머리말 ─────────────────────────────── */
 
+/** 머리말의 탭. 라벨과 순서를 여기 한 곳에만 적는다 */
+const TABS: { key: MainTab; label: string }[] = [
+  { key: "lobby", label: "게임 로비" },
+  { key: "history", label: "기록" },
+];
+
 /**
  * 로비의 머리말. **띠 자체는 방 화면과 공용이다** (components/top-bar.tsx) —
  * 여기서 정하는 건 그 안에 무엇이 드는가뿐이다.
+ *
+ * ★ 탭은 **링크가 아니라 버튼이다** (2026-08-07). 「기록」이 링크였을 때는 누르면
+ *   다른 화면(/account/history)으로 떠났다가 「← 로비로」로 돌아와야 했다.
+ *   지금은 가운데 칸만 바뀌므로 갈 곳이 없다 — 주소도 그대로다.
  */
-function LobbyHeader() {
+function LobbyHeader({ tab, onTab }: { tab: MainTab; onTab: (tab: MainTab) => void }) {
   return (
     <TopBar>
       <div className="flex items-center gap-6 sm:gap-10">
@@ -403,12 +432,29 @@ function LobbyHeader() {
         >
           Who is AI?
         </Link>
-        {/*
-          탭 목록은 components/top-bar.tsx 하나다 — 기록 화면(/account/history)이
-          같은 것을 켠 채로 그린다 (2026-08-07). 여기 글자로 적어두면 두 화면의
-          탭이 갈린다.
-        */}
-        <MainTabs active="lobby" />
+        <nav className="hidden gap-8 sm:flex">
+          {TABS.map((t) => {
+            const on = t.key === tab;
+            return (
+              <button
+                key={t.key}
+                type="button"
+                onClick={() => onTab(t.key)}
+                aria-current={on ? "page" : undefined}
+                className={`cursor-pointer font-[inherit] text-[0.66rem] uppercase tracking-[0.18em] transition-colors ${
+                  on ? "border-b pb-0.5" : "hover:opacity-80"
+                }`}
+                style={
+                  on
+                    ? { color: "var(--accent)", borderColor: "var(--accent)" }
+                    : { color: "var(--dim)" }
+                }
+              >
+                {t.label}
+              </button>
+            );
+          })}
+        </nav>
       </div>
 
       <div className="flex items-center gap-4 sm:gap-6">
@@ -584,7 +630,7 @@ function timeAgo(iso: string, now: number): string {
   return `${Math.floor(hour / 24)}일 전`;
 }
 
-function PlayerSidebar() {
+function PlayerSidebar({ onSeeHistory }: { onSeeHistory: () => void }) {
   const { data: profileData } = useProfile();
   const { data: stats } = useProfileStats();
 
@@ -654,14 +700,19 @@ function PlayerSidebar() {
       <div className="p-5">
         <div className="mb-3 flex items-center justify-between gap-2">
           <span className={styles.label}>최근 게임</span>
-          {/* 여기는 다섯 줄뿐이다 — 끝까지 보는 화면은 /account/history 하나다 */}
-          <Link
-            href="/account/history"
-            className="text-[0.62rem] transition-colors hover:underline"
+          {/*
+            여기는 다섯 줄뿐이다 — 끝까지 보는 자리는 「기록」 탭 하나다.
+            ★ 링크가 아니라 **탭을 켜는 버튼**이다 (2026-08-07). 머리말의 「기록」과
+              같은 곳으로 가야 해서, 둘 다 화면을 떠나지 않는다.
+          */}
+          <button
+            type="button"
+            onClick={onSeeHistory}
+            className="cursor-pointer font-[inherit] text-[0.62rem] transition-colors hover:underline"
             style={{ color: "var(--muted)" }}
           >
             전체 기록 →
-          </Link>
+          </button>
         </div>
 
         {stats && stats.recent.length === 0 ? (

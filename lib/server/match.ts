@@ -225,7 +225,7 @@ export async function readMatchStats(userId: string): Promise<ProfileStats> {
 const HISTORY_PAGE = 30;
 
 /**
- * 내 전체 기록, 한 쪽 (SPEC §15-2-결정 — 기록 화면 /account/history).
+ * 내 전체 기록, 한 쪽 (SPEC §15-2-결정 — 로비의 「기록」 탭, app/main/history-panel.tsx).
  *
  * ★ readMatchStats 와 같은 규칙 — **계정 하나치만.** userId 는 라우트가 쿠키
  *   세션에서 되찾아 넘긴다 (I9). 남의 기록을 읽는 길은 없다 (I1).

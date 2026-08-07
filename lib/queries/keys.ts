@@ -78,7 +78,7 @@ export const profileKey = ['profile'] as const;
 export const profileStatsKey = ['profile-stats'] as const;
 
 /**
- * 내 전체 게임 기록 (기록 화면 /account/history). profileStatsKey 와 같은 이유로
+ * 내 전체 게임 기록 (로비의 「기록」 탭 — app/main/history-panel.tsx). profileStatsKey 와 같은 이유로
  * 형제이고 방 스코프 밖이다 — 로그아웃 때 같이 걷는다 (useInvalidateAuthUser).
  */
 export const matchHistoryKey = ['match-history'] as const;
