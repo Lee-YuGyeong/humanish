@@ -1008,8 +1008,14 @@ export default function WorldPage() {
               <p className="text-lg font-bold text-neutral-100 drop-shadow-[0_2px_12px_rgba(0,0,0,0.9)]">
                 화면을 클릭하면 계속
               </p>
+              {/*
+                「잠깐 멈춥니다」에서 「대화 기록 보기」로 바꿨다 (사용자 2026-08-07).
+                멈춘다는 건 **결과**고 사람이 ESC 를 누르는 **이유**가 아니다. 잠금이
+                풀린 이 상태가 곧 전체 대화 기록이 뜨는 자리라(아래 ChatTranscript),
+                그걸 이름으로 부른다.
+              */}
               <p className="text-[12px] text-neutral-400 drop-shadow-[0_1px_6px_rgba(0,0,0,0.9)]">
-                ESC 를 누르면 잠깐 멈춥니다
+                ESC 를 누르면 대화 기록 보기
               </p>
             </div>
           ) : null}
@@ -1111,7 +1117,13 @@ export default function WorldPage() {
               /* 조작은 이제 전부 키다. 한 줄에 다 적어 둔다 — 열어 볼 판이 없으므로 */
               <p className="rounded-full border border-white/10 bg-black/60 px-5 py-2.5 text-[12px] text-neutral-300 backdrop-blur">
                 WASD 이동 · Shift 달리기 · Space 점프 ·{' '}
-                <span className="text-[#d4a373]">Enter 로 말하기</span> · M 음소거 ·{' '}
+                <span className="text-[#d4a373]">Enter 로 말하기</span> ·{' '}
+                {/*
+                  ESC 를 여기 적는다 (사용자 2026-08-07). 「ESC 를 누르면 대화 기록
+                  보기」는 **누른 뒤에야** 뜨는 안내라, 처음 들어온 사람은 기록을 볼
+                  수 있다는 걸 알 길이 없었다. 걷는 동안 읽는 줄이 이것 하나다.
+                */}
+                ESC 대화 기록 · M 음소거 ·{' '}
                 <span className="font-mono">−</span> <span className="font-mono">+</span> 소리
               </p>
             )}
