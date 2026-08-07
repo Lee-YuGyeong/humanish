@@ -564,9 +564,29 @@ create index if not exists rooms_created_idx on rooms (created_at);
 -- 뷰(public_players)는 Postgres Changes로 구독할 수 없다. publication에는 테이블만
 -- 들어가고 뷰는 WAL을 만들지 않기 때문이다. players 테이블을 구독하면 is_bot이 실려
 -- 나간다(I1). 그래서 데이터는 안 보내고 "바뀌었다"는 신호만 rooms에 남긴다.
+-- ★ 신호를 **끌 수 있다** (2026-08-08). `whois.skip_roster_bump` 가 'on' 인 트랜잭션은
+--   신호를 내지 않는다. 지금 쓰는 곳은 start_world_seats 하나다.
+--
+--   왜 필요한가: 월드 시작은 전원의 자리를 다시 매기는데, 그 UPDATE 가 행마다 신호를
+--   내면 **시작 신호(world_started_at)보다 먼저** 사람 수만큼의 rooms 이벤트가 나간다.
+--   대기방은 그 신호마다 좌석을 다시 읽으므로 **새 번호를 화면에 한 번 그리고 나서야**
+--   /world 로 넘어간다. 경합이 아니라 항상 그렇다 — 신호가 먼저 나가기 때문이다.
+--   (신고 2026-08-08: "숫자 랜덤으로 부여한 자리로 잠깐 보이고 3D 월드로 들어간다")
+--
+--   끄고 나면 그 판의 rooms 이벤트는 시작 신호 하나뿐이고, 대기방은 새 번호를
+--   **한 번도 안 보고** 넘어간다. 어차피 전원이 그 자리에서 월드로 떠나므로
+--   못 받은 명단 갱신도 없다.
+--
+-- ★ 이걸 2D(shuffle_seats)에는 쓰지 않는다. 그쪽은 대기방에 남아 게임 화면으로
+--   바뀌는 흐름이라 명단 갱신이 실제로 필요하다.
 create or replace function bump_roster_seq() returns trigger
 language plpgsql as $$
 begin
+  -- 설정된 적이 없으면 current_setting(.., true) 이 null 이다 — 그때는 켜진 것으로 본다.
+  if coalesce(current_setting('whois.skip_roster_bump', true), 'off') = 'on' then
+    return null;
+  end if;
+
   update rooms
      set roster_seq = roster_seq + 1
    where id = coalesce(new.room_id, old.room_id);

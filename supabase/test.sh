@@ -273,6 +273,7 @@ insert into rooms (id, code, capacity) values ('$WS_R','WSTA',8);
 insert into players (room_id, nickname, mask_id, seat, is_ready, lobby_line, lobby_name)
 select '$WS_R', '익명'||s, 'mask-'||lpad(s::text,2,'0'), s, true, '반가워요', '철수'||s
   from unnest(array[2,5,7]) s;"
+WS_RS0="$(q "select roster_seq from rooms where id='$WS_R';")"
 WS_AI="$(q "select start_world_seats('$WS_R', 1);")"
 
 check "AI 자리를 하나 돌려준다"        "1" "$(q "select array_length('$WS_AI'::int[], 1);")"
@@ -296,6 +297,16 @@ WS_MAP="$(q "select string_agg(id::text||':'||seat, ',' order by id) from player
 check "다시 불러도 같은 AI 자리"       "$WS_AI" "$(q "select start_world_seats('$WS_R', 1);")"
 check "다시 불러도 자리가 그대로"      "$WS_MAP" \
   "$(q "select string_agg(id::text||':'||seat, ',' order by id) from players where room_id='$WS_R';")"
+
+# ★ 명단 신호가 **한 번도 안 나가야** 한다. 나가면 그 rooms 이벤트가 시작 신호보다
+#   먼저 도착해서, 대기방이 새 익명 번호를 한 프레임 그린 뒤에 /world 로 넘어간다.
+#   (신고 2026-08-08: "숫자 랜덤으로 부여한 자리로 잠깐 보이고 3D 월드로 들어간다")
+check "명단 신호를 내지 않는다"        "$WS_RS0" "$(q "select roster_seq from rooms where id='$WS_R';")"
+# ★ 그 가드가 트랜잭션 밖으로 새면 **모든** 입·퇴장이 조용해진다 — 훨씬 큰 고장이라
+#   같이 본다. 끄는 것만 검사하면 새는 쪽은 영영 안 걸린다.
+psql -q -c "insert into players (room_id,nickname,mask_id,seat) values ('$WS_R','익명8','mask-08',8);" >/dev/null
+check "그 뒤 입장은 다시 신호를 낸다"  "up" \
+  "$([ "$(q "select roster_seq from rooms where id='$WS_R';")" -gt "$WS_RS0" ] && echo up || echo same)"
 
 # ★ AI 가 늘 제일 큰 번호이면 아무 정보 없이 그 번호만 찍어도 맞는 판이 된다 (I1).
 #   사람 3 + AI 1 은 언제나 1..4 를 채우므로 "제일 크다" = "4를 받았다" 와 같다.

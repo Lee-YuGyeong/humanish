@@ -138,6 +138,17 @@ schema_checks() {
     "$(q "select (d like '%lobby_line%' and d like '%lobby_name%')
             from (select pg_get_functiondef(to_regprocedure('shuffle_seats(uuid)')) d) t;")"
 
+  # ★ 명단 신호를 끌 수 있어야 한다 (2026-08-08). 이 가드가 빠지면 월드 시작이
+  #   사람 수만큼의 rooms 이벤트를 **시작 신호보다 먼저** 내보내고, 대기방이 새 익명
+  #   번호를 한 프레임 그린 뒤에 /world 로 넘어간다. 눈에 보이는 회귀다.
+  check "bump_roster_seq 에 끄는 가드가 있다" "t" \
+    "$(q "select (d like '%skip_roster_bump%')
+            from (select pg_get_functiondef(to_regprocedure('bump_roster_seq()')) d) t;")"
+  # 끄는 쪽도 같이 본다 — 트리거만 고치고 호출부를 빠뜨리면 조용히 옛 동작이다.
+  check "start_world_seats 가 그 신호를 끈다" "t" \
+    "$(q "select (d like '%skip_roster_bump%')
+            from (select pg_get_functiondef(to_regprocedure('start_world_seats(uuid,int)')) d) t;")"
+
   # ★ 대기방 이름은 겹치면 안 된다 (§15-2-결정). 같은 방에 '철수'가 둘이면 누가
   #   누구인지 못 가리고, 나중에 붙일 친구 찾기가 아예 성립하지 않는다.
   #   lower() 표현식이라 유니크 "제약"이 아니라 인덱스로만 존재한다.

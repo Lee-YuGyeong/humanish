@@ -551,6 +551,14 @@ begin
   --   두 사람이 잠깐 같은 자리를 갖는 순간이 반드시 생긴다.
   set constraints players_room_seat_key, players_room_nickname_key deferred;
 
+  /*
+   * ★ 이 순열은 명단 신호를 내지 않는다 (schema.sql 의 bump_roster_seq 상자).
+   *   신호를 내면 사람 수만큼의 rooms 이벤트가 **시작 신호보다 먼저** 나가고,
+   *   대기방이 새 번호를 한 번 그린 뒤에야 /world 로 넘어간다.
+   *   true = 트랜잭션 한정. 이 함수 밖으로 새지 않는다.
+   */
+  perform set_config('whois.skip_roster_bump', 'on', true);
+
   with nums as (
     -- 사람에게 줄 번호 = 1..N+1 에서 AI 몫을 뺀 것. 무작위 순서로 줄을 세운다.
     select s, row_number() over (order by random()) as rn
@@ -574,14 +582,21 @@ begin
     from ppl join nums n on n.rn = ppl.rn
    where p.id = ppl.id;
 
+  -- 자리를 다 옮긴 뒤에 되돌린다. 이 아래로는 평소대로 신호가 나가야 한다 —
+  -- 이 함수가 더 큰 트랜잭션 안에서 불릴 수도 있다.
+  perform set_config('whois.skip_roster_bump', 'off', true);
+
   -- 적어둔다. buildWorldRoster 는 상태가 없어서 조회할 때마다 다시 계산하는데,
   -- 그때 명단이 바뀌어 있으면 판 도중에 전원의 번호가 갈아엎어진다 (schema.sql 상자).
   insert into world_ai_seats (room_id, seats) values (p_room_id, v_ai)
     on conflict (room_id) do update set seats = excluded.seats;
 
+  /*
+   * 시작 신호. **이 방의 rooms 이벤트는 이것 하나뿐이어야 한다** — 위에서 명단 신호를
+   * 꺼 둔 이유가 그것이다. 대기방은 이 이벤트 하나를 받고 곧장 /world 로 넘어간다.
+   */
   update rooms set world_started_at = now() where id = p_room_id;
 
-  -- roster_seq 는 players 트리거가 이미 올렸다 (shuffle_seats 와 같다).
   return v_ai;
 end;
 $$;

@@ -198,13 +198,26 @@ export function useServerClock(): { serverNow: () => number; offsetMs: number } 
  * ★ 두 번 부르는 이유: 방 행은 code 로 키를 잡고(아직 id 를 모를 때 쓰므로),
  *   나머지는 scope(roomId) 접두사를 쓴다. 한쪽만 지우면 phase 가 그대로 남거나
  *   좌석만 갱신되는, 원인 찾기 어려운 상태가 된다 (keys.ts 머리말).
+ *
+ * ┌─ ★ 방 행이 **먼저** 도착해야 한다 (2026-08-08) ────────────────────────────┐
+ * │ 예전에는 둘을 Promise.all 로 같이 던졌다. 그러면 어느 쪽 응답이 먼저 오는지  │
+ * │ 가 그때그때 달라지고, 좌석이 먼저 오면 **바뀐 좌석이 옛 방 상태 위에 한 번   │
+ * │ 그려진다.** 월드 시작에서 이게 눈에 보였다 — 시작 순간 전원의 익명 번호가    │
+ * │ 다시 매겨지는데(start_world_seats), 좌석 응답이 먼저 오면 대기방이 새 번호를 │
+ * │ 한 프레임 보여주고 나서 /world 로 넘어갔다.                                 │
+ * │                                                                           │
+ * │ 방 행이 먼저면 화면을 바꾸는 값(phase · world_started_at)이 항상 먼저 서고,  │
+ * │ 그 뒤에 오는 좌석·답변·투표는 이미 맞는 화면 위에 채워진다. 페이즈 전환도    │
+ * │ 같은 순서를 원한다 — 방이 먼저 넘어가고 내용이 뒤따르는 게 자연스럽다.       │
+ * │                                                                           │
+ * │ 대가는 왕복 하나만큼의 지연이다. 방 행은 한 줄짜리 조회라 그 값이 싸고,      │
+ * │ **순서가 그때그때 다른 화면**보다는 늘 같은 순서가 낫다.                    │
+ * └───────────────────────────────────────────────────────────────────────────┘
  */
 export function useInvalidateRoom(code: string, roomId: string | undefined): () => Promise<void> {
   const qc = useQueryClient();
   return useCallback(async () => {
-    await Promise.all([
-      qc.invalidateQueries({ queryKey: roomKeys.byCode(code) }),
-      roomId ? qc.invalidateQueries({ queryKey: roomKeys.scope(roomId) }) : Promise.resolve(),
-    ]);
+    await qc.invalidateQueries({ queryKey: roomKeys.byCode(code) });
+    if (roomId) await qc.invalidateQueries({ queryKey: roomKeys.scope(roomId) });
   }, [qc, code, roomId]);
 }
