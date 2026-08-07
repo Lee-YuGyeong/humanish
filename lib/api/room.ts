@@ -188,3 +188,18 @@ export function joinRoom(code: string): Promise<RoomAndPlayer> {
 export function leaveRoom(roomId: string): Promise<{ ok: boolean; room_deleted: boolean }> {
   return postJson<{ ok: boolean; room_deleted: boolean }>('/api/room/leave', { room_id: roomId });
 }
+
+/**
+ * 방장이 한 사람을 내보낸다 (2026-08-07).
+ *
+ * ★ **누가 내보내는지는 보내지 않는다.** 서버가 쿠키로 되찾는다 (I9) —
+ *   여기서 실어 보내면 남의 id 를 적는 것만으로 방장 행세가 된다.
+ * ★ kicked=false 는 실패가 아니다. 이미 나간 사람을 또 내보낸 것이라
+ *   화면은 아무 말도 하지 않는다 (명단은 어차피 새로 읽는다).
+ */
+export function kickPlayer(roomId: string, targetId: string): Promise<{ ok: boolean; kicked: boolean }> {
+  return postJson<{ ok: boolean; kicked: boolean }>('/api/room/kick', {
+    room_id: roomId,
+    target_id: targetId,
+  });
+}

@@ -21,7 +21,7 @@ import Link from 'next/link';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { PlayerGrid } from '@/components/player-grid';
-import { RoomBoot, RoomLobby } from '@/components/room-lobby';
+import { RoomBoot, RoomKicked, RoomLobby } from '@/components/room-lobby';
 import {
   ArrowLeftIcon,
   CheckIcon,
@@ -116,6 +116,29 @@ export function RoomView({ code }: { code: string }) {
   const invalidate = useInvalidateRoom(code, roomId);
   useRoomRealtime(roomId, invalidate);
 
+  /*
+   * ┌─ 자리가 사라졌다. 나갔나, 내보내졌나 (2026-08-07) ────────────────────────┐
+   * │ 화면에 오는 값은 둘 다 똑같다 — me.player 가 null 이 된다. 그런데 사람   │
+   * │ 에게는 전혀 다른 일이라, 구분하지 않으면 **스스로 나간 사람에게도**       │
+   * │ "방장이 내보냈습니다"가 뜬다.                                            │
+   * │                                                                         │
+   * │ 그래서 둘을 기억한다:                                                    │
+   * │   seated   한 번이라도 앉아 있었나. 처음부터 남의 방을 연 사람과 가른다  │
+   * │            — 그쪽은 아래 Panel 의 "이 방의 참가자가 아니다"가 맞다.      │
+   * │   iLeft    내가 나가기를 눌렀나. **누른 순간** 켠다(성공이 아니라) —     │
+   * │            자리 삭제가 만든 명단 신호가 응답보다 먼저 도착할 수 있어서,  │
+   * │            성공 뒤에 켜면 그 찰나에 강퇴 화면이 한 번 번쩍인다.          │
+   * │                                                                         │
+   * │ ref 인 이유: 이 값들로 다시 그릴 필요가 없다. 화면을 바꾸는 것은 언제나  │
+   * │ me 쪽이고, 이건 그때 "어느 화면이냐"를 고르는 데만 쓴다.                 │
+   * └─────────────────────────────────────────────────────────────────────────┘
+   */
+  const seated = useRef(false);
+  const iLeft = useRef(false);
+  useEffect(() => {
+    if (me?.player) seated.current = true;
+  }, [me?.player]);
+
   /** 카운트다운은 표시용이다. 전환은 서버가 정한다 (I2) */
   const { serverNow } = useServerClock();
   const advance = useAdvancePhase(code, roomId);
@@ -201,8 +224,21 @@ export function RoomView({ code }: { code: string }) {
         players={players}
         me={{ ...me, player: me.player }}
         error={error}
+        onLeaving={() => {
+          iLeft.current = true;
+        }}
       />
     );
+  }
+
+  /*
+   * 앉아 있었는데 자리가 없어졌고, 내가 나간 것도 아니다 → 방장이 내보냈다.
+   * ★ 자동으로 튕겨내지 않는다. 화면이 저절로 넘어가면 무슨 일이 있었는지 못 읽는다.
+   * ★ 게임 화면 쪽 안내("이 방의 참가자가 아니다")로 떨어지기 **전에** 걸러야 한다.
+   *   그쪽은 처음부터 남의 방 주소를 연 사람에게 맞는 말이다.
+   */
+  if (!me?.player && seated.current && !iLeft.current) {
+    return <RoomKicked />;
   }
 
   return (

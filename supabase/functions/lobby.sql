@@ -37,7 +37,9 @@ create or replace function say_lobby_line(
   p_room_id      uuid,
   p_player_id    uuid,
   p_text         text,
-  p_cooldown_sec int default 3,
+  -- 기본값은 **폴백일 뿐이다.** 앱은 언제나 lib/server/lobby-lines.ts 의
+  -- LOBBY_LINE_COOLDOWN_SEC 를 넘긴다 (lib/server/lobby.ts). 그쪽을 고치면 여기도 맞춘다.
+  p_cooldown_sec int default 4,
   p_max_lines    int default 10
 ) returns void
 language plpgsql
@@ -64,7 +66,19 @@ begin
     raise exception '이 방의 플레이어가 아니다' using errcode = 'P0001';
   end if;
 
-  if v_count >= p_max_lines then
+  -- ┌─ 총량 상한: 0 이면 없다 (2026-08-07 사용자 지시 "제한 다 풀어") ───────┐
+  -- │ 예전에는 1인 10회를 넘기면 거절했다. 대기방이 길어지면 멀쩡히 기다리던  │
+  -- │ 사람이 **말을 못 하게 되는데**, 화면에는 그게 고장으로 보였다.          │
+  -- │                                                                        │
+  -- │ 인자는 남긴다. create or replace 로는 시그니처를 못 바꾸고              │
+  -- │ (supabase/apply.sh 가 그걸로 올린다), checks.sh 도 이 시그니처를 본다.  │
+  -- │ 그래서 **0 = 무제한**으로 두었다 — 되살리고 싶으면                      │
+  -- │ lib/server/lobby-lines.ts 의 LOBBY_LINE_MAX 에 숫자만 넣으면 된다.      │
+  -- │                                                                        │
+  -- │ ★ lobby_line_count 는 계속 센다. 지금 아무도 안 보지만, 세는 걸 멈추면  │
+  -- │   나중에 상한을 되살릴 때 이미 말한 횟수가 0부터 다시 시작한다.         │
+  -- └────────────────────────────────────────────────────────────────────────┘
+  if p_max_lines > 0 and v_count >= p_max_lines then
     raise exception '대기방에서 말할 수 있는 횟수를 다 썼다' using errcode = 'P0001';
   end if;
 
@@ -74,11 +88,20 @@ begin
     raise exception '너무 빠르다' using errcode = 'P0001';
   end if;
 
-  -- 같은 문구 연속 금지. 연타가 곧 뜻이 되는 걸 막는 자리다.
-  -- is not distinct from 을 쓰는 이유 — 첫 발화는 v_prev 가 null 이라 = 로는 안 걸린다.
-  if v_prev is not distinct from p_text then
-    raise exception '같은 말을 연달아 보낼 수 없다' using errcode = 'P0001';
-  end if;
+  -- ┌─ 같은 문구 연속 금지를 걷었다 (2026-08-07 사용자 지시) ────────────────┐
+  -- │ 예전에는 v_prev 와 같으면 거절했다. 근거는 "연타가 곧 뜻이 된다" 였다 — │
+  -- │ 문구가 8개면 3비트라 「ㅋㅋㅋ 두 번 = 나랑 짜자」 같은 약속이 성립한다.  │
+  -- │                                                                        │
+  -- │ 화면 쪽이 바뀌면서 이 규칙이 **고장으로 보이기 시작했다**: 말풍선이 3초 │
+  -- │ 뒤 걷히는데(room-lobby.tsx 의 LOBBY_LINE_TTL_MS), 사라진 말을 다시      │
+  -- │ 하려고 누르면 그 버튼만 영영 잠겨 있었다.                              │
+  -- │                                                                        │
+  -- │ ★ 총량 상한도 같은 날 걷혔다(아래 p_max_lines). 담합 부담을 지는 건     │
+  -- │   이제 **쿨다운 하나뿐**이다 — lib/server/lobby-lines.ts 의             │
+  -- │   LOBBY_LINE_COOLDOWN_SEC. 그것까지 0 으로 내리면 대기방이 사실상       │
+  -- │   자유 채팅이 되고, 문구를 여덟 개로 좁혀둔 의미(SPEC §15-3-결정)가     │
+  -- │   통째로 사라진다.                                                      │
+  -- └────────────────────────────────────────────────────────────────────────┘
 
   update players
      set lobby_line       = p_text,

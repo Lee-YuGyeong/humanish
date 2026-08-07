@@ -16,7 +16,7 @@
  */
 
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { Question, Room } from '@/lib/game/types';
@@ -47,6 +47,7 @@ const api = vi.hoisted(() => ({
   startRoom: vi.fn(),
   startWorld: vi.fn(),
   leaveRoom: vi.fn(),
+  kickPlayer: vi.fn(),
   submitAnswer: vi.fn(),
   castVote: vi.fn(),
   sendMessage: vi.fn(),
@@ -358,14 +359,16 @@ describe('대기실에서 말하기 (SPEC §15-3-결정)', () => {
     await waitFor(() => expect(api.sayLobbyLine).toHaveBeenCalledWith(ROOM_ID, 'hi'));
   });
 
-  it('★ 방금 한 말은 다시 못 누른다 — 연타가 뜻이 되는 걸 막는다', async () => {
-    // 서버도 막지만(say_lobby_line), 그건 에러라 빨간 배너가 뜬다.
-    // 화면에서 먼저 잠가야 정상적인 조급함이 오류로 보이지 않는다.
+  it('★ 방금 한 말도 다시 누를 수 있다 (2026-08-07)', async () => {
+    // 예전에는 여기서 잠갔고 서버(say_lobby_line)도 같이 막았다 — 연타가 뜻이
+    // 되는 걸 막으려던 자리다. 둘 다 걷었다: 말풍선이 3초 뒤 걷히는데(아래 검사)
+    // 사라진 말을 다시 하려는데 그 버튼만 잠겨 있으면 고장으로 보인다.
+    // 이제 연타를 막는 건 쿨다운뿐이다 (LOBBY_LINE_COOLDOWN_SEC).
     api.fetchMe.mockResolvedValue(me({ player: { ...PLAYERS[0], lobby_line: '안녕' } }));
     db.fetchRoster.mockResolvedValue([{ ...PLAYERS[0], lobby_line: '안녕' }, PLAYERS[1]]);
 
     renderRoom();
-    await waitFor(() => expect(screen.getByRole('button', { name: '안녕' })).toBeDisabled());
+    await waitFor(() => expect(screen.getByRole('button', { name: '안녕' })).toBeEnabled());
     expect(screen.getByRole('button', { name: '잠깐만' })).toBeEnabled();
   });
 
@@ -373,6 +376,24 @@ describe('대기실에서 말하기 (SPEC §15-3-결정)', () => {
     renderRoom();
     // 사람마다 지금 한 줄만. 기록이 아니라 쌓이지 않는다.
     expect(await screen.findByText('ㅋㅋㅋ')).toBeInTheDocument();
+  });
+
+  it('★ 말풍선은 3초가 지나면 안 뜬다 (2026-08-07)', async () => {
+    // 걷는 건 **화면뿐이다** — 서버의 lobby_line 은 그대로 있고, 여기서는
+    // lobby_line_at 으로 나이를 재서 그릴지 말지만 정한다 (LOBBY_LINE_TTL_MS).
+    const old = new Date(Date.now() - 10_000).toISOString();
+    db.fetchRoster.mockResolvedValue([
+      PLAYERS[0],
+      { ...PLAYERS[1], lobby_line: 'ㅋㅋㅋ', lobby_line_at: old },
+    ]);
+
+    renderRoom();
+    // 좌석이 다 그려질 때까지 기다린 뒤에 본다 — 처음부터 없는 것과 구분해야 한다.
+    await screen.findByRole('button', { name: '잠깐만' });
+    // ★ 버튼을 걸러낸다. 같은 문구가 「대화하기」 판의 **버튼 이름**이기도 해서,
+    //   그냥 찾으면 말풍선이 걷혔는데도 버튼이 잡혀 검사가 통과하지 않는다.
+    const bubbles = screen.queryAllByText('ㅋㅋㅋ').filter((el) => el.tagName === 'SPAN');
+    expect(bubbles).toHaveLength(0);
   });
 
   it('준비 완료를 누르면 서버로 간다', async () => {
@@ -485,6 +506,105 @@ describe('★ 시작 버튼', () => {
     renderRoom();
     expect(await screen.findByRole('button', { name: /게임 시작/ })).toBeDisabled();
     expect(await screen.findByText(/2명 이상이어야/)).toBeTruthy();
+  });
+});
+
+describe('★ 강퇴 — 방장이 내보낸다 (2026-08-07)', () => {
+  beforeEach(() => {
+    api.kickPlayer.mockResolvedValue({ ok: true, kicked: true });
+  });
+
+  /** 「내보내기」는 확인 단계의 이름이고, ×는 aria-label 로만 찾는다 */
+  const kickX = () => screen.findByRole('button', { name: '익명2 내보내기' });
+
+  it('방장 화면에는 남의 자리에 × 가 있다', async () => {
+    renderRoom();
+    expect(await kickX()).toBeInTheDocument();
+  });
+
+  it('★ 방장 자신의 자리에는 없다 — 서버도 자기 자신은 거절한다', async () => {
+    // 방장이 자기를 지우면 host_id 가 없는 사람을 가리켜 그 방은 영영 안 열린다.
+    renderRoom();
+    await kickX();
+    expect(screen.queryByRole('button', { name: '익명1 내보내기' })).not.toBeInTheDocument();
+  });
+
+  it('★ 방장이 아니면 아예 안 보인다 — 회색 버튼으로도 두지 않는다', async () => {
+    // 못 누르는 버튼은 "왜 나는 안 되지"만 만든다. 서버도 방장만 받는다.
+    db.fetchRoomByCode.mockResolvedValue(room({ host_id: 'p2' }));
+    api.fetchMe.mockResolvedValue(me({ is_host: false }));
+
+    renderRoom();
+    await screen.findByRole('button', { name: '준비' });
+    expect(screen.queryByRole('button', { name: /내보내기/ })).not.toBeInTheDocument();
+  });
+
+  it('★ 한 번 눌러서는 안 나간다 — 확인까지 두 번이다', async () => {
+    // 한 번에 나가면 되돌릴 수가 없다. 내보내진 사람은 코드를 다시 받아야 들어온다.
+    renderRoom();
+    fireEvent.click(await kickX());
+
+    expect(api.kickPlayer).not.toHaveBeenCalled();
+    fireEvent.click(await screen.findByRole('button', { name: '내보내기' }));
+    await waitFor(() => expect(api.kickPlayer).toHaveBeenCalledWith(ROOM_ID, 'p2'));
+  });
+
+  /**
+   * 내보내진 쪽 화면. 서버는 그 사람에게 따로 알리지 않는다 — 자리 삭제가 올린
+   * 명단 신호(§17.3)로 스스로 안다. 여기서는 그 신호 대신 캐시를 무효화해서
+   * **같은 화면이 붙어 있는 채로** 명단이 다시 오는 상황을 만든다.
+   */
+  async function refetchAll(client: QueryClient) {
+    await act(async () => {
+      await client.invalidateQueries();
+    });
+  }
+
+  function renderWithClient() {
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false, gcTime: 0 }, mutations: { retry: 0 } },
+    });
+    render(
+      <QueryClientProvider client={client}>
+        <RoomView code="UFJR" />
+      </QueryClientProvider>,
+    );
+    return client;
+  }
+
+  it('★ 앉아 있다가 자리가 사라지면 강퇴 화면이 뜬다', async () => {
+    const client = renderWithClient();
+    await screen.findByText('익명2');
+
+    api.fetchMe.mockResolvedValue(me({ player: null }));
+    db.fetchRoster.mockResolvedValue([PLAYERS[1]]);
+    await refetchAll(client);
+
+    expect(await screen.findByText(/내보냈습니다/)).toBeInTheDocument();
+  });
+
+  it('★★ 내가 나간 것은 강퇴가 아니다 — 같은 값(자리 없음)이 오지만 다른 화면이다', async () => {
+    // 이 구분이 없으면 스스로 나간 사람에게도 "방장이 내보냈습니다"가 뜬다.
+    // 나가기를 **누른 순간** 표를 세우는 이유는 명단 신호가 응답보다 먼저 올 수
+    // 있어서다 — 성공 뒤에 세우면 그 찰나에 강퇴 화면이 한 번 번쩍인다.
+    api.leaveRoom.mockResolvedValue({ ok: true, room_deleted: false });
+    const client = renderWithClient();
+
+    fireEvent.click(await screen.findByRole('button', { name: /방 나가기/ }));
+    api.fetchMe.mockResolvedValue(me({ player: null }));
+    db.fetchRoster.mockResolvedValue([PLAYERS[1]]);
+    await refetchAll(client);
+
+    expect(screen.queryByText(/내보냈습니다/)).not.toBeInTheDocument();
+  });
+
+  it('앉은 적 없는 사람에게는 강퇴 화면이 아니다', async () => {
+    // 남의 방 주소를 그냥 연 경우다. 여기서는 "참가자가 아니다"가 맞는 말이다.
+    api.fetchMe.mockResolvedValue(me({ player: null }));
+
+    renderRoom();
+    expect(await screen.findByText(/이 방의 참가자가 아니다/)).toBeInTheDocument();
+    expect(screen.queryByText(/내보냈습니다/)).not.toBeInTheDocument();
   });
 });
 

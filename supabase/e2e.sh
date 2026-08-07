@@ -82,16 +82,20 @@ READY_OFF="{\"room_id\":\"$ROOM\",\"ready\":false}"
 C=$(code_of "$N_JAR" /api/lobby/line "$HI_LINE");  chk "쿠키 없으면 말 못 함 (401)" "401" "$C"
 C=$(code_of "$A_JAR" /api/lobby/line "$BAD_LINE"); chk "목록에 없는 문구는 거절 (400)" "400" "$C"
 C=$(code_of "$A_JAR" /api/lobby/line "$HI_LINE");  chk "정해진 문구는 통과" "200" "$C"
-C=$(code_of "$A_JAR" /api/lobby/line "$HI_LINE");  chk "같은 말 연달아는 거절" "409" "$C"
 C=$(code_of "$A_JAR" /api/lobby/line "$LOL_LINE"); chk "쿨다운 안에는 거절" "409" "$C"
 
 psql "$DBURL" -q -c "update players set lobby_line_at = now() - interval '1 min' where room_id='$ROOM';"
 C=$(code_of "$A_JAR" /api/lobby/line "$LOL_LINE"); chk "쿨다운이 지나면 통과" "200" "$C"
 
-# 총량 상한. 1인당 10회를 다 쓴 상태로 만들어 놓고 한 번 더 눌러본다.
-psql "$DBURL" -q -c "update players set lobby_line_count = 10, lobby_line_at = now() - interval '1 min' where room_id='$ROOM';"
-C=$(code_of "$A_JAR" /api/lobby/line "$HI_LINE"); chk "총량을 다 쓰면 거절" "409" "$C"
-grep -q "횟수" /tmp/last_body.txt && ok "총량 때문이라고 말해준다" || bad "총량 메시지" "$(cat /tmp/last_body.txt)"
+# 같은 말 다시 하기 (2026-08-07). 예전에는 여기가 409 였다 — 연속 금지를 걷었고,
+# 이제 연타를 막는 건 쿨다운과 총량 상한뿐이다 (functions/lobby.sql 의 머리 주석).
+psql "$DBURL" -q -c "update players set lobby_line_at = now() - interval '1 min' where room_id='$ROOM';"
+C=$(code_of "$A_JAR" /api/lobby/line "$LOL_LINE"); chk "쿨다운이 지나면 같은 말도 통과" "200" "$C"
+
+# 총량 상한은 걷혔다 (2026-08-07, LOBBY_LINE_MAX = 0 → DB 가 p_max_lines > 0 일 때만 센다).
+# 많이 말해 둔 상태로 만들어 놓고도 통과해야 한다.
+psql "$DBURL" -q -c "update players set lobby_line_count = 999, lobby_line_at = now() - interval '1 min' where room_id='$ROOM';"
+C=$(code_of "$A_JAR" /api/lobby/line "$HI_LINE"); chk "총량 상한이 없다" "200" "$C"
 
 # ★ A(방장)는 준비를 누르지 않는다 — 2026-08-07 부터 방장은 시작 조건에서 빠진다
 #   (lib/game/rules.ts 의 startBlock). 아래 「시작」이 그대로 200 이면 그 예외가 산 것이다.

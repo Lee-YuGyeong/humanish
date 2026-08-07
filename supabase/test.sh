@@ -450,6 +450,46 @@ check "시작한 방에서는 자리를 못 뺀다 (§15-4)" "denied" \
 check "거절된 뒤에도 자리는 그대로"      "1" "$(q "select count(*) from players where room_id='$LV_C';")"
 
 echo ""
+echo "── 강퇴: 방장만, 대기방에서만 (2026-08-07) ──"
+# ★ 이 블록도 방을 만든다. 위의 "rooms 조회"가 방 개수를 세므로 그 뒤에 둔다.
+KK_R="$(q "select room_id from create_room('KICK', 4);")"
+KK_HOST="$(q "select id from players where room_id='$KK_R';")"
+KK_P2="$(q "select player_id from join_room('KICK');")"
+KK_P3="$(q "select player_id from join_room('KICK');")"
+check "셋이 앉아 있다"                    "3" "$(q "select count(*) from players where room_id='$KK_R';")"
+
+# 방장이 아닌 사람이 부를 수 있으면 아무나 아무나를 쫓아낼 수 있다.
+check "방장이 아니면 못 내보낸다"          "denied" \
+  "$(denied_if "select * from kick_player('$KK_R','$KK_P2','$KK_P3');" '방장만')"
+check "거절된 뒤에도 자리는 그대로"        "3" "$(q "select count(*) from players where room_id='$KK_R';")"
+
+# 방장이 자기를 지우면 host_id 가 없는 사람을 가리켜 그 방은 영영 시작되지 않는다.
+check "자기 자신은 못 내보낸다"            "denied" \
+  "$(denied_if "select * from kick_player('$KK_R','$KK_HOST','$KK_HOST');" '자기 자신')"
+
+check "방장이 내보내면 t"                  "t" \
+  "$(q "select kicked from kick_player('$KK_R','$KK_HOST','$KK_P3');")"
+check "내보내진 자리가 빠진다"              "2" "$(q "select count(*) from players where room_id='$KK_R';")"
+# 방장 화면이 옛 명단을 들고 있을 때 흔한 경우다. 에러 대신 kicked=false 로 돌려준다.
+check "이미 나간 사람을 또 내보내도 조용하다" "f" \
+  "$(q "select kicked from kick_player('$KK_R','$KK_HOST','$KK_P3');")"
+# 내보내도 방은 남는다 — 시킨 사람이 있으므로 사람이 0이 될 수 없다.
+check "방은 그대로 있다"                    "1" "$(q "select count(*) from rooms where id='$KK_R';")"
+
+# ★ 봇을 지목해 봐서 되는지 안 되는지로 봇을 골라낼 수 있으면 그게 I1 위반이다.
+q "select fill_with_bots('$KK_R');" >/dev/null
+KK_BOT="$(q "select id from players where room_id='$KK_R' and is_bot = true limit 1;")"
+check "봇은 못 내보낸다 (I1)"              "f" \
+  "$(q "select kicked from kick_player('$KK_R','$KK_HOST','$KK_BOT');")"
+check "봇 자리는 그대로"                    "1" \
+  "$(q "select count(*) from players where room_id='$KK_R' and is_bot = true;")"
+
+# 게임 중 이탈은 SPEC §15-4 미결정이다. 한쪽만 열어두면 강퇴가 그 미결정을 우회한다.
+psql -q -c "update rooms set phase='question' where id='$KK_R';"
+check "시작한 방에서는 못 내보낸다 (§15-4)" "denied" \
+  "$(denied_if "select * from kick_player('$KK_R','$KK_HOST','$KK_P2');" '시작한 방')"
+
+echo ""
 echo "── 계정: 방과 이어지되 새어 나가지 않는다 (SPEC §15-2-결정) ──"
 # ★ 이 블록도 방을 만든다. 위의 "rooms 조회 (코드로 방 찾기)"가 방 개수를 세므로
 #   반드시 그 뒤에 둔다. 코드는 앞의 것들과 겹치지 않아야 한다.

@@ -280,6 +280,70 @@ end;
 $$;
 
 ------------------------------------------------------------------------------
+-- 강퇴 — 방장이 대기방에서 한 사람을 내보낸다 (2026-08-07)
+------------------------------------------------------------------------------
+-- ┌─ 왜 leave_room 을 그대로 안 쓰나 ───────────────────────────────────────┐
+-- │ 지우는 일 자체는 같다. 다른 것은 **누가 시켰는가**다 —                   │
+-- │ 그 판정을 서버(TS)에서 하고 leave_room 을 부르면, 확인한 시점과 지우는   │
+-- │ 시점 사이에 방장이 바뀔 수 있다(방장이 나가면 다음 사람에게 넘어간다).   │
+-- │ 방을 잠근 채 **같은 트랜잭션 안에서** 확인하고 지워야 그 틈이 없다.      │
+-- │                                                                        │
+-- │ 그리고 여기서는 방을 지울 일이 없다. 시킨 사람(방장)이 남아 있으므로     │
+-- │ 사람이 0이 되지 않는다 — leave_room 의 방 삭제 분기가 필요 없는 이유다.  │
+-- └────────────────────────────────────────────────────────────────────────┘
+--
+-- ★ 대기방에서만 된다. 게임 중 이탈은 SPEC §15-4 미결정이라(leave_room 주석)
+--   내보내기도 같이 막는다 — 한쪽만 열어두면 강퇴가 그 미결정을 우회하는 길이 된다.
+--
+-- ★ 자기 자신은 못 내보낸다. 방장이 자기를 지우면 host_id 가 없는 사람을 가리켜
+--   그 방은 아무도 시작을 못 누른다. 나가려면 leave_room 을 쓴다(방장을 넘겨준다).
+--
+-- ★ 봇은 대상이 아니다(is_bot = false). 지금 대기방에는 봇이 없지만, 나중에
+--   생기더라도 **봇을 지목해 봐서 되는지 안 되는지로 봇을 찾아내는 길**을 막는다 (I1).
+--
+-- 이미 나간 사람을 또 내보내는 것은 에러가 아니다. 방장 화면이 아직 옛 명단을
+-- 들고 있는 흔한 경우라, 빨간 배너를 띄울 이유가 없다 — kicked = false 로 돌려준다.
+create or replace function kick_player(
+  p_room_id   uuid,
+  p_actor_id  uuid,
+  p_target_id uuid
+) returns table (kicked boolean)
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+declare
+  v_room rooms%rowtype;
+begin
+  select * into v_room from rooms where id = p_room_id for update;
+
+  if not found then
+    raise exception '방이 없다' using errcode = 'P0001';
+  end if;
+
+  if v_room.phase <> 'lobby' then
+    raise exception '시작한 방에서는 내보낼 수 없다' using errcode = 'P0001';
+  end if;
+
+  if v_room.host_id is distinct from p_actor_id then
+    raise exception '방장만 내보낼 수 있다' using errcode = 'P0001';
+  end if;
+
+  if p_target_id = p_actor_id then
+    raise exception '자기 자신은 내보낼 수 없다' using errcode = 'P0001';
+  end if;
+
+  -- room_id 를 조건에 같이 건다. id 만 믿으면 남의 방 사람을 뺄 수 있다 (I9).
+  delete from players
+   where id = p_target_id and room_id = p_room_id and is_bot = false;
+
+  -- 명단이 바뀐 신호(roster_seq)는 players 트리거가 이미 올렸다 (schema.sql).
+  -- 내보내진 사람의 화면은 그 신호로 자기 자리가 없어진 것을 안다.
+  return query select found;
+end;
+$$;
+
+------------------------------------------------------------------------------
 -- AI 자리를 만든다 — SPEC §17.4, 2026-08-06 결정
 ------------------------------------------------------------------------------
 -- ┌─ **딱 1대다** (2026-08-06) ────────────────────────────────────────────────┐
@@ -426,11 +490,13 @@ revoke all on function pick_free_seat(uuid)       from public, anon, authenticat
 revoke all on function create_room(text,int,text,uuid) from public, anon, authenticated;
 revoke all on function join_room(text,uuid)       from public, anon, authenticated;
 revoke all on function leave_room(uuid,uuid)      from public, anon, authenticated;
+revoke all on function kick_player(uuid,uuid,uuid) from public, anon, authenticated;
 revoke all on function fill_with_bots(uuid)       from public, anon, authenticated;
 revoke all on function shuffle_seats(uuid)        from public, anon, authenticated;
 
 grant execute on function create_room(text,int,text,uuid) to service_role;
 grant execute on function join_room(text,uuid)    to service_role;
 grant execute on function leave_room(uuid,uuid)   to service_role;
+grant execute on function kick_player(uuid,uuid,uuid) to service_role;
 grant execute on function fill_with_bots(uuid)    to service_role;
 grant execute on function shuffle_seats(uuid)     to service_role;

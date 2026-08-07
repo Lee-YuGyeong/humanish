@@ -59,10 +59,29 @@ export function lobbyLineText(id: string): string | null {
 }
 
 /**
- * 연타로 뜻을 만드는 걸 막는다. 같은 문구 연속 재전송 금지는 DB가 본다.
- * 값을 바꾸면 supabase/checks.sh 의 기대값도 같이 고친다.
+ * 연타로 뜻을 만드는 걸 막는다. **여기가 원본이다** — DB(say_lobby_line 의
+ * p_cooldown_sec)와 화면(GET /api/lobby/lines)이 둘 다 이 값을 받아 간다.
+ *
+ * ★ 4초다 (2026-08-07 사용자 지시). 말풍선은 3초 뒤 걷히므로(room-lobby.tsx 의
+ *   LOBBY_LINE_TTL_MS) **말이 사라지고 1초 뒤에 다시 말할 수 있다.** 그 1초가
+ *   빈 채로 남는 게 의도다 — 걷히자마자 다시 눌리면 같은 말이 깜빡이는 것처럼
+ *   보이고, 그 깜빡임 자체가 세어져서 신호가 된다.
+ * ★ **연타를 막는 건 이제 이 값 하나뿐이다.** 같은 문구 연속 금지(2026-08-07)와
+ *   총량 상한(같은 날)이 차례로 걷혔다 — 둘 다 사용자 판단이다. 그래서 이 4초를
+ *   0 으로 내리면 대기방이 사실상 자유 채팅이 되고, 문구를 여덟 개로 좁혀둔
+ *   의미(SPEC §15-3-결정)가 통째로 사라진다.
+ * ★ 값을 바꾸면 supabase/checks.sh 의 기대값도 같이 고친다.
  */
-export const LOBBY_LINE_COOLDOWN_SEC = 3;
+export const LOBBY_LINE_COOLDOWN_SEC = 4;
 
-/** 한 사람이 대기방 전체에서 말할 수 있는 총 횟수. */
-export const LOBBY_LINE_MAX = 10;
+/**
+ * 한 사람이 대기방 전체에서 말할 수 있는 총 횟수. **0 이면 상한이 없다.**
+ *
+ * ★ 0 이다 (2026-08-07 사용자 지시 "제한 다 풀어"). 예전엔 10 이었는데,
+ *   대기방이 길어지면 멀쩡히 기다리던 사람이 말을 못 하게 되고 화면에는 그게
+ *   고장으로 보였다.
+ * ★ 되살리려면 여기 숫자만 넣으면 된다 — DB 함수(say_lobby_line)가
+ *   `p_max_lines > 0` 일 때만 센다. 인자를 지우지 않은 이유는 create or replace
+ *   로는 시그니처를 못 바꾸기 때문이다 (supabase/apply.sh · checks.sh).
+ */
+export const LOBBY_LINE_MAX = 0;

@@ -506,23 +506,189 @@
  * │   여덟 번 반복된다 — 그게 이 화면이 계속 시끄러웠던 이유다.             │
  * └───────────────────────────────────────────────────────────────────────┘
  */
+/*
+ * ┌─ 테두리를 다시 두른 이유 (2026-08-07 사용자 지시) ─────────────────────┐
+ * │ 위 주석은 "칸에 테두리를 다시 두르지 말 것"이었다. 그건 **링 + 걸쇠 +   │
+ * │ 귀퉁이 radial** 이라는 무늬가 여덟 벌 복제되는 걸 막으려던 것이고,      │
+ * │ 지금 두르는 건 그 무늬가 아니라 **색 하나짜리 1px 실선**이다.           │
+ * │ 지시도 정확히 그것이었다 — "모서리 초록색 두꺼운거 없애고 균일하게".    │
+ * │                                                                        │
+ * │ ★ 걸쇠(--bracket)와 귀퉁이(--edge-corner)는 여전히 투명이다. 되살리지   │
+ * │   말 것 — 준비된 자리가 여럿이면 그 귀퉁이 초록이 여섯 벌로 늘어나고,   │
+ * │   그게 그림보다 먼저 눈에 들어온다.                                    │
+ * └────────────────────────────────────────────────────────────────────────┘
+ *
+ * 튀어나와 보이는 것은 셋이다:
+ *   ① 링의 세로 그라디언트 — 윗변이 밝다 = 빛이 위에서 온다
+ *   ② 그림자 세 겹 — 접촉(짧고 진하게) · 중간 · 확산. 한 겹은 스티커처럼 붙는다
+ *   ③ 빈자리는 반대로 판다 (.slotEmpty) — 옆에 파인 게 있어야 나머지가 솟는다
+ *
+ * ★ inset 그림자를 쓰지 말 것. .frame 의 배경이 곧 **링**이고 화면에 나오는 건
+ *   가장자리 1px 뿐이라, 안쪽 그림자는 정확히 그 1px 을 덮어 링을 꺼뜨린다.
+ *   위아래 명암을 배경 그라디언트로 만드는 이유가 이것이다.
+ */
+@property --edge-top {
+  syntax: "<color>";
+  inherits: false;
+  initial-value: rgba(255, 255, 255, 0.26);
+}
+
 .slot {
   composes: frame;
   --radius: 8px;
-  /* 링·걸쇠 끄기. 남는 1px 은 투명이라 판 바닥이 비쳐 칸 사이 실금이 된다 */
-  --edge: transparent;
+  --edge: rgba(255, 255, 255, 0.11);
+  --edge-top: rgba(255, 255, 255, 0.26);
+  /* 귀퉁이 radial 과 ㄱ자 걸쇠는 끈 채로 둔다 (위 주석) */
   --edge-corner: transparent;
   --bracket: transparent;
   --fill-top: #0c0c0c;
   --fill-bottom: #070707;
-  display: flex;
-  flex-direction: column;
+  display: block;
   height: 100%;
   overflow: hidden;
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
+  background-image: linear-gradient(180deg, var(--edge-top), var(--edge) 60%);
+  box-shadow:
+    0 1px 2px rgba(0, 0, 0, 0.6),
+    0 6px 12px -3px rgba(0, 0, 0, 0.55),
+    0 16px 26px -12px rgba(0, 0, 0, 0.7);
   transition:
     --edge 0.3s ease,
-    --edge-corner 0.3s ease;
+    --edge-top 0.3s ease;
+}
+
+/*
+ * 카드 그림 — 안쪽을 통째로 덮는다 (room-lobby.tsx 의 IdCard).
+ * ★ inset 이 --ring 이다. 0 으로 두면 그림이 링을 덮어 테두리가 사라진다.
+ */
+.art {
+  position: absolute;
+  inset: var(--ring);
+  z-index: 0;
+  border-radius: calc(var(--radius) - var(--ring));
+  overflow: hidden;
+  /*
+   * ★ 원근은 **여기**가 갖는다. 안쪽 .flip 이 preserve-3d 로 돌 때 그 기준점이다.
+   *   값이 작을수록 회전이 과장된다 — 900px 은 카드가 살짝 기울어 보이는 정도다.
+   */
+  perspective: 900px;
+  /*
+   * ★ 바탕은 여기 있고 SVG 는 그림만 그린다. SVG 는 meet 이라 카드 비율에 따라
+   *   남는 쪽에 여백이 생기는데(칸이 grid-auto-rows 로 늘어난다), 바탕이 SVG
+   *   안에 있으면 그 여백에서 색이 끊겨 **카드 안에 또 카드가 든 것처럼** 보인다.
+   */
+  background: linear-gradient(135deg, #1c1c1c, #0b0b0b);
+  transition: filter 0.35s ease;
+}
+.art svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+/*
+ * ┌─ 카드 뒤집기 (2026-08-07 사용자 지시) ─────────────────────────────────┐
+ * │ 준비를 누르면 그림이 Y 축으로 반 바퀴 돌아 **도장 찍힌 뒷면**이 나온다. │
+ * │ 풀면 반대로 돈다. 두 면은 TSX 가 미리 다 그려 둔다 — 도는 중간에        │
+ * │ 갈아끼우면 90도 부근에서 한 프레임이 비어 카드가 깜빡인다.              │
+ * │                                                                        │
+ * │ ★ .flip 에는 overflow 를 주지 말 것. overflow 가 걸리면 브라우저가      │
+ * │   preserve-3d 를 **평평하게 눌러버려** 뒤집기가 통째로 죽는다. 잘라내는 │
+ * │   일은 바깥(.art)이 맡는다.                                             │
+ * │ ★ 처음 그려질 때는 안 돈다. transition 은 값이 **바뀔 때** 걸리는 것이라, │
+ * │   이미 준비된 자리로 들어오면 180도인 채로 그냥 나타난다. 그게 맞다 —   │
+ * │   방에 들어서자마자 카드 여럿이 한꺼번에 도는 건 사고처럼 보인다.       │
+ * └────────────────────────────────────────────────────────────────────────┘
+ */
+.flip {
+  position: absolute;
+  inset: 0;
+  transform-style: preserve-3d;
+  transition: transform 0.55s cubic-bezier(0.4, 0.05, 0.2, 1);
+}
+.flipOn {
+  transform: rotateY(180deg);
+}
+
+.face {
+  position: absolute;
+  inset: 0;
+  backface-visibility: hidden;
+  -webkit-backface-visibility: hidden;
+}
+.face svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+/*
+ * 앞면(준비 전)은 한 겹 가라앉아 있다. 도장을 보기 전에 **카드 밝기만으로**
+ * 몇이 준비됐는지 세어지는 게 이 한 줄의 일이다. 뒷면은 손대지 않는다.
+ */
+.faceIdle {
+  filter: brightness(0.62) saturate(0.75);
+}
+.faceBack {
+  transform: rotateY(180deg);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .flip {
+    transition: none;
+  }
+}
+
+/*
+ * 홀로그램 — 신분증에 덮인 필름 한 겹. 준비된 자리에만 붙는다 (TSX 가 건다).
+ *
+ * ★ mix-blend-mode: screen 이다. 반투명 흰 띠를 얹으면 카드가 그냥 뿌예지는데,
+ *   screen 은 **아래 색을 밝히기만** 해서 어두운 바닥에서는 빛으로 보이고
+ *   밝은 글자 위에서는 거의 티가 안 난다 — 진짜 홀로그램이 그렇게 보인다.
+ * ★ 이름판(z-index 3)보다 **위**다. 아래에 두면 이름판의 어두운 띠에서 필름이
+ *   뚝 끊겨 카드 위쪽만 빛난다. 필름은 카드 전체에 덮인 한 겹이다.
+ */
+.holo {
+  position: absolute;
+  inset: var(--ring);
+  z-index: 4;
+  border-radius: calc(var(--radius) - var(--ring));
+  pointer-events: none;
+  mix-blend-mode: screen;
+  background: linear-gradient(
+    45deg,
+    transparent 34%,
+    rgba(53, 208, 127, 0.1) 43%,
+    rgba(120, 190, 255, 0.16) 48%,
+    rgba(255, 120, 220, 0.12) 53%,
+    rgba(53, 208, 127, 0.1) 58%,
+    transparent 68%
+  );
+  background-size: 300% 100%;
+  animation: holo 6.5s ease-in-out infinite;
+}
+@keyframes holo {
+  0%,
+  100% {
+    background-position: 150% 0;
+  }
+  50% {
+    background-position: -50% 0;
+  }
+}
+/*
+ * ★ 칸마다 위상을 어긋낸다. 여덟 칸이 한 박자로 번쩍이면 판 전체가 깜빡이는
+ *   경고등이 되어, 정작 세어야 할 「몇 명이 준비됐나」가 묻힌다.
+ *   음수 delay 라 처음부터 서로 다른 지점에서 시작한다 (0 이면 다 같이 출발).
+ */
+.seatGrid li:nth-child(3n + 2) .holo {
+  animation-delay: -2.2s;
+}
+.seatGrid li:nth-child(3n) .holo {
+  animation-delay: -4.4s;
+}
+@media (prefers-reduced-motion: reduce) {
+  .holo {
+    animation: none;
+    background-position: 50% 0;
+  }
 }
 
 /*
@@ -539,6 +705,95 @@
   justify-content: center;
   gap: 0.75rem;
   padding: 1.1rem 0.7rem;
+}
+
+/*
+ * 내보내기 — 방장에게만 보이는 작은 ×. 좌석 카드 **왼쪽 위**에 앉는다 (2026-08-07).
+ *
+ * ★ 왕관(오른쪽 위)과 반대편이다. 같은 귀퉁이에 두면 방장 자리에서 둘이 겹치는데,
+ *   하필 그 자리가 "내보낼 수 없는 자리"라 겹칠 이유가 하나도 없다.
+ * ★ 평소에는 흐리다. 여덟 칸에 빨간 ×가 나란히 서면 대기방이 경고판이 된다 —
+ *   손을 올렸을 때만 붉어진다.
+ */
+.kick {
+  position: absolute;
+  top: 0.35rem;
+  left: 0.4rem;
+  z-index: 2;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--faint);
+  cursor: pointer;
+  transition:
+    color 0.15s,
+    background-color 0.15s;
+}
+.kick:hover:not(:disabled) {
+  color: var(--red);
+  background-color: var(--red-dim);
+}
+.kick:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+/*
+ * 확인 단계 — ×를 한 번 누르면 이 버튼으로 바뀐다. 이게 진짜 내보내는 버튼이다.
+ *
+ * ★ 왜 두 번 누르게 하나: 한 번에 나가면 되돌릴 수가 없다. 내보내진 사람은
+ *   코드를 다시 받아야 들어올 수 있고, 방장은 오조작을 알아챌 방법이 없다.
+ *   창(confirm)을 띄우지 않는 이유는 그게 브라우저 것이라 이 화면과 따로 놀아서다.
+ * ★ 몇 초 뒤 스스로 풀린다 (room-lobby.tsx). 눌러 둔 채로 잊으면 다음 클릭이
+ *   곧장 내보내기가 되기 때문이다.
+ */
+.kickConfirm {
+  position: absolute;
+  top: 0.35rem;
+  left: 0.4rem;
+  z-index: 2;
+  padding: 0.2rem 0.5rem;
+  border: 0;
+  border-radius: 6px;
+  background-color: var(--red);
+  color: #fff;
+  font-family: inherit;
+  font-size: 0.55rem;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.kickConfirm:hover:not(:disabled) {
+  background-color: #f87171;
+}
+.kickConfirm:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/*
+ * 내보내진 사람이 보는 화면 (components/room-lobby.tsx 의 RoomKicked).
+ * 대기방과 같은 바탕 위에 문장 하나와 나갈 길 하나만 둔다.
+ */
+.notice {
+  max-width: 20rem;
+  text-align: center;
+  font-size: 0.92rem;
+  line-height: 1.7;
+  color: var(--text);
+}
+.noticeSub {
+  margin-top: 0.6rem;
+  font-size: 0.72rem;
+  line-height: 1.7;
+  color: var(--muted);
 }
 
 /* 방장 왕관. 네모 태그를 대신하므로 배경도 테두리도 없다 — 도형 하나만 남는다 */
@@ -558,17 +813,31 @@
  * ★ 여기 드는 건 **닉네임 하나뿐이다** (2026-08-07). 자리 번호·상태를 같이 적던
  *   작은 둘째 줄은 지웠다 — 그 정보는 왕관과 프레임 귀퉁이 색이 이미 말한다.
  */
+/*
+ * 이름판 — 그림 **위에** 얹힌 어두운 띠. 흐름에서 빠져 나와 absolute 다.
+ * ★ 위가 투명한 그라디언트다. 단색 띠로 자르면 그림이 거기서 뚝 끊겨,
+ *   전면 그림이 아니라 "위 그림 + 아래 상자"로 되돌아간다.
+ */
 .plate {
+  position: absolute;
+  left: var(--ring);
+  right: var(--ring);
+  bottom: var(--ring);
+  z-index: 3;
   display: flex;
-  align-items: center;
+  align-items: flex-end;
   justify-content: center;
-  padding: 0.5rem;
-  /* 카드 안쪽 둥글기를 따라간다 — 각진 채로 두면 아래 두 귀퉁이가 잘려 보인다 */
+  /*
+   * ★ 28% 다 (2026-08-07 사용자 지시 "검정 영역을 좀 내려"). 34% 였을 때는
+   *   어두운 띠가 도장 자리까지 올라와 그림을 눌렀다. 그림이 차지하는 높이는
+   *   칸 비율에 따라 변하는데 띠는 퍼센트로 고정이라, 칸이 짧아질수록 더 먹는다.
+   * ★ 더 내리지는 말 것. 이름이 카드 밑변에 붙어 잘려 보이기 시작한다.
+   */
+  height: 28%;
+  padding: 0 0.4rem 0.5rem;
   border-radius: 0 0 calc(var(--radius) - var(--ring)) calc(var(--radius) - var(--ring));
-  background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.03), transparent),
-    rgba(0, 0, 0, 0.5);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08);
+  background: linear-gradient(180deg, transparent, rgba(6, 6, 6, 0.82) 58%, rgba(6, 6, 6, 0.96));
+  pointer-events: none;
 }
 .plateName {
   display: block;
@@ -593,39 +862,66 @@
  * ★ 글로우(box-shadow)는 **내 자리에만** 준다. 여덟 칸이 전부 빛나면 아무것도
  *   도드라지지 않고, 레퍼런스에서도 빛나는 건 선택된 한 칸뿐이다.
  */
+/* 내 자리 — 링이 형광으로 서고 글로우가 하나 붙는다. 빛나는 건 이 한 칸뿐이다 */
 .slotMe {
-  --edge: rgba(53, 208, 127, 0.28);
-  --edge-corner: rgba(53, 208, 127, 0.75);
-  --bracket: rgba(53, 208, 127, 0.7);
+  --edge: rgba(53, 208, 127, 0.5);
+  --edge-top: rgba(53, 208, 127, 0.95);
   --fill-top: #10231a;
   --fill-bottom: #0a1611;
   box-shadow:
-    0 2px 10px rgba(0, 0, 0, 0.45),
-    0 0 16px -4px rgba(53, 208, 127, 0.4);
+    0 1px 2px rgba(0, 0, 0, 0.6),
+    0 6px 12px -3px rgba(0, 0, 0, 0.55),
+    0 16px 26px -12px rgba(0, 0, 0, 0.7),
+    0 0 18px -5px rgba(53, 208, 127, 0.45);
+}
+/*
+ * 준비 완료 — **링은 거의 안 건드린다.** 여덟 칸 중 여럿이 동시에 켜지는
+ * 상태라 테두리로 말하면 같은 무늬가 예닐곱 벌로 늘어난다.
+ * 말하는 건 셋이다: 카드가 뒤집혀 밝은 뒷면이 나오고(.flipOn),
+ * 신분증에 「준비 완료」 도장이 찍히고, 홀로그램이 흐른다.
+ */
+.slotSettled {
+  --edge: rgba(53, 208, 127, 0.22);
+  --edge-top: rgba(53, 208, 127, 0.42);
 }
 /*
  * 준비 완료 — **테두리로 말하지 않는다.** 여덟 칸 중 여럿이 동시에 켜지는
  * 상태라, 테두리로 표시하면 그 순간 같은 무늬가 예닐곱 벌로 늘어난다.
  * 아바타 링(.pulse)과 이름판 아래 형광 선, 둘로 충분하다.
  */
-.slotSettled .plate {
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.08),
-    inset 0 -2px 0 rgba(53, 208, 127, 0.55);
-}
+/*
+ * ★ 준비된 칸의 이름판에 **선을 긋지 않는다.** 예전엔 흰 1px 윗선과 초록 2px
+ *   아랫선이 있었는데, 그때 이름판은 단색 띠라 그 선이 초상과 명패를 갈랐다.
+ *   지금은 위가 투명한 그라디언트라 가를 경계 자체가 없고, 선만 남으면
+ *   **허공에 뜬 실금**으로 보인다.
+ *   준비 여부는 이미 셋이 말한다 — 카드가 뒤집혀 밝은 뒷면이 나오고(.flipOn),
+ *   도장이 찍히고, 홀로그램이 흐른다. 넷째를 더할 자리가 아니다.
+ */
 
 /*
  * 아직 아무도 안 앉은 자리 — 그냥 더 어둡다. 판에 뚫린 빈 구멍이다.
  * ★ 귀퉁이가 숨쉬는 애니메이션을 넣지 않는다. 빈 칸이 서넛이면 같은 무늬가
  *   동시에 뛰어서, 화면에서 제일 눈에 띄는 게 **아무도 없는 자리**가 된다.
  */
+/*
+ * 아직 아무도 안 앉은 자리 — **반대로 판다.** 그라디언트를 뒤집어 윗변을
+ * 어둡게 하고 그림자를 걷으면 솟은 게 아니라 파인 자국으로 읽힌다.
+ * 옆에 파인 칸이 있어야 앉은 칸이 솟아 보인다.
+ */
 .slotEmpty {
+  --edge: rgba(255, 255, 255, 0.07);
+  --edge-top: rgba(0, 0, 0, 0.6);
   --fill-top: #090909;
   --fill-bottom: #050505;
   box-shadow: none;
 }
+/*
+ * 빈자리 이름판 — **그라디언트 모양은 그대로 두고 농도만 낮춘다.**
+ * 단색(rgba(0,0,0,.3))으로 덮었더니 위쪽에 각진 경계가 생겨, 빈 칸만
+ * 「그림 + 아래 상자」로 되돌아갔다.
+ */
 .slotEmpty .plate {
-  background: rgba(0, 0, 0, 0.3);
+  background: linear-gradient(180deg, transparent, rgba(0, 0, 0, 0.55) 58%, rgba(0, 0, 0, 0.75));
 }
 
 /*
@@ -706,19 +1002,58 @@
  *   gap(0.75rem) 안에 들어가므로 아바타를 밀지 않는다. padding 을 건드리면
  *   아래 .bubbleGhost 의 1.55rem 과 어긋나 말한 칸만 들썩인다.
  */
+/*
+ * ┌─ 왜 이만큼 큰가 ───────────────────────────────────────────────────────┐
+ * │ 예전엔 0.62rem 이라 안 읽혔다. 그런데 **자리가 모자라서가 아니었다** —  │
+ * │ 대기방에서 할 수 있는 말은 여덟 마디뿐이고(lib/server/lobby-lines.ts)   │
+ * │ 제일 긴 게 「조금만 기다려」 여섯 글자다. 줄임표가 뜰 일이 없으니 글자를 │
+ * │ 이름(0.88rem)보다 크게 잡아도 남는다. 말은 잠깐 떴다 사라지는 것이고    │
+ * │ 이름은 늘 있는 것이라, 있는 동안에는 말이 먼저 읽히는 게 맞다.          │
+ * └────────────────────────────────────────────────────────────────────────┘
+ *
+ * ★ **이름 바로 위**에 뜬다. 꼬리가 아래를 향해 이름을 가리킨다 — 카드 꼭대기에
+ *   두었을 때는 그림 한가운데를 가로지르면서도 이름과 멀어서, 누가 한 말인지
+ *   한 박자 늦게 이어졌다.
+ * ★ 마크업에서 **이름판보다 뒤에 온다** (room-lobby.tsx). 둘 다 z-index 3 이라
+ *   순서가 곧 위아래고, 앞에 두면 이름판의 어두운 띠가 말풍선을 덮는다.
+ * ★ absolute 라 카드 높이를 안 건드린다. 그래서 자리를 미리 잡아 두던 빈 칸
+ *   (.bubbleGhost)이 필요 없어졌다 — 흐름 안에 있던 시절에는 한 사람만 말하면
+ *   그 칸만 키가 커져 그리드가 들썩였다.
+ * ★ 모서리를 45° 로 깎지 않는다. clip-path 는 상자 밖을 잘라내서 **꼬리를 통째로
+ *   지운다.** 꼬리를 살리려면 border-radius 여야 하고, 알약으로 보이지 않을
+ *   만큼만 굴린다(3px).
+ */
 .bubble {
-  position: relative;
-  max-width: 100%;
-  padding: 0.28rem 0.6rem;
-  border: 1px solid var(--border2);
-  border-radius: 0.7rem;
-  background: var(--bg2);
-  font-size: 0.62rem;
+  position: absolute;
+  bottom: 17%;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 3;
+  max-width: 94%;
+  padding: 0.24rem 0.7rem;
+  border: 1px solid rgba(255, 255, 255, 0.24);
+  border-radius: 3px;
+  background: rgba(6, 6, 6, 0.95);
+  font-size: 1.02rem;
+  font-weight: 700;
   line-height: 1.2;
+  letter-spacing: -0.015em;
   color: var(--text);
   white-space: nowrap;
-  overflow: visible;
+  overflow: hidden;
   text-overflow: ellipsis;
+}
+@media (min-width: 1280px) {
+  .bubble {
+    font-size: 1.12rem;
+  }
+}
+/* 2열로 접히는 좁은 화면에서는 카드가 절반이라 같이 줄인다 */
+@media (max-width: 639px) {
+  .bubble {
+    font-size: 0.9rem;
+    padding: 0.2rem 0.55rem;
+  }
 }
 /*
  * 꼬리 — 삼각형 두 개를 겹친다. 바깥(::before)이 테두리색, 안쪽(::after)이 배경색이라
@@ -736,14 +1071,14 @@
 }
 .bubble::before {
   transform: translateX(-50%);
-  border-width: 6px 5px 0 5px;
-  border-color: var(--border2) transparent transparent transparent;
+  border-width: 9px 7px 0 7px;
+  border-color: rgba(255, 255, 255, 0.24) transparent transparent transparent;
 }
 .bubble::after {
-  /* 1.5px 끌어올려 바깥 삼각형의 테두리 선만 남긴다 */
-  transform: translateX(-50%) translateY(-1.5px);
-  border-width: 5px 4px 0 4px;
-  border-color: var(--bg2) transparent transparent transparent;
+  /* 1.6px 끌어올려 바깥 삼각형의 테두리 선만 남긴다 */
+  transform: translateX(-50%) translateY(-1.6px);
+  border-width: 8px 6px 0 6px;
+  border-color: rgba(6, 6, 6, 0.95) transparent transparent transparent;
 }
 /* 말이 없을 때도 높이를 잡아 둔다 — 한 사람만 말하면 그리드가 들썩인다 */
 .bubbleGhost {

@@ -384,6 +384,7 @@ schema_checks() {
     "create_room(text,int,text,uuid)" \
     "join_room(text,uuid)" \
     "leave_room(uuid,uuid)" \
+    "kick_player(uuid,uuid,uuid)" \
     "fill_with_bots(uuid)" \
     "shuffle_seats(uuid)" \
     "send_message(uuid,uuid,text,int)" \
@@ -431,6 +432,7 @@ schema_checks() {
     "create_room(text,int,text,uuid)" \
     "join_room(text,uuid)" \
     "leave_room(uuid,uuid)" \
+    "kick_player(uuid,uuid,uuid)" \
     "fill_with_bots(uuid)" \
     "shuffle_seats(uuid)" \
     "say_lobby_line(uuid,uuid,text,int,int)" \

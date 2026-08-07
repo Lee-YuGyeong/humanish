@@ -23,6 +23,7 @@ import { ApiRequestError } from '@/lib/api/client';
 import {
   advancePhase,
   castVote,
+  kickPlayer,
   leaveRoom,
   sayLobbyLine,
   sendMessage,
@@ -47,6 +48,7 @@ export const REQUEST = {
   lobbyReady: '준비',
   lobbyName: '이름',
   leave: '나가기',
+  kick: '내보내기',
 } as const;
 
 function messageOf(e: unknown): string {
@@ -149,6 +151,21 @@ export function useSayLobbyLine(code: string, roomId: string | undefined) {
 export function useSetLobbyReady(code: string, roomId: string | undefined) {
   return useRoomWrite<boolean>(REQUEST.lobbyReady, code, roomId, (ready) =>
     setLobbyReady(roomId!, ready),
+  );
+}
+
+/**
+ * 강퇴 — 방장이 한 사람을 내보낸다 (2026-08-07).
+ *
+ * ★ 다른 쓰기와 같은 게이트를 쓴다(useRoomWrite). 연타로 두 사람이 한꺼번에
+ *   나가는 일이 여기서 막힌다 — 좌석 카드가 여덟이라 오조작이 쉬운 자리다.
+ * ★ 성공하면 그 방 쿼리가 무효화되어 명단을 다시 읽는다. **내보내진 사람의
+ *   화면은 여기가 아니라 roster_seq 신호로 안다** (§17.3) — 그쪽에는 이 요청이
+ *   가지 않으므로, 서버가 알려주는 유일한 길이 그 신호다.
+ */
+export function useKickPlayer(code: string, roomId: string | undefined) {
+  return useRoomWrite<string>(REQUEST.kick, code, roomId, (targetId) =>
+    kickPlayer(roomId!, targetId),
   );
 }
 

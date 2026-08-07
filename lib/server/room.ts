@@ -338,6 +338,37 @@ export async function leaveRoom(roomId: string, playerId: string): Promise<Leave
 }
 
 /**
+ * 강퇴 — 방장이 대기방에서 한 사람을 내보낸다 (2026-08-07).
+ *
+ * ★ **방장인지는 SQL 안에서 본다.** 여기서 rooms.host_id 를 읽어 비교한 뒤
+ *   지우면, 읽은 시점과 지우는 시점 사이에 방장이 바뀔 수 있다(방장이 나가면
+ *   다음 사람에게 넘어간다). 방을 잠근 채 같은 트랜잭션에서 확인해야 그 틈이 없다.
+ *   그래서 이 함수는 판정을 하지 않고 인자만 넘긴다 (supabase/functions/room.sql).
+ *
+ * @returns kicked=false 는 **에러가 아니다** — 이미 나간 사람을 또 내보낸 것이다.
+ */
+export async function kickPlayer(
+  roomId: string,
+  actorId: string,
+  targetId: string,
+): Promise<{ kicked: boolean }> {
+  const { data, error } = await getServiceClient().rpc('kick_player', {
+    p_room_id: roomId,
+    p_actor_id: actorId,
+    p_target_id: targetId,
+  });
+
+  if (error) {
+    // SQL이 raise한 것은 사용자에게 그대로 보여줘도 되는 문장이다 (room.sql 참고)
+    if (error.code === 'P0001') throw new ApiError(409, error.message);
+    throw new ApiError(500, `내보내기 실패: ${error.message}`);
+  }
+
+  const row = (data as { kicked: boolean }[] | null)?.[0];
+  return { kicked: row?.kicked === true };
+}
+
+/**
  * AI 자리를 만든다 — **딱 1대다** (2026-08-06 결정). lobby → question 직전에 한 번 부른다.
  *
  * 자리 수는 사람 수 + 1 이 된다. 빈 자리를 정원까지 전부 채우던 시절의 이름을
