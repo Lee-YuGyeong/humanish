@@ -119,7 +119,31 @@ function nimConfig(): NimConfig | null {
   };
 }
 
-/** OpenAI 호환 chat/completions 한 번. 재시도 없음 — 실패는 폴백이 받는다. */
+/**
+ * OpenAI 호환 chat/completions 한 번. 재시도 없음 — 실패는 폴백이 받는다.
+ *
+ * ┌─ ★ 스트리밍으로 받는다 (2026-08-07) ──────────────────────────────────────┐
+ * │ 신고: "3D 월드에서 AI 가 한마디도 안 한다." world_agent_logs 를 읽어 보니   │
+ * │ **버려진 발화의 took_ms 가 전부 컷 값에 정확히 붙어 있었다** (10000 · 22000).│
+ * │ 컷을 10초 → 22초로 늘려도 그대로였다 — 늘릴 값이 아니라 **기다리는 방식**이  │
+ * │ 문제였다.                                                                  │
+ * │                                                                          │
+ * │ 모델이 내놓는 JSON 의 순서를 보면 답이 보인다 (OUTPUT_FORMAT):              │
+ * │   {"messages":[…] , "reasoning":… , "suspicionOnMe":… , "action":… , …}   │
+ * │ **정작 필요한 발화는 맨 앞 필드**인데, 한 번에 받으면 뒤 필드까지 다 나올     │
+ * │ 때까지 아무것도 못 쓴다. 22초에 끊기면 이미 나와 있던 발화까지 같이 버려지고, │
+ * │ 월드에는 대신 낼 풀 문구가 없으니 그게 그대로 **침묵**이다.                  │
+ * │                                                                          │
+ * │ 그래서 흘려 받고, 끊기면 **거기까지 온 것을 돌려준다.** 잘린 JSON 에서 발화를 │
+ * │ 건지는 길은 이미 있다 — parseOutput 의 salvage("JSON 파싱 실패 — 발화만      │
+ * │ 건짐"). 없던 장치를 만드는 게 아니라, 지금까지 그 장치에 **닿지도 못하고**    │
+ * │ 버려지던 것을 닿게 하는 것이다.                                            │
+ * │                                                                          │
+ * │ ★ 중간에 스스로 끊지는 않는다. 발화만 건지고 바로 끊으면 reasoning·facts 가  │
+ * │   영영 안 와서, 봇이 지어낸 설정이 다음 턴에 사라진다 (facts.ts). 끝까지      │
+ * │   기다리되 **끊길 때 손해가 없게** 만드는 게 이 변경의 전부다.               │
+ * └──────────────────────────────────────────────────────────────────────────┘
+ */
 async function callNim(
   cfg: NimConfig,
   messages: LlmChatMessage[],
@@ -135,7 +159,16 @@ async function callNim(
       model: cfg.model,
       messages,
       temperature: 0.75, // 0.9는 8b에서 말이 샜다(실측 — 엉뚱한 답). 다양성은 페르소나가 만든다
-      max_tokens: 300, // 게임 발화는 길 이유가 없다. 길면 그것부터 봇 티가 난다
+      /*
+       * ★ 300 → 140 (2026-08-07). 생성 시간은 **낸 토큰 수에 비례한다** — 같은
+       *   질문 12회를 300 과 110 으로 재 보니 중앙값이 12.7초 → 8.6초였다.
+       *   300 은 "길면 봇 티가 난다"를 막으려고 잡은 상한인데, 실제로 그 예산을
+       *   쓰는 건 발화가 아니라 뒤 필드(reasoning·facts)다. 발화가 맨 앞이라
+       *   잘려도 salvage 가 받는다 — 잘리면 잃는 건 설정 기억뿐이고, 그건
+       *   침묵보다 훨씬 싸다.
+       */
+      max_tokens: 140,
+      stream: true,
     }),
     signal: signal ?? null,
   });
@@ -144,15 +177,50 @@ async function callNim(
     const detail = (await res.text().catch(() => '')).slice(0, 200);
     throw new Error(`NIM ${res.status}: ${detail}`);
   }
+  if (!res.body) throw new Error('NIM 응답이 비었다');
 
-  const data = (await res.json()) as {
-    choices?: { message?: { content?: unknown } }[];
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buf = '';
+  let acc = '';
+
+  /** SSE 한 줄씩 — `data: {…}` 의 delta.content 만 모은다. `[DONE]` 이면 끝. */
+  const drain = (chunk: string): boolean => {
+    buf += chunk;
+    let nl: number;
+    while ((nl = buf.indexOf('\n')) >= 0) {
+      const line = buf.slice(0, nl).trim();
+      buf = buf.slice(nl + 1);
+      if (!line.startsWith('data:')) continue;
+      const payload = line.slice(5).trim();
+      if (payload === '[DONE]') return true;
+      try {
+        const piece = (JSON.parse(payload) as { choices?: { delta?: { content?: unknown } }[] })
+          .choices?.[0]?.delta?.content;
+        if (typeof piece === 'string') acc += piece;
+      } catch {
+        // 조각난 줄은 버린다 — 다음 청크에서 온전한 줄로 다시 온다.
+      }
+    }
+    return false;
   };
-  const text = data.choices?.[0]?.message?.content;
-  if (typeof text !== 'string' || !text.trim()) {
-    throw new Error('NIM 응답이 비었다');
+
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (drain(decoder.decode(value, { stream: true }))) break;
+    }
+  } catch (e) {
+    // 컷(AbortSignal)이 대부분이다. **여기까지 온 것이 있으면 그게 답이다** —
+    // 위 상자의 요점이고, 아무것도 못 받았을 때만 폴백으로 넘긴다.
+    if (!acc.trim()) throw e;
+  } finally {
+    void reader.cancel().catch(() => {});
   }
-  return text.trim();
+
+  if (!acc.trim()) throw new Error('NIM 응답이 비었다');
+  return acc.trim();
 }
 
 // ── 공급자 무관 층 — 타임아웃 ───────────────────────────────────────────────
