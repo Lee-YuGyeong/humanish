@@ -208,7 +208,7 @@
   display: inline-flex;
   align-items: center;
   gap: 0.7rem;
-  font-size: 0.75rem;
+  font-size: 0.85rem;
   font-weight: 700;
   letter-spacing: 0.1em;
   text-transform: uppercase;
@@ -238,7 +238,7 @@
 
 .btnGhost {
   background: transparent;
-  color: #888;
+  color: #b3b3b3;
   font-weight: 400;
   border: 1px solid rgba(255, 255, 255, 0.1);
 }
@@ -249,7 +249,7 @@
 
 /* ── 표기 ─────────────────────────────────────────────────────────────── */
 .numberLabel {
-  font-size: 0.6rem;
+  font-size: 0.8rem;
   letter-spacing: 0.3em;
   color: #00ff66;
   text-transform: uppercase;
@@ -258,13 +258,13 @@
 .tag {
   display: inline-block;
   width: fit-content;
-  font-size: 0.6rem;
+  font-size: 0.8rem;
   letter-spacing: 0.25em;
   text-transform: uppercase;
   padding: 0.35rem 0.9rem;
   border: 1px solid rgba(255, 255, 255, 0.1);
   border-radius: 9999px;
-  color: #666;
+  color: #9a9a9a;
   white-space: nowrap;
 }
 
@@ -274,10 +274,10 @@
 }
 
 .navLink {
-  font-size: 0.7rem;
+  font-size: 0.9rem;
   letter-spacing: 0.2em;
   text-transform: uppercase;
-  color: #555;
+  color: #b3b3b3;
   background: none;
   border: none;
   padding: 0;
@@ -361,7 +361,7 @@
   border-radius: 9999px;
   border: 1px solid rgba(255, 255, 255, 0.12);
   background: transparent;
-  color: #777;
+  color: #b3b3b3;
   cursor: pointer;
   transition:
     color 0.2s ease,
@@ -442,13 +442,13 @@
 .seat {
   display: grid;
   place-items: center;
-  width: 1.9rem;
-  height: 1.9rem;
+  width: 2.3rem;
+  height: 2.3rem;
   border-radius: 9999px;
   border: 1px solid rgba(255, 255, 255, 0.16);
-  font-size: 0.62rem;
+  font-size: 0.82rem;
   letter-spacing: 0.02em;
-  color: #6f6f6f;
+  color: #9a9a9a;
 }
 
 /* 새로 들어온 AI 한 자리 */
@@ -464,13 +464,13 @@
 .seatUnknown {
   border-style: dashed;
   border-color: rgba(255, 255, 255, 0.22);
-  color: #9a9a9a;
+  color: #b3b3b3;
 }
 
 .seatOp {
   padding: 0 0.35rem;
-  font-size: 0.8rem;
-  color: #4a4a4a;
+  font-size: 0.9rem;
+  color: #9a9a9a;
 }
 
 /* ── 그 밖 ────────────────────────────────────────────────────────────── */

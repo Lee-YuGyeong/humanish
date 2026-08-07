@@ -22,6 +22,11 @@
  *   그 수는 규칙이라 미리 적어도 된다 (§15-3 — 수는 공개, 자리는 비밀).
  *   §18.1 이 적어 둔 인원표(`capacity` 3~10에서 6 제외, `seat_count`)는 이 결정으로
  *   대체됐다.
+ * ※ 2026-08-07: 진행 카드를 **3D 월드 라운드테이블** 기준으로 바꿨다. 실제 판은
+ *   대기방 → /world 로 흐르고, 단계·시간은 lib/mp/constants.ts 의 ROUND_*
+ *   (worker/src/roundtable.ts 상태머신)가 기준이다. SPEC §5.1 의 2D 흐름(서면
+ *   공통 질문 · 지목 질문 · 재투표)은 월드 판에 해당하지 않는다 — roundtable.ts
+ *   머리말의 「두 무대는 별개다」 참고. 단계 이름은 HUD(PHASE_LABEL)와 같은 말을 쓴다.
  */
 
 import { createContext, useCallback, useContext, useEffect, useState } from "react";
@@ -43,44 +48,44 @@ type Rule = {
 const rules: Rule[] = [
   {
     index: "01",
-    title: "자리 배정",
+    title: "집결",
     timing: "시작 직전",
-    body: "모인 사람 수(2~8명)에 맞춰 자리가 정해지고, 시작하는 순간 AI 1명이 그 사이에 섞여 앉는다. 몇인지는 이렇게 미리 알려주지만 어느 자리인지는 끝까지 숨긴다. 사람 중 누가 연기자인지, 연기자가 몇인지는 아무도 모른다.",
+    body: "대기방에서 전원이 준비하면 게임이 시작된다. 전원이 들어오면 카운트다운과 함께 각자 역할 카드를 받는다 — 그 순간 AI 1명이 사람들 사이에 섞인다. 몇인지는 이렇게 미리 알려주지만 어느 자리인지는 끝까지 숨긴다. 사람 중 누가 연기자인지, 연기자가 몇인지는 아무도 모른다.",
     tags: ["AI 1명", "자리 비공개"],
   },
   {
     index: "02",
-    title: "공통 질문",
-    timing: "60초 × 2라운드",
-    body: "모두에게 똑같은 질문이 동시에 나온다. 답은 60초가 끝나야 한꺼번에 공개된다 — 남의 답을 훔쳐보고 따라 쓸 수 없다. 이 과정을 두 번 반복한다.",
-    tags: ["동시 공개", "2라운드"],
+    title: "다같이 말하기",
+    timing: "45초 × 2라운드",
+    body: "모두에게 같은 주제가 뜬다. 1라운드는 사실을 묻고, 2라운드는 감정을 묻는다 — 한 사람의 두 답이 서로 결이 맞는지 지켜봐야 한다. 45초 동안 전원이 자유롭게 말한다.",
+    tags: ["사실 → 감정", "2라운드"],
   },
   {
     index: "03",
-    title: "지목 질문",
-    timing: "30초",
-    body: "한 사람을 콕 집어 질문한다. 답하는 사람은 지목된 그 한 명뿐. 나머지는 그가 어떻게 답하는지를 지켜본다.",
-    tags: ["1:1", "응답 패턴"],
-  },
-  {
-    index: "04",
-    title: "자유 채팅",
-    timing: "120초",
+    title: "자유 대화",
+    timing: "60초",
     body: "정해진 순서 없이 자유롭게 대화한다. 앞선 답에서 드러난 모순을 파고들며 서로를 떠보는 시간이다.",
     tags: ["실시간", "교차 심문"],
   },
   {
-    index: "05",
-    title: "투표",
+    index: "04",
+    title: "지목 투표",
     timing: "30초",
-    body: "각자 AI라고 의심되는 한 명을 뽑는다. 자기 자신은 못 뽑는다. 표는 비밀이며 30초가 끝나면 한꺼번에 열린다. 최다 득표가 갈리면 그 자리들만 놓고 20초 재투표를 한 번 더 한다.",
-    tags: ["비밀 투표", "동점이면 재투표"],
+    body: "AI라고 의심되는 한 명을 지목한다. 표는 비밀이고, 시간 안에는 마음을 바꿔도 된다 — 마지막 선택이 유효하다. 최다 득표가 동점이면 그중 무작위로 정해진다.",
+    tags: ["비밀 투표", "동점은 무작위"],
+  },
+  {
+    index: "05",
+    title: "최후변론 · 생사 투표",
+    timing: "20초 + 20초",
+    body: "지목된 사람에게 조명이 떨어지고 20초의 최후변론이 주어진다. 그 말을 듣고 처형할지 살릴지를 찬반으로 정한다 — 찬성이 과반이면 처형되고, 아니면 지목 투표부터 다시 한다.",
+    tags: ["조명", "과반이면 처형"],
   },
   {
     index: "06",
-    title: "공개",
+    title: "결과",
     timing: "마지막",
-    body: "모두의 정체가 드러난다. 지목된 한 명이 진짜 AI였다면 시민의 승리, 연기자였다면 연기자의 승리, 애먼 사람이었다면 AI의 승리다.",
+    body: "모두의 정체가 드러난다. 처형된 한 명이 진짜 AI였다면 시민의 승리, 연기자였다면 연기자의 승리, 시민이었다면 AI의 승리다. 아무도 처형하지 못한 판도 AI의 승리다.",
     tags: ["정체 공개", "한 진영만 승리"],
   },
 ];
@@ -164,7 +169,7 @@ function RulesOverlay({ onClose }: { onClose: () => void }) {
           </button>
         </div>
 
-        <p className="mt-6 max-w-md text-[0.8rem] font-light leading-loose text-[#4a4a4a]">
+        <p className="mt-6 max-w-md text-[0.9rem] font-light leading-loose text-[#b3b3b3]">
           역할은 시작할 때 무작위로 배정된다. 배역과 승리 조건은 &lsquo;배역&rsquo; 섹션에 있다.
         </p>
 
@@ -176,8 +181,8 @@ function RulesOverlay({ onClose }: { onClose: () => void }) {
                 <span className={styles.ruleIndex}>{rule.index}</span>
                 <span className={`${styles.tag} ${styles.tagLive}`}>{rule.timing}</span>
               </div>
-              <h3 className="text-xl font-semibold tracking-tight">{rule.title}</h3>
-              <p className="text-[0.86rem] leading-[1.9] text-[#c9c9c9]">{rule.body}</p>
+              <h3 className="text-2xl font-semibold tracking-tight">{rule.title}</h3>
+              <p className="text-[0.96rem] leading-[1.9] text-[#c9c9c9]">{rule.body}</p>
               <div className="mt-auto flex flex-wrap gap-2 pt-2">
                 {rule.tags.map((tag) => (
                   <span key={tag} className={styles.tag}>
