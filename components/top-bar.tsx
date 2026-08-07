@@ -20,6 +20,12 @@ import type { ReactNode } from "react";
 
 import styles from "./top-bar.module.css";
 
+/*
+ * ★ 살결을 덧칠하는 인자를 두지 않는다 (2026-08-07). 한 번 대기실이 여기에
+ *   className 으로 금속 바닥과 형광 레일을 얹었는데, 그러면 같은 자리의 띠가
+ *   화면마다 다른 물건이 된다 — 이 컴포넌트를 만든 이유가 바로 그걸 막는 것이다.
+ *   띠를 바꿔야 하면 **두 화면 다** 바뀌게 이 파일에서 바꾼다.
+ */
 export function TopBar({ children }: { children: ReactNode }) {
   return (
     <header

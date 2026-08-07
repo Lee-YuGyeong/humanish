@@ -51,7 +51,7 @@ import styles from "./room-lobby.module.css";
  */
 export function RoomBoot({ label = "방을 여는 중…" }: { label?: string }) {
   return (
-    <div className={`${styles.root} flex h-screen items-center justify-center`}>
+    <div className={`${styles.root} flex h-dvh items-center justify-center`}>
       <div aria-hidden className={styles.backdrop} />
       <div aria-hidden className={styles.noise} />
       <div aria-hidden className={styles.scanlines} />
@@ -161,7 +161,13 @@ export function RoomLobby({
   }, [started, markLeft, router, code]);
 
   return (
-    <div className={`${styles.root} flex h-screen flex-col overflow-hidden`}>
+    /*
+      ★ h-screen(=100vh) 이 아니라 h-dvh 다 (2026-08-07). 모바일 브라우저의
+        100vh 는 주소창이 **접힌** 높이라, 주소창이 펼쳐져 있으면 화면보다 크다.
+        본문이 overflow-hidden 이므로 그 초과분은 스크롤이 아니라 **잘림**이 된다 —
+        맨 아래에 있는 조작판(준비 · 나가기)이 그 잘리는 자리다.
+    */
+    <div className={`${styles.root} flex h-dvh flex-col overflow-hidden`}>
       <div aria-hidden className={styles.backdrop} />
       <div aria-hidden className={styles.noise} />
       <div aria-hidden className={styles.scanlines} />
@@ -173,6 +179,10 @@ export function RoomLobby({
         어두운 보조 글자)를 물려받아서, 방에 들어가는 순간 같은 자리의 띠가
         다른 색으로 바뀌었다.
         **안에 드는 것은 방의 것이다** — 나가기 · 방 이름 · 코드 · 인원 · 나.
+
+        ★ 덧칠도 하지 않는다 (2026-08-07 사용자 지시). 한 번 금속 바닥과 형광
+          레일을 얹었다가 뺐다 — 목록의 띠와 달라지는 순간, 방에 들어갈 때
+          머리말만 갈아끼워진 것처럼 보인다.
       */}
       <TopBar>
         <div className="flex min-w-0 items-center gap-4">
@@ -243,37 +253,55 @@ export function RoomLobby({
         </div>
       </TopBar>
 
-      <div className="flex flex-1 overflow-hidden">
-        {/* ── 가운데 ───────────────────────────────────────────────── */}
-        <main className={`${styles.scroll} flex flex-1 flex-col gap-6 overflow-y-auto p-5 sm:p-8`}>
-          {error && <p className={styles.alert}>{error}</p>}
+      {/*
+        ── 본문 ─────────────────────────────────────────────────────
+        판 세 개다 (2026-08-07, 레퍼런스 「RE:HUMAN」): 왼쪽 큰 좌석판, 오른쪽에
+        대화판과 조작판. 예전에는 오른쪽이 세로선 하나로 나뉜 **면**이었는데,
+        그러면 화면이 "왼쪽 여백 + 오른쪽 여백"이라 게임 화면으로 안 읽힌다.
+        레퍼런스처럼 각각이 테두리를 두른 **부품**이어야 한다.
+      */}
+      <div className={styles.body}>
+        {/*
+          ★ **좌석판에는 이름을 쓰지 않는다** (2026-08-07 사용자 지시: "참가자
+            글자는 없애줘"). 칸에 사람이 앉아 있는 그림이 이미 "참가자"라고
+            말하고 있어서, 그 위에 같은 말을 글자로 또 적으면 읽을 것만 는다.
+            화면 낭독기에는 남는다 — 아래 aria-label 이 그 몫이다.
+            인원 수는 머리말과 오른쪽 눈금이 들고 있다.
+          ★ 방 이름 · 코드 · 인원을 다시 그리는 판도 두지 않는다. 머리말이 이미
+            그 셋을 들고 있다 — 여기서 첫 화면은 좌석이어야 한다.
+        */}
+        <main aria-label="참가자 현황" className={`${styles.panel} min-w-0 flex-1`}>
+          {/*
+            ★ 실패 배너는 **스크롤 밖**이다 (2026-08-07). 좌석 목록 안에 두었더니
+              칸이 여덟이라 아래를 보고 있을 때 뜬 배너가 화면 밖에 있었다 —
+              누른 버튼은 안 먹었는데 이유는 안 보이는 상태가 된다.
+            ★ role="alert" 다. 이 글은 **조작이 실패했을 때만** 나타나므로,
+              나타난 사실 자체를 낭독기가 읽어줘야 한다 (aria-live 로는 이 판이
+              처음 그려질 때 조용히 지나간다).
+          */}
+          {error && (
+            <p className={styles.alert} role="alert">
+              {error}
+            </p>
+          )}
 
           {/*
-            ★ 방 이름 · 코드 · 인원을 다시 그리는 판을 여기 두지 않는다.
-              머리말이 이미 그 셋을 들고 있다. 두 번 그리면 방에 들어온 사람이
-              **아무것도 조작하지 않는 덩어리**를 먼저 보게 된다 — 여기서
-              첫 화면은 좌석이어야 한다.
-          */}
-          {/*
-            ★ 좌석 위에 라벨을 붙이지 않는다. 좌석 칸 자체가 이미 "누가 앉아 있나"를
-              말하고, 인원 수는 머리말과 오른쪽 눈금이 들고 있다. 설명하는 글자를
-              얹으면 첫 화면에서 조작할 수 없는 줄이 하나 더 늘어난다.
-          */}
-          {/*
+            ★ 스크롤은 **판이 아니라 이 안쪽 상자**가 진다. 판에 걸면 판 이름
+              (.panelTitle)까지 같이 밀려 올라가 사라진다 — 대화판·조작판도 같은
+              모양이라, 셋 다 "이름은 붙박이, 속만 흐른다"로 맞춰 둔다.
             ★ flex-1 + min-h-0 다 (2026-08-07 사용자 지시: "8자리도 방 꽉차게").
-              규칙판이 빠지고 나서 좌석이 위쪽에만 몰리고 아래가 통째로 비었다.
               여기가 남은 높이를 다 먹어야 그리드가 그걸 두 줄로 나눠 가진다.
               min-h-0 을 빼면 flex 자식의 기본 min-height:auto 때문에 본문이
               넘칠 때 줄어들지 못해 스크롤이 아니라 화면 밖으로 밀린다.
           */}
-          <section aria-label="참가자 현황" className="flex min-h-0 flex-1 flex-col">
+          <div className={`${styles.panelInner} ${styles.bare} ${styles.scroll} overflow-y-auto`}>
             <SeatGrid
               players={players}
               capacity={room.capacity}
               meId={me.player.id}
               hostId={room.host_id}
             />
-          </section>
+          </div>
 
           {/*
             ★ 이름을 고치는 판을 여기 두지 않는다. 이름은 계정에서 한 번 짓고
@@ -287,93 +315,35 @@ export function RoomLobby({
           */}
         </main>
 
-        {/* ── 오른쪽 ───────────────────────────────────────────────── */}
-        <aside
-          className="hidden w-[300px] shrink-0 flex-col border-l lg:flex"
-          style={{ background: "var(--surface)", borderColor: "var(--border)" }}
-        >
-          <SayPanel
-            code={code}
-            roomId={room.id}
-            mine={mine}
-            seated={seated}
-            isHost={me.is_host}
-          />
+        {/*
+          ── 기둥 ─────────────────────────────────────────────────────
+          ★ 좁은 화면에서 **숨기지 않는다** (2026-08-07). 예전에는 lg 미만에서
+            통째로 display:none 이었는데, 준비 · 게임 시작 · 대화하기 · 방 나가기가
+            전부 여기 살아서 폰에서는 방에 들어와도 누를 것이 하나도 없었다.
+            지금은 좌석 아래로 눕는다 — 어디로 눕는지는 styles.side 에 있다.
+        */}
+        <aside className={styles.side}>
+          <section className={`${styles.panel} ${styles.chatPanel}`}>
+            <span className={styles.panelTitle}>대화하기</span>
+            <SayPanel code={code} roomId={room.id} mine={mine} />
+          </section>
 
-          <div className="border-t p-4" style={{ borderColor: "var(--border)" }}>
-            <div className="mb-2 flex items-center justify-between">
-              <span className="text-[0.6rem]" style={{ color: "var(--muted)" }}>
-                {seated}명
-              </span>
-              <span className={`${styles.mono} text-[0.6rem]`} style={{ color: "var(--muted)" }}>
-                정원 {room.capacity}
-              </span>
-            </div>
-            {/*
-              눈금 한 칸 = 자리 하나 (2026-08-07 사용자 지시). 칸 수는 정원에서 온다 —
-              여기 8을 박으면 정원 3~5 인 옛 방에서 눈금과 자리 수가 어긋난다.
-              수는 바로 위 「{seated}명 / 정원 {capacity}」 이 글자로 읽어주므로 aria 에서는 뺀다.
-            */}
-            <div className={`${styles.pips} mb-4`} aria-hidden>
-              {Array.from({ length: room.capacity }, (_, i) => (
-                <span
-                  key={i}
-                  className={`${styles.pip} ${i < seated ? styles.pipOn : ""}`}
-                />
-              ))}
-            </div>
-
-            {/*
-              ★ 정원을 다 채우지 않아도 시작할 수 있다. 남은 자리가 어떻게 되는지는
-                대기실에서 말하지 않는다 (I1) — 이제 남은 자리와 AI 수는 무관하다.
-
-              ★ 못 누를 때는 **이유를 적는다.** 회색 버튼만 두면 방장은 자기 화면이
-                고장 난 줄 안다. 문구는 서버 거절 문구와 같은 곳에서 온다
-                (START_BLOCK_MESSAGE) — 두 군데로 갈리면 눌러 보고 나서야 다른 말을
-                듣게 된다.
-            */}
-            {me.is_host ? (
-              <>
-                <button
-                  type="button"
-                  className={styles.btnAccent}
-                  style={{ width: "100%", padding: "0.85rem" }}
-                  disabled={busy || blocked !== null}
-                  onClick={() => start.run()}
-                >
-                  {starting ? "시작하는 중…" : "게임 시작"} <PlayIcon />
-                </button>
-                {blocked && (
-                  <p
-                    className="mt-2 text-center text-[0.6rem]"
-                    style={{ color: "var(--muted)" }}
-                    aria-live="polite"
-                  >
-                    {START_BLOCK_MESSAGE[blocked]}
-                  </p>
-                )}
-              </>
-            ) : (
-              <p
-                className="flex items-center justify-center gap-2 py-3 text-center text-[0.65rem]"
-                style={{ color: "var(--muted)" }}
-              >
-                <span className={`${styles.dot} ${styles.blink}`} />
-                {/* 방장이 왜 안 누르는지가 여기서도 보여야 한다 — 대개 내가 안 눌렀다 */}
-                {blocked ? START_BLOCK_MESSAGE[blocked] : "방장이 시작하기를 기다리는 중…"}
-              </p>
-            )}
-
-            <button
-              type="button"
-              className={styles.btnGhost}
-              style={{ width: "100%", marginTop: "0.5rem", padding: "0.6rem", fontSize: "0.56rem" }}
-              disabled={busy}
-              onClick={() => leave.run()}
-            >
-              <ExitIcon /> {leaving ? "나가는 중…" : "방 나가기"}
-            </button>
-          </div>
+          <section className={`${styles.panel} ${styles.actionPanel}`}>
+            <span className={styles.panelTitle}>시작</span>
+            <ActionPanel
+              code={code}
+              roomId={room.id}
+              mine={mine}
+              isHost={me.is_host}
+              seated={seated}
+              capacity={room.capacity}
+              blockedMessage={blocked ? START_BLOCK_MESSAGE[blocked] : null}
+              onStart={() => start.run()}
+              starting={starting}
+              onLeave={() => leave.run()}
+              leaving={leaving}
+            />
+          </section>
         </aside>
       </div>
     </div>
@@ -524,7 +494,7 @@ function SeatGrid({
                 <span
                   className={styles.plateName}
                   style={{
-                    color: p == null ? "var(--dim)" : isMe ? "var(--accent)" : "var(--text)",
+                    color: p == null ? "var(--faint)" : isMe ? "var(--accent)" : "var(--text)",
                   }}
                 >
                   {/*
@@ -560,114 +530,209 @@ function SayPanel({
   code,
   roomId,
   mine,
-  seated,
-  isHost,
 }: {
   code: string;
   roomId: string;
   mine: PublicPlayer | null;
-  seated: number;
-  /** 방장에게는 준비 버튼이 없다 — 바로 밑의 「게임 시작」이 그 자리다 (2026-08-07) */
-  isHost: boolean;
 }) {
   const { data: cfg } = useLobbyLines(true);
   const say = useSayLobbyLine(code, roomId);
-  const ready = useSetLobbyReady(code, roomId);
   const busy = useRoomUi(selectIsBusy);
   const { serverNow } = useServerClock();
 
-  /**
-   * 쿨다운이 끝나면 버튼이 스스로 풀려야 한다. 그런데 그때 바뀌는 건 서버 값이
-   * 아니라 **시간**뿐이라 다시 그릴 계기가 없다 — 여기서만 초를 센다.
-   * 표시용이다. 진짜 판정은 서버가 한다 (I2).
-   */
   const [, tick] = useState(0);
-  useEffect(() => {
-    const t = setInterval(() => tick((n) => n + 1), 500);
-    return () => clearInterval(t);
-  }, []);
 
   const cooldownMs = (cfg?.cooldown_sec ?? 3) * 1000;
   const lastAt = mine?.lobby_line_at ? new Date(mine.lobby_line_at).getTime() : 0;
   const waitMs = Number.isFinite(lastAt) ? Math.max(0, lastAt + cooldownMs - serverNow()) : 0;
   const cooling = waitMs > 0;
 
+  /**
+   * 쿨다운이 끝나면 버튼이 스스로 풀려야 한다. 그런데 그때 바뀌는 건 서버 값이
+   * 아니라 **시간**뿐이라 다시 그릴 계기가 없다 — 여기서만 초를 센다.
+   * 표시용이다. 진짜 판정은 서버가 한다 (I2).
+   *
+   * ★ **식는 동안만 돈다.** 예전에는 빈 의존성 배열이라 대기실에 가만히 앉아
+   *   있어도 초당 두 번씩 이 판을 다시 그렸다 — 쿨다운은 3초인데 타이머는
+   *   방을 나갈 때까지 돌았다. 말을 하면 cooling 이 참이 되어 다시 걸리고,
+   *   waitMs 가 0이 되는 순간 이 효과가 스스로 정리된다.
+   */
+  useEffect(() => {
+    if (!cooling) return;
+    const t = setInterval(() => tick((n) => n + 1), 500);
+    return () => clearInterval(t);
+  }, [cooling]);
+
   return (
-    <>
-      <div
-        className="flex shrink-0 items-center justify-between border-b px-4 py-3"
-        style={{ borderColor: "var(--border)" }}
-      >
-        <span className={styles.label}>대화하기</span>
-        <span className="flex items-center gap-1.5">
-          <span className={styles.dot} style={{ width: 5, height: 5 }} />
-          <span className={`${styles.mono} text-[0.52rem]`} style={{ color: "var(--accent)" }}>
-            {seated}명
-          </span>
-        </span>
+    <div className={`${styles.panelInner} ${styles.scroll} overflow-y-auto`}>
+      {/*
+        ★ 안내 문구를 두지 않는다. 왜 정해진 말만 있는지는 버튼 목록이 이미
+          말하고 있고(고를 수 있는 게 그것뿐이다), 고른 말이 내 자리 위에 뜬다는
+          것도 한 번 누르면 바로 보인다. 규칙을 코드에 남기는 건 이 파일 머리말이
+          맡는다 — 화면에까지 적으면 읽을 것만 는다.
+      */}
+      {/*
+        리스트 태그를 쓰지 않는다 — 좌석 수를 세는 검사가 이것까지 센다.
+
+        ★ 열 수가 세 번 갈리는 건 **기둥이 눕기 때문이다** (styles.side):
+            폰      기둥이 가로로 눕고 대화판은 그 절반 → 한 줄에 하나
+            태블릿  같은 가로 배치인데 폭이 넉넉하다   → 넷씩 두 줄
+            데스크톱 기둥이 다시 세로로 서서 310px      → 둘씩 네 줄
+          폰에서 둘씩 두면 칸이 71px 이라 「조금만 기다려」가 두 줄로 접힌다.
+      */}
+      <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-4 lg:grid-cols-2">
+        {(cfg?.lines ?? []).map((l) => (
+          <button
+            key={l.id}
+            type="button"
+            // 같은 말을 연달아 보내는 건 서버도 막는다. 눌리기 전에 잠가서
+            // "왜 안 되지"가 아니라 "지금은 못 누르는구나"로 보이게 한다.
+            disabled={busy || cooling || l.text === mine?.lobby_line}
+            onClick={() => say.run(l.id)}
+            className={styles.line}
+          >
+            {l.text}
+          </button>
+        ))}
       </div>
 
-      <div className={`${styles.scroll} flex flex-1 flex-col gap-3 overflow-y-auto p-4`}>
+      {cooling && (
+        <p className="text-[0.58rem]" style={{ color: "var(--faint)" }} aria-live="polite">
+          {Math.ceil(waitMs / 1000)}초 뒤에 다시 말할 수 있다
+        </p>
+      )}
+    </div>
+  );
+}
+
+/* ────────────────────────────── 조작판 ────────────────────────────── */
+
+/**
+ * 오른쪽 아래 판 — 인원 눈금 · 준비/시작 · 나가기. 레퍼런스의 「편성 / 해제」 자리다.
+ *
+ * ★ **준비와 시작이 한 판에 산다** (2026-08-07). 예전에는 준비가 대화판 바닥에
+ *   붙어 있었는데, 그러면 "지금 뭘 눌러야 하나"가 두 판으로 나뉜다. 방장이든
+ *   아니든 이 판 하나만 보면 되는 게 맞다 — 자리에 따라 버튼만 갈린다.
+ */
+function ActionPanel({
+  code,
+  roomId,
+  mine,
+  isHost,
+  seated,
+  capacity,
+  blockedMessage,
+  onStart,
+  starting,
+  onLeave,
+  leaving,
+}: {
+  code: string;
+  roomId: string;
+  mine: PublicPlayer | null;
+  /** 방장에게는 준비 버튼이 없다 — 「게임 시작」이 그 자리다 (2026-08-07) */
+  isHost: boolean;
+  seated: number;
+  capacity: number;
+  /** 지금 시작할 수 없는 이유. 없으면 null — 문구의 원본은 START_BLOCK_MESSAGE 하나뿐이다 */
+  blockedMessage: string | null;
+  onStart: () => void;
+  starting: boolean;
+  onLeave: () => void;
+  leaving: boolean;
+}) {
+  const ready = useSetLobbyReady(code, roomId);
+  const busy = useRoomUi(selectIsBusy);
+
+  return (
+    <div className={styles.panelInner}>
+      <div>
+        <div className="mb-2 flex items-center justify-between">
+          <span className="text-[0.6rem]" style={{ color: "var(--muted)" }}>
+            {seated}명
+          </span>
+          <span className={`${styles.mono} text-[0.6rem]`} style={{ color: "var(--muted)" }}>
+            정원 {capacity}
+          </span>
+        </div>
         {/*
-          ★ 안내 문구를 두지 않는다. 왜 정해진 말만 있는지는 버튼 목록이 이미
-            말하고 있고(고를 수 있는 게 그것뿐이다), 고른 말이 내 자리 위에 뜬다는
-            것도 한 번 누르면 바로 보인다. 규칙을 코드에 남기는 건 이 파일 머리말이
-            맡는다 — 화면에까지 적으면 읽을 것만 는다.
+          눈금 한 칸 = 자리 하나 (2026-08-07 사용자 지시). 칸 수는 정원에서 온다 —
+          여기 8을 박으면 정원 3~5 인 옛 방에서 눈금과 자리 수가 어긋난다.
+          수는 바로 위 「{seated}명 / 정원 {capacity}」 이 글자로 읽어주므로 aria 에서는 뺀다.
         */}
-        {/* 리스트 태그를 쓰지 않는다 — 좌석 수를 세는 검사가 이것까지 센다 */}
-        <div className="grid grid-cols-2 gap-1.5">
-          {(cfg?.lines ?? []).map((l) => (
-            <button
-              key={l.id}
-              type="button"
-              // 같은 말을 연달아 보내는 건 서버도 막는다. 눌리기 전에 잠가서
-              // "왜 안 되지"가 아니라 "지금은 못 누르는구나"로 보이게 한다.
-              disabled={busy || cooling || l.text === mine?.lobby_line}
-              onClick={() => say.run(l.id)}
-              className={styles.line}
-            >
-              {l.text}
-            </button>
+        <div className={styles.pips} aria-hidden>
+          {Array.from({ length: capacity }, (_, i) => (
+            <span key={i} className={`${styles.pip} ${i < seated ? styles.pipOn : ""}`} />
           ))}
         </div>
-
-        {cooling && (
-          <p className="text-[0.58rem]" style={{ color: "var(--dim)" }} aria-live="polite">
-            {Math.ceil(waitMs / 1000)}초 뒤에 다시 말할 수 있다
-          </p>
-        )}
       </div>
 
       {/*
-        준비 완료는 발화가 아니라 상태다. 말풍선으로 흐르지 않고 좌석 카드에 붙는다 —
-        켜고 끄는 순서가 그대로 신호가 되기 때문이다.
-        시작을 막는다. 한 명이 자리를 비우면 그 방은 시작되지 않는다.
+        ★ 정원을 다 채우지 않아도 시작할 수 있다. 남은 자리가 어떻게 되는지는
+          대기실에서 말하지 않는다 (I1) — 이제 남은 자리와 AI 수는 무관하다.
 
-        ★ **방장에게는 이 버튼이 없다** (2026-08-07 결정). 바로 밑에 「게임 시작」이
-          있어서, 준비를 누르고 시작을 또 누르는 건 같은 뜻의 조작을 두 번 하는 것이다.
-          안 눌렀을 때는 자기 버튼이 자기 때문에 잠겨서 고장으로 보였다.
-          시작 조건에서도 같이 빠진다 (lib/game/rules.ts 의 startBlock) — 한쪽만
-          빼면 버튼은 없는데 조건은 남아 방이 영영 안 열린다.
+        ★ 못 누를 때는 **이유를 적는다.** 회색 버튼만 두면 방장은 자기 화면이
+          고장 난 줄 안다. 문구는 서버 거절 문구와 같은 곳에서 온다
+          (START_BLOCK_MESSAGE) — 두 군데로 갈리면 눌러 보고 나서야 다른 말을 듣게 된다.
       */}
-      {!isHost && (
-        <div className="shrink-0 border-t p-4" style={{ borderColor: "var(--border)" }}>
+      {isHost ? (
+        <div>
+          <button
+            type="button"
+            className={styles.btnAccent}
+            disabled={busy || blockedMessage !== null}
+            onClick={onStart}
+          >
+            {starting ? "시작하는 중…" : "게임 시작"} <PlayIcon />
+          </button>
+          {blockedMessage && (
+            <p
+              className="mt-2 text-center text-[0.6rem]"
+              style={{ color: "var(--muted)" }}
+              aria-live="polite"
+            >
+              {blockedMessage}
+            </p>
+          )}
+        </div>
+      ) : (
+        <div>
+          {/*
+            준비 완료는 발화가 아니라 상태다. 말풍선으로 흐르지 않고 좌석 카드에 붙는다 —
+            켜고 끄는 순서가 그대로 신호가 되기 때문이다.
+            시작을 막는다. 한 명이 자리를 비우면 그 방은 시작되지 않는다.
+
+            ★ **방장에게는 이 버튼이 없다** (2026-08-07 결정). 위의 「게임 시작」이
+              그 자리라, 준비를 누르고 시작을 또 누르는 건 같은 뜻의 조작을 두 번
+              하는 것이다. 안 눌렀을 때는 자기 버튼이 자기 때문에 잠겨서 고장으로 보였다.
+              시작 조건에서도 같이 빠진다 (lib/game/rules.ts 의 startBlock) — 한쪽만
+              빼면 버튼은 없는데 조건은 남아 방이 영영 안 열린다.
+          */}
           <button
             type="button"
             disabled={busy}
             onClick={() => ready.run(!mine?.is_ready)}
             className={`${styles.ready} ${mine?.is_ready ? styles.readyOn : ""}`}
           >
-            {/*
-              ★ 글자를 <span> 으로 감싼다. .bevel 의 안쪽 면은 ::before(절대배치)라
-                맨 텍스트 노드보다 **나중에 칠해져서** 감싸지 않으면 글자가 덮인다.
-                (칠하는 순서상 인라인 글자가 z-index:0 절대배치보다 앞이다.)
-            */}
             {mine?.is_ready && <CheckIcon />}
             <span>{mine?.is_ready ? "준비 완료" : "준비"}</span>
           </button>
+          <p
+            className="mt-2 flex items-center justify-center gap-2 text-center text-[0.6rem]"
+            style={{ color: "var(--muted)" }}
+            aria-live="polite"
+          >
+            <span className={`${styles.dot} ${styles.blink}`} />
+            {/* 방장이 왜 안 누르는지가 여기서도 보여야 한다 — 대개 내가 안 눌렀다 */}
+            {blockedMessage ?? "방장이 시작하기를 기다리는 중…"}
+          </p>
         </div>
       )}
-    </>
+
+      <button type="button" className={styles.btnGhost} disabled={busy} onClick={onLeave}>
+        <ExitIcon /> {leaving ? "나가는 중…" : "방 나가기"}
+      </button>
+    </div>
   );
 }
 
