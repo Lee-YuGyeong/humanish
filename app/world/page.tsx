@@ -24,7 +24,7 @@ import { WORLD_SEAT_SLOTS, isMovementLocked, mayChat } from '@/lib/mp/constants'
 import { spawnFor } from '@/lib/mp/spawn';
 import type { Role } from '@/lib/game/types';
 import { WorldConnection, type WorldEvents } from './net/connection';
-import GameHud, { ROLE_CARD } from './game-hud';
+import GameHud, { MyRoleBadge } from './game-hud';
 import {
   getVolume as getMusicVolume,
   setVolume as setMusicVolume,
@@ -390,9 +390,6 @@ export default function WorldPage() {
    */
   const cardOpen = useRoundtableStore(roleCardOpen);
   const uiOpen = live && (isMovementLocked(phase) || revealResult !== null || cardOpen);
-  /** 카드에서 「확인」을 누른 뒤 머리말 밑에 남는 내 역할 (§18.2 — 내 것만 안다) */
-  const myRole = useRoundtableStore((s) => s.myRole);
-  const roleAck = useRoundtableStore((s) => s.roleAck);
 
   /**
    * 지금 내가 말할 수 있는가. 워커의 채팅 게이트와 **같은 함수**로 판정한다 (I1) —
@@ -787,18 +784,12 @@ export default function WorldPage() {
             </p>
           ) : null}
           {/*
-            역할 카드에서 「확인」을 누르면 카드 대신 여기 한 줄이 남는다.
-            이름·색은 카드(ROLE_CARD)와 같은 것을 읽는다 — 두 군데 적으면 갈린다.
-            myRole 은 t:'role' 로 **내 것만** 온 값이라 새는 게 없다 (§18.2).
+            역할 카드에서 「확인」을 누르면 카드 대신 여기 뱃지가 남는다 (2026-08-07).
+            그림·이름·색·뜨는 조건은 전부 game-hud 의 MyRoleBadge 안에 있다 —
+            역할 문구의 원본은 ROLE_CARD 하나여야 하고, 그건 그 파일 것이다.
+            예전에는 여기 회색 한 줄이었는데 방 코드 줄과 구별이 안 됐다.
           */}
-          {myRole && roleAck ? (
-            <p className="mt-0.5 font-mono text-[11px] text-neutral-500">
-              내 역할 ·{' '}
-              <span className={`font-bold ${ROLE_CARD[myRole].accent}`}>
-                {ROLE_CARD[myRole].name}
-              </span>
-            </p>
-          ) : null}
+          <MyRoleBadge />
         </div>
         {/* 소리는 걸으면서 M · − + 로 맞춘다 (판 없음) */}
         {live ? <StatusChip /> : null}

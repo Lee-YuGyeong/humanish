@@ -287,10 +287,57 @@ function RoleCard() {
   );
 }
 
-/** 연기자 — 가면. 카드 문장(AI 인 척)의 그림 버전이다 */
-function MaskIcon() {
+/**
+ * 왼쪽 상단에 **계속 남는 내 역할** (2026-08-07 요청). 머리말(page.tsx)이 그린다.
+ *
+ * 예전에는 방 코드 줄 밑에 회색 한 줄이었다. 판이 도는 동안 제일 자주 확인하는
+ * 값인데 코드·이름과 같은 크기·같은 색이라 눈에 걸리지 않았다 — 카드와 **같은 색**
+ * (ROLE_CARD.color)으로 테두리를 둘러 한눈에 잡히게 한다.
+ *
+ * ★ 이름·색의 원본은 ROLE_CARD 하나다. 여기서 다시 적으면 카드와 머리말이 같은
+ *   역할을 다른 이름으로 부른다.
+ * ★ myRole 은 t:'role' 로 **내 것만** 온 값이다 (§18.2). 남의 역할은 여기 오지
+ *   않고, 봇 좌석에는 소켓이 없어 이 뱃지가 갈 곳도 없다 (I1).
+ * ★ 카드를 확인하기 전(roleAck=false)에는 뜨지 않는다. 그때는 화면 한가운데의
+ *   카드가 같은 것을 더 크게 들고 있다 — 뒤에서 먼저 흘리면 딜 연출이 죽는다.
+ * ★ 새 판이 시작되면 myRole·roleAck 이 같이 걷히고(roundtable-store 의 applyRound)
+ *   이 뱃지도 사라진다. 지난 판의 역할이 남아 있으면 그게 더 나쁘다.
+ */
+export function MyRoleBadge() {
+  const myRole = useRoundtableStore((s) => s.myRole);
+  const roleAck = useRoundtableStore((s) => s.roleAck);
+
+  if (myRole === null || !roleAck) return null;
+  const card = ROLE_CARD[myRole];
+
   return (
-    <svg width="32" height="32" viewBox="0 0 24 24" fill="none" aria-hidden>
+    <div
+      className="mt-2 inline-flex items-center gap-2 rounded-xl px-3 py-1.5 backdrop-blur"
+      style={{
+        background: `color-mix(in srgb, ${card.color} 14%, rgba(0,0,0,0.6))`,
+        border: `1px solid color-mix(in srgb, ${card.color} 55%, transparent)`,
+        boxShadow: `0 0 20px color-mix(in srgb, ${card.color} 20%, transparent)`,
+      }}
+    >
+      <span style={{ color: card.color }}>
+        {myRole === 'actor' ? <MaskIcon size={18} /> : <EyeIcon size={18} />}
+      </span>
+      <span className="leading-tight">
+        <span className="block text-[9px] uppercase tracking-[0.2em] text-neutral-400">
+          내 역할
+        </span>
+        <span className="block text-[13px] font-black" style={{ color: card.color }}>
+          {card.name}
+        </span>
+      </span>
+    </div>
+  );
+}
+
+/** 연기자 — 가면. 카드 문장(AI 인 척)의 그림 버전이다 */
+function MaskIcon({ size = 32 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden>
       <path
         d="M3 6.5C6 5.3 9 4.8 12 4.8s6 .5 9 1.7c0 5.5-2.6 10.7-6.7 10.7-1.5 0-2.3-.9-2.3-.9s-.8.9-2.3.9C5.6 17.2 3 12 3 6.5Z"
         stroke="currentColor"
@@ -304,9 +351,9 @@ function MaskIcon() {
 }
 
 /** 시민 — 감시하는 눈. 찾아내는 쪽의 그림이다 */
-function EyeIcon() {
+function EyeIcon({ size = 32 }: { size?: number }) {
   return (
-    <svg width="32" height="32" viewBox="0 0 24 24" fill="none" aria-hidden>
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden>
       <path
         d="M2.5 12S6 6.2 12 6.2 21.5 12 21.5 12 18 17.8 12 17.8 2.5 12 2.5 12Z"
         stroke="currentColor"
