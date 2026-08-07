@@ -17,12 +17,14 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  BOT_GATHER_PHASES,
   CHAT_LOCKED_PHASES,
   MOVEMENT_LOCKED_PHASES,
   isChatLocked,
   isMovementLocked,
   mayChat,
   mayMove,
+  shouldGather,
 } from '@/lib/mp/constants';
 import type { RoundPhase } from '@/lib/mp/protocol';
 
@@ -91,36 +93,48 @@ describe('최후변론의 이동 — 지목된 한 명만 선다 (I1)', () => {
 });
 
 describe('발화 잠금 (I1)', () => {
-  it('이동이 잠기는 단계에서는 말도 잠긴다', () => {
-    // 둘이 갈리면 "못 움직이는데 말은 되는" 구간이 생기고, 거기서 한쪽만
-    // 말할 수 있으면 그 발화가 통째로 한 진영 것이 된다.
-    for (const p of MOVEMENT_LOCKED_PHASES) expect(isChatLocked(p)).toBe(true);
+  it('말이 잠기는 단계는 reveal 하나다 (2026-08-07 — vote·verdict 를 열었다)', () => {
+    // 지목 30초 + 판결 20초가 통째로 침묵이라 사용자가 열라고 했다. 여는 방식이
+    // 핵심이다 — 이 **목록에서 빼야** hushBots 가 안 돌고 botsMayChat 도 같이 열려
+    // 봇이 사람과 함께 말한다. 클라 UI 만 여는 우회로가 들어오면 그게 I1 누출이다.
+    expect([...CHAT_LOCKED_PHASES]).toEqual(['reveal']);
   });
 
-  it('말 잠금과 이동 잠금이 같아졌다 — defense 는 둘 다에서 빠졌다 (2026-08-06)', () => {
-    // 예전엔 defense 만 "말은 지목자에게 열리고 이동은 지목자에게만 닫힌다"라 두 목록이
-    // 한 칸 달랐다. 이제 defense 발화가 전원에게 열려서(사람·봇 대칭) 목록에서 통째로
-    // 빠졌고, 두 목록이 같아졌다. 한쪽에만 defense 가 남아 있으면 되돌린 흔적이다.
-    expect([...CHAT_LOCKED_PHASES].sort()).toEqual([...MOVEMENT_LOCKED_PHASES].sort());
-    expect(CHAT_LOCKED_PHASES).not.toContain('defense');
+  it('말 잠금과 이동 잠금은 이제 다르다 — vote·verdict 는 "못 걷지만 말은 된다"', () => {
+    // 두 목록이 같아야 한다고 되돌리지 말 것. 축이 둘이고 대칭은 **축마다** 지킨다:
+    //   이동 — 사람은 포인터락이 풀려 못 걷고, 봇은 haltBot 으로 선다 (대칭)
+    //   발화 — 사람은 입력줄이 열리고, 봇은 takeSpeech 가 그대로 돈다 (대칭)
+    for (const p of ['vote', 'verdict'] as const) {
+      expect(isMovementLocked(p)).toBe(true);
+      expect(isChatLocked(p)).toBe(false);
+    }
   });
 
-  it('지목되지 않은 좌석은 잠긴 단계에서 아무도 말할 수 없다', () => {
-    for (const p of CHAT_LOCKED_PHASES) expect(mayChat(p, false)).toBe(false);
+  it('reveal 은 둘 다 잠긴다 — 결과 화면 위에서 넘어온 말이 터지면 안 된다', () => {
+    expect(isMovementLocked('reveal')).toBe(true);
+    expect(isChatLocked('reveal')).toBe(true);
   });
 
-  it('최후변론은 이제 전원이 말한다 — 지목 여부와 무관하게 (I1: 사람·봇 대칭)', () => {
-    // 지목된 본인만 열면 "변론한 자 = 봇 / 침묵한 자 = 사람"이 되고, 반대로 사람만
-    // 열어도 샌다. defense 를 CHAT_LOCKED 에서 빼 봇도 같이 말하게 했으므로 전원이 열린다.
-    expect(mayChat('defense', true)).toBe(true);
-    expect(mayChat('defense', false)).toBe(true);
+  it('말이 열린 단계에서는 봇도 같이 열린다 (botsMayChat = mayChat(phase,false))', () => {
+    // 워커가 보는 얼굴이 이것이다. 사람 쪽만 참인 단계가 하나라도 생기면 그 구간의
+    // 발화가 통째로 사람 것이 되고, 총 자리·AI 수가 공개라 소거법으로 갈린다.
+    for (const p of ALL_PHASES) {
+      expect(mayChat(p, false)).toBe(!isChatLocked(p));
+    }
   });
 
-  it('잠긴 단계(vote·verdict·reveal)는 지목돼도 열리지 않는다', () => {
+  it('잠긴 단계는 지목돼도 열리지 않는다', () => {
     for (const p of CHAT_LOCKED_PHASES) {
       expect(mayChat(p, true)).toBe(false);
       expect(mayChat(p, false)).toBe(false);
     }
+  });
+
+  it('최후변론은 전원이 말한다 — 지목 여부와 무관하게 (I1: 사람·봇 대칭)', () => {
+    // 지목된 본인만 열면 "변론한 자 = 봇 / 침묵한 자 = 사람"이 되고, 반대로 사람만
+    // 열어도 샌다. defense 를 CHAT_LOCKED 에서 빼 봇도 같이 말하게 했으므로 전원이 열린다.
+    expect(mayChat('defense', true)).toBe(true);
+    expect(mayChat('defense', false)).toBe(true);
   });
 
   it('잠기지 않은 단계는 지목 여부와 무관하게 말할 수 있다', () => {
@@ -132,9 +146,27 @@ describe('발화 잠금 (I1)', () => {
   });
 });
 
-describe('두 목록이 RoundPhase 안에만 있다', () => {
+describe('봇이 모이는 단계 (I1)', () => {
+  it('중앙에 볼 것이 있는 단계에서만 모인다 — topic · speak · defense', () => {
+    expect([...BOT_GATHER_PHASES].sort()).toEqual(['defense', 'speak', 'topic'].sort());
+  });
+
+  it('freechat 에서는 흩어진다 — 사람이 흩어지는데 봇만 붙어 있으면 그게 표식이다', () => {
+    expect(shouldGather('freechat')).toBe(false);
+  });
+
+  it('판이 없는 방(idle)은 창고 전체를 돌아다닌다 — 라운지에는 숨길 게 없다', () => {
+    expect(shouldGather('idle')).toBe(false);
+  });
+
+  it('아무도 안 움직이는 단계는 모으고 말고가 없다 (haltBot 이 먼저 선다)', () => {
+    for (const p of MOVEMENT_LOCKED_PHASES) expect(shouldGather(p)).toBe(false);
+  });
+});
+
+describe('세 목록이 RoundPhase 안에만 있다', () => {
   it('오타로 없는 단계 이름이 섞이면 아무도 잠기지 않는다', () => {
-    for (const p of [...MOVEMENT_LOCKED_PHASES, ...CHAT_LOCKED_PHASES]) {
+    for (const p of [...MOVEMENT_LOCKED_PHASES, ...CHAT_LOCKED_PHASES, ...BOT_GATHER_PHASES]) {
       expect(ALL_PHASES).toContain(p);
     }
   });

@@ -178,11 +178,29 @@ export const useRoundtableStore = create<RoundtableState>((set) => ({
         // myRole 도 같이 걷는다 — 새 역할(t:'role')은 round 브로드캐스트 **뒤에** 온다
         // (room-do 의 sendRoles 순서). 안 걷으면 새 역할이 오기 전 지난 역할이 보인다.
         // roleAck 도 같이 걷는다 — 새 판에서는 카드부터 다시 봐야 한다.
-        // ★ 단 **idle 에서 온 첫 topic 은 예외다** — 역할은 게이트가 열릴 때 먼저
-        //   왔다(카드 선공개, 2026-08-06). 여기서 걷으면 방금 확인한 카드가 판이
-        //   열리는 순간 한 번 더 뜬다. 걷는 건 ended·reveal 에서 오는 topic(한 판 더)뿐.
         ...(round.phase === 'topic' ? { reveal: null, eliminatedId: null } : null),
-        ...(round.phase === 'topic' && s.phase !== 'idle'
+        /*
+         * ┌─ ★★ "topic 이면 걷는다"가 아니다. **판이 끝난 뒤에 온 topic** 만이다 ────┐
+         * │ 한 판에 topic 은 **두 번** 온다 (ROUND_TOPIC_ROUNDS = 2):               │
+         * │   topic① → speak → topic② → speak → freechat → …                       │
+         * │ 조건이 `s.phase !== 'idle'` 이었을 때 topic② 가 그대로 걸렸다. 그래서    │
+         * │ 두 번째 주제가 뜨는 순간 머리말의 「내 역할 · 시민」 한 줄이 사라졌고,    │
+         * │ 그 뒤로 영영 안 돌아왔다 — sendRoles 는 판이 **열릴 때 한 번**만 부르므로 │
+         * │ 새 t:'role' 이 오지 않고, myRole 이 null 이라 카드도 못 뜬다.            │
+         * │ (사용자 보고 2026-08-07: "말하는 주제 생기면 역할 라벨이 없어진다")      │
+         * │                                                                        │
+         * │ 위 주석이 처음부터 "걷는 건 ended·reveal 에서 오는 topic 뿐"이라고 적고  │
+         * │ 있었다 — 코드만 그 뜻을 담지 못했다. 이제 그 문장을 그대로 조건에 쓴다.  │
+         * │                                                                        │
+         * │ ★ idle 에서 온 첫 topic 도 당연히 안 걷는다. 역할은 게이트가 열릴 때 먼저 │
+         * │   왔고(카드 선공개, 2026-08-06), 여기서 걷으면 방금 확인한 카드가 판이   │
+         * │   열리는 순간 한 번 더 뜬다.                                            │
+         * │                                                                        │
+         * │ ★ 반대로 여기를 **더 넓히지도** 마라. 판이 끝나기 전에 걷으면 위 증상이  │
+         * │   그대로 돌아온다. 새 역할이 오는 시점은 sendRoles 하나뿐이다.           │
+         * └──────────────────────────────────────────────────────────────────────┘
+         */
+        ...(round.phase === 'topic' && (s.phase === 'reveal' || s.phase === 'ended')
           ? { myRole: null, roleAck: false }
           : null),
       };
