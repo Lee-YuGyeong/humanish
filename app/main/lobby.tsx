@@ -35,7 +35,7 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { AccountName, Avatar, TopBar } from "@/components/top-bar";
+import { AccountName, Avatar, MainTabs, TopBar } from "@/components/top-bar";
 import { signOut } from "@/lib/auth";
 import type { Phase } from "@/lib/game/types";
 import { useInvalidateAuthUser, useProfile, useProfileStats } from "@/lib/queries/auth";
@@ -403,17 +403,12 @@ function LobbyHeader() {
         >
           Who is AI?
         </Link>
-        <div className="hidden gap-8 sm:flex">
-          <span
-            className="border-b pb-0.5 text-[0.66rem] uppercase tracking-[0.18em]"
-            style={{ color: "var(--accent)", borderColor: "var(--accent)" }}
-          >
-            게임 로비
-          </span>
-          <span className="text-[0.66rem] uppercase tracking-[0.18em]" style={{ color: "var(--dim)" }}>
-            기록
-          </span>
-        </div>
+        {/*
+          탭 목록은 components/top-bar.tsx 하나다 — 기록 화면(/account/history)이
+          같은 것을 켠 채로 그린다 (2026-08-07). 여기 글자로 적어두면 두 화면의
+          탭이 갈린다.
+        */}
+        <MainTabs active="lobby" />
       </div>
 
       <div className="flex items-center gap-4 sm:gap-6">
@@ -699,7 +694,8 @@ function PlayerSidebar() {
                   className={`${styles.mono} text-[0.79rem] font-bold`}
                   style={{ color: game.won ? "var(--accent)" : "var(--red)" }}
                 >
-                  {game.score > 0 ? `+${game.score}` : "0"}
+                  {/* 진 판은 -1 이다 (2026-08-07). 0 으로 접으면 깎인 게 안 보인다 */}
+                  {game.score > 0 ? `+${game.score}` : String(game.score)}
                 </span>
               </div>
             ))}

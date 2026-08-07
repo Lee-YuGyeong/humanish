@@ -192,6 +192,14 @@ schema_checks() {
             from pg_constraint
            where conrelid = to_regclass('match_results') and contype = 'c';")"
 
+  # ★ 진 판은 -1 이다 (2026-08-07, lib/server/match.ts). score >= 0 이 남아 있으면
+  #   진 판 기록이 전부 조용히 실패한다 — 위 role check 와 같은 고장이고, 화면은
+  #   아무것도 안 깨진 채로 승률만 이긴 판으로만 채워진다.
+  check "match_results 가 음수 점수를 받는다 (진 판 -1)" "t" \
+    "$(q "select not coalesce(bool_or(pg_get_constraintdef(oid) like '%score%>=%0%'), false)
+            from pg_constraint
+           where conrelid = to_regclass('match_results') and contype = 'c';")"
+
   # ★ 한 방에 같은 이름이 둘이면 대기방에서 누가 누구인지 못 가린다.
   #   **부분 인덱스**여야 한다 — 이름 없는 사람은 여럿이어도 되고, shuffle_seats 가
   #   전원을 null 로 만들 때 서로 부딪히면 게임 시작이 통째로 죽는다.

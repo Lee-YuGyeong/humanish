@@ -16,6 +16,7 @@
  * 덩어리 안의 간격은 화면마다 달라서 여기서 정하지 않는다.
  */
 
+import Link from "next/link";
 import type { ReactNode } from "react";
 
 import styles from "./top-bar.module.css";
@@ -27,6 +28,53 @@ export function TopBar({ children }: { children: ReactNode }) {
     >
       {children}
     </header>
+  );
+}
+
+/**
+ * 머리말의 화면 탭 — 「게임 로비」와 「기록」 (2026-08-07).
+ *
+ * ┌─ 왜 여기 있나 ─────────────────────────────────────────────────────────┐
+ * │ 「기록」은 로비 머리말에 **글자로만** 있었다. 눌러도 아무 데도 안 가는   │
+ * │ 탭이라, 화면에는 있는데 없는 기능이었다. 기록 화면 자체는 그동안        │
+ * │ /account/history 에 있었고 들어가는 길은 왼쪽 기둥의 작은 링크 하나뿐   │
+ * │ 이었다 — 그 둘을 여기서 잇는다.                                        │
+ * │                                                                        │
+ * │ 목록을 **두 화면이 같이 읽는다.** 각자 적으면 한쪽에만 탭이 늘거나,     │
+ * │ 켜진 탭이 두 화면에서 다른 자리를 가리키게 된다.                       │
+ * └────────────────────────────────────────────────────────────────────────┘
+ */
+const MAIN_TABS = [
+  { key: "lobby", label: "게임 로비", href: "/main" },
+  { key: "history", label: "기록", href: "/account/history" },
+] as const;
+
+export type MainTab = (typeof MAIN_TABS)[number]["key"];
+
+export function MainTabs({ active }: { active: MainTab }) {
+  return (
+    <nav className="hidden gap-8 sm:flex">
+      {MAIN_TABS.map((tab) => {
+        const on = tab.key === active;
+        return (
+          <Link
+            key={tab.key}
+            href={tab.href}
+            className={`text-[0.66rem] uppercase tracking-[0.18em] no-underline transition-colors ${
+              on ? "border-b pb-0.5" : "hover:opacity-80"
+            }`}
+            style={
+              on
+                ? { color: "var(--accent)", borderColor: "var(--accent)" }
+                : { color: "var(--dim)" }
+            }
+            aria-current={on ? "page" : undefined}
+          >
+            {tab.label}
+          </Link>
+        );
+      })}
+    </nav>
   );
 }
 

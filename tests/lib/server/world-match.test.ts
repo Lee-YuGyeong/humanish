@@ -1,9 +1,9 @@
 /**
  * 월드 판 → 전적 행 (lib/server/match.ts 의 buildWorldMatchRows).
  *
- * §18.4의 진영 승패가 그대로 won 이 되고, 점수는 §15-2-결정 주석의
- * "이긴 판 3 · 진 판 1" 이다. DB 는 여기서 흉내 내지 않는다 — 제약(role check ·
- * humans >= 2)이 실제로 무는지는 supabase/test.sh 가 진짜 Postgres 에 물어본다.
+ * §18.4의 진영 승패가 그대로 won 이 되고, 점수는 **이긴 판 +3 · 진 판 -1** 이다
+ * (2026-08-07). DB 는 여기서 흉내 내지 않는다 — 제약(role check · humans >= 2 ·
+ * 음수 점수 허용)이 실제로 무는지는 supabase/test.sh 가 진짜 Postgres 에 물어본다.
  */
 import { describe, expect, it } from 'vitest';
 
@@ -39,11 +39,11 @@ describe('진영 승패가 그대로 won 이 된다 (§18.4)', () => {
   });
 });
 
-describe('점수는 이긴 판 3 · 진 판 1 이다 (§15-2-결정 주석)', () => {
-  it('★ 진 판에도 1을 준다 — 참가를 세지 않으면 계속 지는 사람의 레벨이 영영 안 오른다', () => {
+describe('점수는 이긴 판 +3 · 진 판 -1 이다 (2026-08-07)', () => {
+  it('★ 진 판은 깎인다 — 예전에는 +1 이라 "패배" 옆에 +1 이 붙었다', () => {
     const rows = buildWorldMatchRows(MATCH, 'citizen', [시민('u1'), 연기자('u2')]);
     expect(rows.find((r) => r.won)?.score).toBe(3);
-    expect(rows.find((r) => !r.won)?.score).toBe(1);
+    expect(rows.find((r) => !r.won)?.score).toBe(-1);
   });
 });
 

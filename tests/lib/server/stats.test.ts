@@ -41,6 +41,8 @@ describe('레벨 곡선', () => {
   });
 
   it('음수·소수·NaN 이 와도 무너지지 않는다', () => {
+    // ★ 음수는 더 이상 가정이 아니다 — 월드 판은 지면 -1 이라(lib/server/match.ts)
+    //   많이 진 계정의 누적이 실제로 0 밑으로 간다. 레벨은 1에서 멈춘다.
     expect(levelFromExp(-100).level).toBe(1);
     expect(levelFromExp(10.9).level).toBe(2);
     expect(levelFromExp(Number.NaN).level).toBe(1);

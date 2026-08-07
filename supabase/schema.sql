@@ -297,7 +297,9 @@ create table if not exists match_results (
   user_id    uuid not null references auth.users(id) on delete cascade,
   role       text not null check (role in ('citizen','spy','actor')),
   -- 그 판에서 얻은 점수. calcScores(lib/game/rules.ts)가 준 값 그대로다.
-  score      int  not null default 0 check (score >= 0),
+  -- 2026-08-07 부터 **음수가 온다** — 월드 판은 지면 -1 이다 (lib/server/match.ts).
+  -- 아래 alter 가 옛 DB 의 check(score >= 0) 도 같이 푼다.
+  score      int  not null default 0,
   -- 자기 목표를 이뤘나. 시민은 진짜 AI를 맞혔고, 스파이는 사람 표를 받았다.
   -- 지금 채점에서는 score > 0 과 같은 말이지만, 점수 규칙이 바뀌어도 옛 판의
   -- 승패가 소급되지 않게 **판정 결과를 그대로 저장한다.**
@@ -314,6 +316,11 @@ create table if not exists match_results (
 alter table match_results drop constraint if exists match_results_role_check;
 alter table match_results add constraint match_results_role_check
   check (role in ('citizen','spy','actor'));
+
+-- 진 판의 -1 을 받는 길 (2026-08-07). 위 create 는 if not exists 라 이미 만들어진
+-- 표의 check(score >= 0) 을 못 고친다 — 안 풀면 월드 판 기록이 통째로 실패하고,
+-- 그 실패는 결과 화면을 막지 않으므로(match.ts 머리말) **조용히** 안 적힌다.
+alter table match_results drop constraint if exists match_results_score_check;
 
 -- 로비는 "내 최근 판"만 읽는다. 계정별 최신순 인덱스 하나면 충분하다.
 create index if not exists match_results_user_idx
