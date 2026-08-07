@@ -655,7 +655,7 @@ const RemoteAvatar = memo(function RemoteAvatar({
              * ★ 시안 왼쪽의 옥색 점은 뺐다 (사용자 2026-08-07). 말풍선 안에 말이
              *   아닌 표식이 있으면 그게 뭘 뜻하는지 읽게 되는데, 뜻하는 게 없다.
              */
-            <div className="relative w-max max-w-[220px] rounded-2xl border border-gray-700 bg-[rgba(30,30,30,0.82)] px-6 py-3 shadow-lg">
+            <div className="relative w-max max-w-[220px] rounded-2xl border border-gray-700 bg-[rgba(30,30,30,0.62)] px-6 py-3 shadow-lg">
               <span className="block text-[14px] font-medium leading-snug text-white">{bubble}</span>
               {/*
                 꼬리 — 아래를 향한 삼각형. 테두리 없이 몸통 색만 잇는다 (시안의 ::after).
@@ -664,7 +664,7 @@ const RemoteAvatar = memo(function RemoteAvatar({
               */}
               <span
                 aria-hidden
-                className="absolute -bottom-2 left-1/2 h-0 w-0 -translate-x-1/2 border-x-8 border-t-8 border-x-transparent border-t-[rgba(30,30,30,0.82)]"
+                className="absolute -bottom-2 left-1/2 h-0 w-0 -translate-x-1/2 border-x-8 border-t-8 border-x-transparent border-t-[rgba(30,30,30,0.62)]"
               />
             </div>
           ) : null}
