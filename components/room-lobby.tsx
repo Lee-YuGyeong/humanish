@@ -259,7 +259,14 @@ export function RoomLobby({
               말하고, 인원 수는 머리말과 오른쪽 눈금이 들고 있다. 설명하는 글자를
               얹으면 첫 화면에서 조작할 수 없는 줄이 하나 더 늘어난다.
           */}
-          <section aria-label="참가자 현황">
+          {/*
+            ★ flex-1 + min-h-0 다 (2026-08-07 사용자 지시: "8자리도 방 꽉차게").
+              규칙판이 빠지고 나서 좌석이 위쪽에만 몰리고 아래가 통째로 비었다.
+              여기가 남은 높이를 다 먹어야 그리드가 그걸 두 줄로 나눠 가진다.
+              min-h-0 을 빼면 flex 자식의 기본 min-height:auto 때문에 본문이
+              넘칠 때 줄어들지 못해 스크롤이 아니라 화면 밖으로 밀린다.
+          */}
+          <section aria-label="참가자 현황" className="flex min-h-0 flex-1 flex-col">
             <SeatGrid
               players={players}
               capacity={room.capacity}
@@ -455,43 +462,70 @@ function SeatGrid({
 
         return (
           <li key={seat}>
+            {/*
+              ┌─ 좌석 카드 구조 (2026-08-07, 레퍼런스 게임 UI 참고) ────────────┐
+              │ 겉틀(.slot) 안이 두 층이다 — 위는 초상, 아래는 이름판.          │
+              │   .slotBody  말풍선 + 아바타. 여백이 있는 무대                  │
+              │   .plate     이름 + 상태. 카드 폭을 꽉 채우는 어두운 띠         │
+              │                                                                │
+              │ 이름을 초상과 같은 여백 안에 두면 카드가 그냥 글자 상자가 된다. │
+              │ 띠로 끊어야 「초상 + 명패」가 되고, 그게 레퍼런스의 슬롯이다.    │
+              └────────────────────────────────────────────────────────────────┘
+            */}
             <div
               className={[
                 styles.slot,
                 isMe ? styles.slotMe : "",
+                settled ? styles.slotSettled : "",
                 p == null ? styles.slotEmpty : "",
               ].join(" ")}
             >
-              {isHostSeat && (
-                <span className="absolute right-2 top-2">
-                  <span className={`${styles.tag} ${styles.tagGreen}`}>host</span>
-                </span>
-              )}
+              <div className={styles.slotBody}>
+                {/*
+                  ★ 방장은 왕관 하나로 말한다 (2026-08-07 사용자 지시).
+                    「host」 네모 태그는 카드 귀퉁이에서 이름만큼 눈에 띄었다.
+                    title 을 붙여 두면 마우스를 올렸을 때 글자로도 확인된다.
+                */}
+                {isHostSeat && (
+                  <span className={styles.hostMark} title="방장">
+                    <CrownIcon />
+                  </span>
+                )}
 
-              {/* 지금 한 줄. 기록이 아니라 쌓이지 않는다 (§15-3-결정) */}
-              {p?.lobby_line ? (
-                <span className={styles.bubble} title={p.lobby_line}>
-                  {p.lobby_line}
-                </span>
-              ) : (
-                <span aria-hidden className={styles.bubbleGhost} />
-              )}
+                {/* 지금 한 줄. 기록이 아니라 쌓이지 않는다 (§15-3-결정) */}
+                {p?.lobby_line ? (
+                  <span className={styles.bubble} title={p.lobby_line}>
+                    {p.lobby_line}
+                  </span>
+                ) : (
+                  <span aria-hidden className={styles.bubbleGhost} />
+                )}
 
-              <span
-                className={[
-                  styles.person,
-                  isMe ? styles.personMe : "",
-                  p == null ? styles.personEmpty : "",
-                  settled ? styles.pulse : "",
-                ].join(" ")}
-              >
-                {p == null ? <UserPlusIcon /> : <UserIcon />}
-              </span>
-
-              <span className="text-center">
                 <span
-                  className="block truncate text-[0.72rem] font-semibold uppercase tracking-[0.06em]"
-                  style={{ color: p == null ? "var(--dim)" : isMe ? "var(--accent)" : "var(--text)" }}
+                  className={[
+                    styles.person,
+                    isMe ? styles.personMe : "",
+                    p == null ? styles.personEmpty : "",
+                    settled ? styles.pulse : "",
+                  ].join(" ")}
+                >
+                  {p == null ? <UserPlusIcon /> : <UserIcon />}
+                </span>
+              </div>
+
+              {/*
+                ★ 이름판에는 **닉네임만** 쓴다 (2026-08-07 사용자 지시).
+                  예전에는 「7 │ 방장」처럼 자리 번호와 상태를 같이 적었는데, 카드마다
+                  작은 글자가 두 줄씩 붙어 여덟 칸이 전부 시끄러웠다. 그 정보는
+                  이미 다른 데서 말하고 있다 — 방장은 왕관, 준비 여부는 프레임
+                  귀퉁이 색과 아바타 링(.pulse)이다. 글자로 또 적을 이유가 없다.
+              */}
+              <div className={styles.plate}>
+                <span
+                  className={styles.plateName}
+                  style={{
+                    color: p == null ? "var(--dim)" : isMe ? "var(--accent)" : "var(--text)",
+                  }}
                 >
                   {/*
                     본인이 지은 이름이 있으면 그걸로 부른다 (SPEC §15-2-결정).
@@ -500,33 +534,7 @@ function SeatGrid({
                   */}
                   {p ? (p.lobby_name ?? p.nickname) : "빈자리"}
                 </span>
-                <span
-                  className={`${styles.mono} mt-1 block text-[0.58rem]`}
-                  style={{ color: "var(--muted)" }}
-                >
-                  {p ? `자리 ${seat}${isMe ? " · 나" : ""}` : " "}
-                </span>
-              </span>
-
-              {p ? (
-                <span className="flex items-center gap-1.5">
-                  <span className={styles.dot} style={settled ? undefined : { opacity: 0.35 }} />
-                  <span
-                    className="text-[0.55rem] tracking-[0.1em]"
-                    style={{ color: settled ? "var(--accent)" : "var(--muted)" }}
-                  >
-                    {/* 방장 자리에는 준비가 없다. 「접속중」으로 두면 안 누른 사람처럼 보인다 */}
-                    {isHostSeat ? "방장" : p.is_ready ? "준비 완료" : "접속중"}
-                  </span>
-                </span>
-              ) : (
-                <span
-                  className={`${styles.blink} text-[0.6rem] tracking-[0.05em]`}
-                  style={{ color: "var(--dim)" }}
-                >
-                  대기 중...
-                </span>
-              )}
+              </div>
             </div>
           </li>
         );
@@ -649,8 +657,13 @@ function SayPanel({
             onClick={() => ready.run(!mine?.is_ready)}
             className={`${styles.ready} ${mine?.is_ready ? styles.readyOn : ""}`}
           >
+            {/*
+              ★ 글자를 <span> 으로 감싼다. .bevel 의 안쪽 면은 ::before(절대배치)라
+                맨 텍스트 노드보다 **나중에 칠해져서** 감싸지 않으면 글자가 덮인다.
+                (칠하는 순서상 인라인 글자가 z-index:0 절대배치보다 앞이다.)
+            */}
             {mine?.is_ready && <CheckIcon />}
-            {mine?.is_ready ? "준비 완료" : "준비"}
+            <span>{mine?.is_ready ? "준비 완료" : "준비"}</span>
           </button>
         </div>
       )}
@@ -660,6 +673,22 @@ function SayPanel({
 
 /* ─────────────────────────────── 아이콘 ─────────────────────────────── */
 /* font-awesome CDN 대신 인라인 SVG. 배포본에서 외부 요청이 나가지 않는다 */
+
+/** 방장 표시. 좌석 카드 오른쪽 위에 홀로 앉는다 (「host」 태그를 대신한다) */
+function CrownIcon() {
+  return (
+    <svg width="15" height="12" viewBox="0 0 15 12" fill="none" aria-hidden>
+      <path
+        d="M1.4 3.1l2.1 3.2L7.5 1.4l4 4.9 2.1-3.2 -1 7.1H2.4z"
+        fill="currentColor"
+        fillOpacity="0.18"
+        stroke="currentColor"
+        strokeWidth="1.15"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
 
 function ArrowLeftIcon() {
   return (
