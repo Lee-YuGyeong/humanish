@@ -496,6 +496,21 @@ export function ChatTranscript() {
         <div ref={boxRef} className="min-h-0 flex-1 overflow-y-auto px-3 py-2">
           <ul className="flex flex-col gap-1.5">
             {messages.map((m) => {
+              /*
+               * 진행 안내(주제 공개)는 좌석에 안 붙는다 — 점도 이름도 없이 가운데
+               * 한 줄로 둔다 (store.ts 의 ChatLine.system). 사람 말과 같은 모양으로
+               * 그리면 "누가 저런 말을 했나" 하고 한 번 읽게 된다.
+               */
+              if (m.system) {
+                return (
+                  <li
+                    key={m.key}
+                    className="my-1 text-center text-[10px] font-semibold tracking-[0.08em] text-[#8fd6ad]"
+                  >
+                    {m.text}
+                  </li>
+                );
+              }
               const seat = seatOf.get(m.id);
               return (
                 <li key={m.key} className="text-[11px] leading-relaxed">

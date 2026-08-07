@@ -23,6 +23,14 @@ export interface ChatLine {
   nickname: string;
   text: string;
   ts: number;
+  /**
+   * 사람이 한 말이 아니라 **진행 안내**다 (주제 공개 …). 화면은 이 줄을 이름 없이
+   * 다르게 그린다 (page.tsx 흐르는 줄 · game-hud 의 ChatTranscript).
+   *
+   * ★ id 가 빈 문자열이다 — 좌석에 붙지 않는다. 말풍선도 안 띄운다(누구 머리 위에
+   *   띄울지가 없다). 그래서 이 줄은 **어떤 자리와도 묶이지 않는다** (I1).
+   */
+  system?: true;
 }
 
 /**
@@ -68,6 +76,12 @@ interface WorldState {
     now: number,
   ): void;
   applyChat(id: string, nickname: string, text: string, ts: number, now: number): void;
+  /**
+   * 진행 안내 한 줄을 기록에 남긴다 (주제 공개 …). 말풍선은 안 띄운다.
+   * @param key 같은 안내가 두 번 쌓이지 않게 하는 표식. 이미 있으면 무시한다 —
+   *            판 중간 입장자에게 오는 스냅샷처럼 같은 단계가 두 번 올 수 있다.
+   */
+  pushNotice(key: string, text: string): void;
   /** 방을 옮길 때 반드시 부른다. 안 지우면 이전 방 상태가 새 방에 새어 나온다 */
   reset(): void;
 }
@@ -128,6 +142,13 @@ export const useWorldStore = create<WorldState>((set, get) => ({
       };
     });
   },
+
+  pushNotice: (key, text) =>
+    set((s) => {
+      if (s.messages.some((m) => m.key === key)) return s;
+      const next = s.messages.concat({ key, id: '', nickname: '', text, ts: Date.now(), system: true });
+      return { messages: next.length > CHAT_LOG_MAX ? next.slice(next.length - CHAT_LOG_MAX) : next };
+    }),
 
   reset: () => {
     get().players.clear();

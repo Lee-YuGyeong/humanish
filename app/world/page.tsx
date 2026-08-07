@@ -30,6 +30,7 @@ import {
   setVolume as setMusicVolume,
   subscribe as musicSubscribe,
 } from './music';
+import { playTopicVoice, stopTopicVoice } from './topic-voice';
 import { useWorldStore } from './store';
 import { useQueryClient } from '@tanstack/react-query';
 
@@ -390,6 +391,9 @@ export default function WorldPage() {
   const phase = useRoundtableStore((s) => s.phase);
   const nomineeId = useRoundtableStore((s) => s.nomineeId);
   const revealResult = useRoundtableStore((s) => s.reveal);
+  /** 주제 공개 안내(음성 + 기록 한 줄)에만 쓴다 — 아래 「주제가 열리면」 효과 */
+  const topicRound = useRoundtableStore((s) => s.round);
+  const topicEndsAt = useRoundtableStore((s) => s.endsAt);
   /**
    * 역할 카드가 떠 있는가 — 뜨는 조건은 roundtable-store 의 셀렉터 **하나**다
    * (game-hud 의 RoleCard 와 같은 것을 본다). 카드에는 「확인」 버튼이 있어서
@@ -510,6 +514,8 @@ export default function WorldPage() {
   const leave = useCallback(() => {
     setConfirmLeave(false);
     conn.close();
+    // 울리던 주제 안내가 로비까지 따라가지 않게 한다 (배경 음악은 stopMusic 이 맡는다)
+    stopTopicVoice();
     setSceneReady(false);
     setComposing(false);
     setTicket(null);
@@ -730,6 +736,29 @@ export default function WorldPage() {
     return () => window.removeEventListener('keydown', onKey);
   }, [live, flashVolumeHud]);
 
+  /**
+   * 주제가 열리면 **안내 음성 + 기록 한 줄** (사용자 요청 2026-08-07).
+   *
+   * ┌─ 왜 여기(효과)이고 onRound(콜백)가 아닌가 ────────────────────────────────┐
+   * │ 서버는 같은 단계를 두 번 보낼 수 있다 — 판 중간에 들어온 사람에게 주는     │
+   * │ 스냅샷이 그렇다. 콜백에 넣으면 그때마다 음성이 다시 울린다. 효과는 의존성  │
+   * │ 값이 **실제로 바뀔 때만** 도므로, 같은 topic 이 두 번 와도 한 번만 운다.  │
+   * │                                                                          │
+   * │ endsAt 을 키에 함께 넣는 이유: round 는 판마다 1 로 되돌아온다. 「한 판    │
+   * │ 더」의 첫 주제가 지난 판의 안내와 같은 키가 되면 기록에서 지워진다        │
+   * │ (pushNotice 의 중복 방지). endsAt 은 서버 시각이라 판마다 다르다.         │
+   * └──────────────────────────────────────────────────────────────────────────┘
+   *
+   * ★ 소리와 글자를 **같은 자리에서** 낸다. 음소거·자동재생 차단으로 소리가 빠져도
+   *   기록 줄은 남아야 주제가 바뀐 걸 안다 (topic-voice.ts 머리말).
+   */
+  useEffect(() => {
+    if (!live || phase !== 'topic' || topicRound < 1) return;
+    const label = topicRound === 1 ? '첫 번째' : '두 번째';
+    useWorldStore.getState().pushNotice(`topic-${topicRound}-${topicEndsAt}`, `${label} 주제가 공개됐습니다`);
+    playTopicVoice(topicRound);
+  }, [live, phase, topicRound, topicEndsAt]);
+
   /*
    * ESC 를 위한 핸들러는 **없다.** 잠긴 동안의 ESC 는 브라우저가 먹고(keydown 이
    * 페이지로 오지 않는다) 잠금만 푼다. 그 해제가 곧 '잠깐 멈춤'이고, 화면을
@@ -926,8 +955,15 @@ export default function WorldPage() {
                   className="max-w-[min(46rem,60vw)] text-[12px] text-neutral-300 drop-shadow-[0_1px_4px_rgba(0,0,0,0.9)]"
                   style={{ opacity: Math.max(0.3, 1 - (shown.length - 1 - i) * 0.085) }}
                 >
-                  <span className="font-bold text-[#d4a373]">{m.nickname}</span>{' '}
-                  <span className="text-neutral-200">{m.text}</span>
+                  {/* 진행 안내(주제 공개)는 이름이 없다 — 말한 사람이 없기 때문이다 (store.ts 의 system) */}
+                  {m.system ? (
+                    <span className="font-bold tracking-wide text-[#8fd6ad]">{m.text}</span>
+                  ) : (
+                    <>
+                      <span className="font-bold text-[#d4a373]">{m.nickname}</span>{' '}
+                      <span className="text-neutral-200">{m.text}</span>
+                    </>
+                  )}
                 </p>
               ))}
             </div>
