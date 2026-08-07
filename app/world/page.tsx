@@ -737,12 +737,20 @@ export default function WorldPage() {
   }, [live, flashVolumeHud]);
 
   /**
-   * 주제가 열리면 **안내 음성 + 기록 한 줄** (사용자 요청 2026-08-07).
+   * 주제가 **실제로 뜨면** 안내 음성 + 기록 한 줄 (사용자 요청 2026-08-07).
+   *
+   * ┌─ ★★ 'topic' 이 아니라 'speak' 이다 ──────────────────────────────────────┐
+   * │ 'topic' 단계에는 주제가 없다. 거기는 뜸 들이는 6초고 스크린에도 「곧 주제가 │
+   * │ 나온다」만 뜬다 — 워커도 그 단계에는 문구를 안 실어 보낸다(roundSnapshot 의 │
+   * │ topic 은 speak 에서만 채워진다. 미리 보내면 소켓으로 6초 먼저 읽힌다).     │
+   * │ 처음에 'topic' 에 걸었더니 안내가 주제보다 6초 빨랐다 (사용자 보고).       │
+   * │ round 는 speak 에서도 1·2 그대로다 — 그래서 번호는 여기서도 맞는다.        │
+   * └──────────────────────────────────────────────────────────────────────────┘
    *
    * ┌─ 왜 여기(효과)이고 onRound(콜백)가 아닌가 ────────────────────────────────┐
    * │ 서버는 같은 단계를 두 번 보낼 수 있다 — 판 중간에 들어온 사람에게 주는     │
    * │ 스냅샷이 그렇다. 콜백에 넣으면 그때마다 음성이 다시 울린다. 효과는 의존성  │
-   * │ 값이 **실제로 바뀔 때만** 도므로, 같은 topic 이 두 번 와도 한 번만 운다.  │
+   * │ 값이 **실제로 바뀔 때만** 도므로, 같은 단계가 두 번 와도 한 번만 운다.     │
    * │                                                                          │
    * │ endsAt 을 키에 함께 넣는 이유: round 는 판마다 1 로 되돌아온다. 「한 판    │
    * │ 더」의 첫 주제가 지난 판의 안내와 같은 키가 되면 기록에서 지워진다        │
@@ -753,7 +761,7 @@ export default function WorldPage() {
    *   기록 줄은 남아야 주제가 바뀐 걸 안다 (topic-voice.ts 머리말).
    */
   useEffect(() => {
-    if (!live || phase !== 'topic' || topicRound < 1) return;
+    if (!live || phase !== 'speak' || topicRound < 1) return;
     const label = topicRound === 1 ? '첫 번째' : '두 번째';
     useWorldStore.getState().pushNotice(`topic-${topicRound}-${topicEndsAt}`, `${label} 주제가 공개됐습니다`);
     playTopicVoice(topicRound);
