@@ -425,9 +425,17 @@ function LobbyHeader({ tab, onTab }: { tab: MainTab; onTab: (tab: MainTab) => vo
   return (
     <TopBar>
       <div className="flex items-center gap-6 sm:gap-10">
+        {/*
+          ★ shrink-0 · whitespace-nowrap — 로고는 **어떤 경우에도 안 줄고 안 접힌다.**
+            옛 기록 화면은 이 머리말을 .root 밖에서 다시 그렸고, 그러면 서체가
+            Space Grotesk 가 아니라 body 의 IBM Plex Sans KR 로 떨어져서 같은
+            0.9rem 인데 로고 크기가 바뀐 것처럼 보였다 (2026-08-07 보고).
+            그 화면은 없앴고(탭이 가운데 칸만 바꾼다) 머리말은 이제 여기 하나다.
+            남은 흔들림 경로는 폭이 모자랄 때의 줄바꿈뿐이라 그것도 여기서 막는다.
+        */}
         <Link
           href="/intro"
-          className="text-[0.9rem] font-bold uppercase tracking-[0.15em] no-underline"
+          className="shrink-0 whitespace-nowrap text-[0.9rem] font-bold uppercase tracking-[0.15em] no-underline"
           style={{ color: "var(--text)" }}
         >
           Who is AI?
