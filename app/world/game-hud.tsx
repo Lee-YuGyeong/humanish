@@ -27,7 +27,7 @@
  *   exitPointerLock 을 부르면 두 곳이 같은 잠금을 두고 싸운다.
  */
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 
 import { VERDICT_MAX_REVOTES } from '@/lib/mp/constants';
 import type { RevealIdentity, RoundPhase, RoundRole, RoundWinner } from '@/lib/mp/protocol';
@@ -447,6 +447,99 @@ export function SeatNotes() {
           눌러서 표시 — ? → 사람 → 연기자 → AI
         </p>
       ) : null}
+    </div>
+  );
+}
+
+/* ─────────────────────────────── 대화 기록 ─────────────────────────────── */
+
+/**
+ * 이 판의 **대화 전문** — 오른쪽에 서고, 굴려서 처음까지 읽는다 (2026-08-07 요청).
+ *
+ * 화면 아래로 흐르는 줄(page.tsx)은 방금 것만 보여준다. 여덟이 한 바퀴 도는 동안
+ * 앞사람 말이 밀려 나가서 "누가 뭐라고 했더라"를 확인할 데가 없었다.
+ *
+ * ★ **뜨는 조건은 page.tsx 가 정한다** (커서가 이미 자유로운 순간). 여기서 스스로
+ *   포인터락을 풀지 않는다 — 그러면 게임이 멈춘다 (page.tsx 의 「판은 없다」 상자).
+ * ★ 보관 개수는 store.ts 의 CHAT_LOG_MAX 하나다. 그보다 오래된 말은 스토어에
+ *   애초에 없다 — 여기서 더 길게 보여줄 방법은 없고, 늘리려면 그 상수를 고친다.
+ * ★ 이름은 '익명N' 이고 좌석 색 점을 앞에 단다. 좌석표·투표 패널·메모와 같은
+ *   사람이 같은 색이어야 대화를 자리에 붙여 읽을 수 있다.
+ * ★ **누가 봇인지 말하는 값이 여기 없다** (I1). 발화는 사람이든 봇이든 같은
+ *   모양으로 온다 — 실제로 그게 이 게임의 전부다.
+ * ★ 좁은 화면(lg 미만)에서는 접는다. 가운데 패널(max-w-md)과 겹치면 투표를
+ *   가린다 — 그때는 아래로 흐르는 줄이 대신한다.
+ */
+export function ChatTranscript() {
+  const messages = useWorldStore((s) => s.messages);
+  const seats = useSeats();
+  /*
+   * 말한 사람의 좌석 번호 — 색을 뽑으려고만 쓴다. 이미 나간 사람의 말은 명단에
+   * 없어서 색이 안 나오는데, 그때는 회색 점으로 둔다 (말은 남아야 한다).
+   */
+  const seatOf = useMemo(() => new Map(seats.map((s) => [s.id, s.seat])), [seats]);
+  const boxRef = useRef<HTMLDivElement>(null);
+  /** 열자마자 한 번은 무조건 맨 아래로. 판이 걷히면 다시 true 가 된다(언마운트) */
+  const firstRef = useRef(true);
+
+  /*
+   * 새 줄이 오면 따라 내려간다 — 단, **위로 올려 읽는 중이면 건드리지 않는다.**
+   * 여기서 무조건 내리면 처음부터 읽는 도중에 누가 말할 때마다 화면이 튄다.
+   */
+  useEffect(() => {
+    const el = boxRef.current;
+    if (!el) return;
+    const near = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
+    if (firstRef.current || near) {
+      el.scrollTop = el.scrollHeight;
+      firstRef.current = false;
+    }
+  }, [messages.length]);
+
+  if (messages.length === 0) return null;
+
+  return (
+    <div className="absolute bottom-24 right-6 top-28 z-[35] hidden w-[19rem] lg:flex">
+      <div
+        className={`${cardStyles.panel} flex min-h-0 w-full flex-col overflow-hidden rounded-2xl`}
+        style={{ '--rc': '#d4a373' } as React.CSSProperties}
+      >
+        <div
+          className="flex shrink-0 items-baseline justify-between px-3 py-2"
+          style={{ borderBottom: '1px solid color-mix(in srgb, #d4a373 22%, transparent)' }}
+        >
+          <p className={cardStyles.kicker}>Log — 대화 기록</p>
+          <span className="font-mono text-[9px] text-neutral-500 tabular-nums">
+            {messages.length}
+          </span>
+        </div>
+
+        {/* 굴려서 읽는 자리. 여기만 스크롤이 붙는다 */}
+        <div ref={boxRef} className="min-h-0 flex-1 overflow-y-auto px-3 py-2">
+          <ul className="flex flex-col gap-1.5">
+            {messages.map((m) => {
+              const seat = seatOf.get(m.id);
+              return (
+                <li key={m.key} className="text-[11px] leading-relaxed">
+                  <span className="mb-0.5 flex items-center gap-1.5">
+                    <span
+                      aria-hidden
+                      className="h-1.5 w-1.5 shrink-0 rounded-full"
+                      style={{ backgroundColor: seat === undefined ? '#525252' : seatColor(seat) }}
+                    />
+                    <span className="truncate font-bold text-[#d4a373]">{m.nickname}</span>
+                  </span>
+                  <span className="block break-words pl-3 text-neutral-300">{m.text}</span>
+                </li>
+              );
+            })}
+          </ul>
+        </div>
+
+        <p className="shrink-0 px-3 pb-2 text-[8px] text-neutral-600">
+          굴려서 처음까지 읽는다 · 화면을 클릭하면 이어서 걷는다
+        </p>
+      </div>
     </div>
   );
 }

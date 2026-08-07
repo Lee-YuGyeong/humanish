@@ -25,8 +25,15 @@ export interface ChatLine {
   ts: number;
 }
 
-/** 채팅 로그 보관 개수. 넘으면 오래된 것부터 버린다 */
-const CHAT_LOG_MAX = 60;
+/**
+ * 채팅 로그 보관 개수. 넘으면 오래된 것부터 버린다.
+ *
+ * ★ 60 이면 **한 판을 다 못 담는다** (2026-08-07). 주제 라운드 2번 × 9자리에
+ *   자유 대화까지 얹히면 판 하나가 그것보다 길고, 그러면 투표할 때 앞부분이
+ *   이미 잘려 있다 — 전체 기록(game-hud 의 ChatTranscript)이 읽을 수 있어야 하는
+ *   범위가 곧 이 수다. 짧은 문자열 200개라 메모리는 무시할 만하다.
+ */
+const CHAT_LOG_MAX = 200;
 
 interface WorldState {
   status: WorldStatus;

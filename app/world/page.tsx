@@ -24,7 +24,7 @@ import { WORLD_SEAT_SLOTS, isMovementLocked, mayChat } from '@/lib/mp/constants'
 import { spawnFor } from '@/lib/mp/spawn';
 import type { Role } from '@/lib/game/types';
 import { WorldConnection, type WorldEvents } from './net/connection';
-import GameHud, { SeatNotes } from './game-hud';
+import GameHud, { ChatTranscript, SeatNotes } from './game-hud';
 import {
   getVolume as getMusicVolume,
   setVolume as setMusicVolume,
@@ -61,6 +61,14 @@ const VOLUME_STEP = 0.05;
 function step(current: number, delta: number): number {
   return Math.round(Math.min(1, Math.max(0, current + delta)) * 100) / 100;
 }
+
+/**
+ * 화면 아래로 흐르는 대화 줄 수. 끝까지 읽는 건 ChatTranscript 가 맡는다.
+ *
+ * 8명이 한 바퀴 도는 동안 앞사람 말이 안 밀려 나가는 최소치가 이 근처다.
+ * 더 늘리면 3D 화면이 글자에 묻힌다 — 오래된 줄을 흐리게 하는 것도 그래서다.
+ */
+const AMBIENT_LINES = 12;
 
 const ROLE_LABEL: Record<Role, string> = {
   citizen: '인간',
@@ -904,13 +912,23 @@ export default function WorldPage() {
       */}
       {live ? (
         <>
-          {/* 남의 말. 판이 아니라 글자만 흐른다 — 이제 **늘** 보인다 */}
+          {/*
+            남의 말. 판이 아니라 글자만 흐른다 — 이제 **늘** 보인다.
+
+            ★ 5줄에서 AMBIENT_LINES 줄로 늘렸다 (2026-08-07). 사람이 여덟이면
+              한 바퀴 도는 동안 앞사람 말이 이미 밀려 나갔다.
+            ★ 대신 **오래된 줄일수록 흐리다.** 같은 밝기로 쌓으면 3D 화면이 글자에
+              묻힌다 — 이 게임은 사람이 움직이는 걸 보는 게임이다.
+            ★ 여기는 끝까지 읽는 자리가 아니다. 그건 커서가 자유로울 때 뜨는
+              전체 기록이 맡는다 (아래 ChatTranscript).
+          */}
           {messages.length > 0 ? (
             <div className="pointer-events-none absolute inset-x-0 bottom-24 flex flex-col items-start gap-1 px-6">
-              {messages.slice(-5).map((m) => (
+              {messages.slice(-AMBIENT_LINES).map((m, i, shown) => (
                 <p
                   key={m.key}
-                  className="text-[12px] text-neutral-300 drop-shadow-[0_1px_4px_rgba(0,0,0,0.9)]"
+                  className="max-w-[min(46rem,60vw)] text-[12px] text-neutral-300 drop-shadow-[0_1px_4px_rgba(0,0,0,0.9)]"
+                  style={{ opacity: Math.max(0.3, 1 - (shown.length - 1 - i) * 0.085) }}
                 >
                   <span className="font-bold text-[#d4a373]">{m.nickname}</span>{' '}
                   <span className="text-neutral-200">{m.text}</span>
@@ -918,6 +936,23 @@ export default function WorldPage() {
               ))}
             </div>
           ) : null}
+
+          {/*
+            전체 대화 기록 — **커서가 이미 자유로울 때만** 뜬다 (2026-08-07).
+
+            ┌─ 왜 이 조건인가 ──────────────────────────────────────────────────┐
+            │ 위 큰 상자의 규칙: 만질 것이 화면에 있으면 잠금을 풀어야 하고,     │
+            │ 잠금을 풀면 게임이 멈춘다. 그래서 이 판은 **스스로 잠금을 풀지     │
+            │ 않는다** — 이미 풀려 있는 순간(ESC 멈춤 · 투표 · 최후변론 ·        │
+            │ 생사투표)에만 나타난다. 마침 그때가 앞 대화를 되짚어 읽고 싶은     │
+            │ 순간이고, 걷는 동안에는 위의 흐르는 로그로 충분하다.               │
+            │                                                                  │
+            │ ★ 클릭해도 다시 잠기지 않는다 — 재잠금은 캔버스가 받는데 이 판은   │
+            │   그 위에서 클릭을 삼킨다(pointer-events). 휠로 굴려 읽으면 된다.  │
+            │   판 밖을 누르면 평소처럼 잠기고 이 판은 같이 사라진다.            │
+            └──────────────────────────────────────────────────────────────────┘
+          */}
+          {!locked && !confirmLeave ? <ChatTranscript /> : null}
 
           {/*
             잠깐 멈춤 — **ESC 로 잡았던 잠금이 풀린 상태에서만** 뜬다 (everLocked).
