@@ -217,6 +217,27 @@ export interface BotState {
   nextReactAt: number;
 
   /**
+   * **주제에 답할 차례를 아직 안 쓴 speak 창의 마감** (epoch ms). 빚이 없으면 0.
+   *
+   * ┌─ 왜 필요한가 (신고: "주제 대신 옆사람 말에만 답한다") ─────────────────────┐
+   * │ speak 창에서 봇은 자리를 잡고 LLM 답을 기다린다. 그 사이에 사람이 채팅을    │
+   * │ 치면 대꾸 예약이 걸리고, 그 예약이 **speechSeq 를 올려서** 날아오던 주제     │
+   * │ 답을 무효로 만든다 (upgradeSpeech 의 seq 검사). 그러면 화면에는 주제를 씹고 │
+   * │ 잡담에만 답하는 자리가 남는다 — 다 같이 주제에 답하는 45초에 그 자리만.     │
+   * │                                                                          │
+   * │ 그래서 **빚을 갚기 전에는 대꾸 후보에서 뺀다** (pickResponder). 주제 답이   │
+   * │ 실제로 나가면 0 으로 지운다 (room-do 의 botSpoke) — 그 뒤로는 같은 창에서도 │
+   * │ 평소처럼 사람 말을 받는다.                                                 │
+   * │                                                                          │
+   * │ ★ 값이 **창의 마감 시각**이라 스스로 만료된다. LLM 이 끝내 안 와서 한마디도 │
+   * │   못 한 창이어도 다음 단계까지 끌고 가지 않는다.                            │
+   * │ ★ 침묵하기로 뽑힌 라운드는 애초에 0 이다 (primeForTopic 의 speak=false) —   │
+   * │   할 말이 없는데 대꾸까지 막으면 그 창이 통째로 조용해진다.                  │
+   * └──────────────────────────────────────────────────────────────────────────┘
+   */
+  topicDue: number;
+
+  /**
    * 이 인물이 이 방에서 **지어낸 사실**의 명단 ("사는 곳: 인천 서구").
    *
    * ┌─ 왜 좌표와 달리 저장하는가 ───────────────────────────────────────────────┐
@@ -351,6 +372,7 @@ export function createBot(
     speakAt: 0,
     speechSeq: 0,
     nextReactAt: 0,
+    topicDue: 0,
     // 저장된 방이면 이어받는다. 새 방이면 아직 아무것도 안 지어냈다.
     facts: pose?.facts ?? [],
     bestDist: Infinity,
@@ -672,9 +694,14 @@ export function primeForTopic(bot: BotState, now: number, windowMs: number, spea
     // 이 라운드는 건너뛴다. 창 **밖으로** 밀어 둔다 — 그냥 두면 25~75초 타이머가
     // 우연히 창 안에서 터져서, 침묵하기로 한 자리가 말해 버린다.
     bot.nextChatAt = Math.max(bot.nextChatAt, now + windowMs + 1_000);
+    // 할 말이 없는 창이다. 대꾸까지 막으면 그 45초가 통째로 조용해진다 (topicDue).
+    bot.topicDue = 0;
     return;
   }
   bot.nextChatAt = now + rand(TOPIC_SPEAK_MIN_FRAC * windowMs, TOPIC_SPEAK_MAX_FRAC * windowMs);
+  // 이 창이 닫히기 전에 주제에 답해야 한다. 그때까지는 사람 말 대꾸에 자리를
+  // 내주지 않는다 — 그 예약이 주제 답을 덮어쓴다 (BotState.topicDue 의 상자).
+  bot.topicDue = now + windowMs;
 }
 
 /**
@@ -922,9 +949,10 @@ export function readDelayMs(): number {
  * │ 말하기만 하면 그 문장을 그대로 [지금 답할 질문]으로 실어 보냈고, 모델은      │
  * │ 무에서 문장을 지어내야 하니 엉뚱한 말이 나왔다. 실측 4/4: "ㅋㅋ" → "안녕하세요."│
  * │                                                                          │
- * │ ★ 웃음에 웃음으로 받게 하지 않는다. **항상 받는 것 자체가 표식이다** (I1) —  │
- * │   BOT_REACT_CHANCE 가 확률을 거는 것과 같은 이유다. 사람도 "ㅋㅋ"에는 그냥   │
- * │   아무 말 안 하는 쪽이 흔하다. 그래서 여기서는 **대꾸 자리를 아예 안 잡는다.**│
+ * │ ★ 웃음에 웃음으로 받게 하지 않는다. 사람도 "ㅋㅋ"에는 그냥 아무 말 안 하는   │
+ * │   쪽이 흔하다. 그래서 여기서는 **대꾸 자리를 아예 안 잡는다.**               │
+ * │   확률 게이트를 없앤 뒤로(BOT_REACT_CHANCE) 이 문지기가 유일한 거르개다 —    │
+ * │   여기서 안 막으면 "ㅋㅋ" 한 줄마다 봇이 문장을 지어낸다.                    │
  * │                                                                          │
  * │ 판정 기준은 **완성형 음절이 하나라도 있는가**다. 자모("ㅋ")·기호·이모지만    │
  * │ 남으면 알맹이가 없다. "ㅋㅋ 왜"는 '왜'가 있어 통과한다 — 웃음이 섞였다고      │
@@ -940,12 +968,12 @@ export function hasContent(text: string): boolean {
 /**
  * 사람이 한마디 했다. 대꾸할 봇을 **하나만** 고른다. 아무도 안 고를 수도 있다.
  *
- * ★ I1이 두 번 걸리는 자리다 (BOT_REACT_CHANCE 주석 참고).
- *   · 둘 이상이 같은 말에 반응하면 그 둘이 한 번에 묶인다 → 하나만 고른다.
- *   · 항상 반응하면 그 자리가 봇이다 → 확률과 쿨다운을 건다.
+ * ★ 둘 이상이 같은 말에 반응하면 그 둘이 한 번에 묶인다 → **하나만** 고른다 (I1).
+ *   "항상 반응하면 그 자리가 봇이다"로 확률을 걸던 규칙은 없앴다 —
+ *   조용한 자리가 훨씬 먼저 갈린다 (BOT_REACT_CHANCE 의 상자).
  *
- * 고른 봇에는 쿨다운을 걸고 자발 발화 시각도 미룬다 — 방금 대꾸한 봇이 몇 초 뒤에
- * 혼잣말까지 하면 그 자리만 유난히 말이 많아진다.
+ * 고른 봇은 자발 발화 시각을 미룬다 — 방금 대꾸한 봇이 몇 초 뒤에 혼잣말까지 하면
+ * 그 자리만 유난히 말이 많아진다.
  *
  * ★ **말한 당사자를 빼는 건 호출부의 몫이다.** 여기 온 배열에서 고를 뿐이라,
  *   봇 발화에 대꾸를 붙일 때 말한 봇을 안 걸러내면 자기 말에 자기가 답한다
@@ -955,10 +983,14 @@ export function hasContent(text: string): boolean {
 export function pickResponder(
   bots: BotState[],
   now: number,
-  /** 게임이 안 돌아가는 방(월드 AI만 있는 방)이면 훨씬 잘 대꾸한다 — 숨길 게 없다. */
+  /**
+   * 게임이 안 돌아가는 방(월드 AI만 있는 방)인가.
+   * **지금은 두 무대의 값이 같다** — 갈래는 되돌릴 자리로 남아 있다
+   * (COMPANION_REACT_CHANCE 의 상자).
+   */
   companionMode = false,
   /**
-   * 반응 확률을 갈아끼운다. 사람 발화가 아닌 자리(봇 발화·입퇴장)를 위한 것이다 —
+   * 반응 확률을 갈아끼운다. 사람 발화가 아닌 자리(봇 발화·입퇴장)가 쓴다 —
    * 여기서 안 받으면 호출부가 주사위를 한 번 더 굴리게 되고, 그러면 실제 확률이
    * 두 값의 곱이 돼서 상수만 봐서는 알 수 없어진다.
    */
@@ -967,7 +999,14 @@ export function pickResponder(
   const chance = chanceOverride ?? (companionMode ? COMPANION_REACT_CHANCE : BOT_REACT_CHANCE);
   const cooldown = companionMode ? COMPANION_REACT_COOLDOWN_MS : BOT_REACT_COOLDOWN_MS;
 
-  const eligible = bots.filter((b) => !b.speechHeld && now >= b.nextReactAt);
+  /*
+   * ★ **주제에 답할 차례를 아직 안 쓴 봇은 빼 둔다** (topicDue).
+   *   speak 창에서 LLM 답을 기다리는 동안 사람이 채팅을 치면, 그 대꾸 예약이
+   *   seq 를 올려서 **날아오던 주제 답을 무효로** 만든다 (upgradeSpeech 의 seq 검사).
+   *   그러면 화면에는 "주제는 씹고 옆사람 말에만 답하는 자리"가 남는다.
+   *   판이 주제를 띄운 창이니 주제가 먼저다 — 답하고 나면 그 창에서도 평소처럼 받는다.
+   */
+  const eligible = bots.filter((b) => !b.speechHeld && now >= b.nextReactAt && now >= b.topicDue);
   if (eligible.length === 0) return null;
   if (Math.random() >= chance) return null;
 

@@ -16,6 +16,7 @@ import {
   hasContent,
   pickLine,
   pickResponder,
+  primeForTopic,
   readDelayMs,
   replaceSpeech,
   scheduleArrivedSpeech,
@@ -30,6 +31,7 @@ import {
   BOT_DISTRACTED_MAX_MS,
   BOT_READ_MAX_MS,
   BOT_READ_MIN_MS,
+  BOT_REACT_CHANCE,
   BOT_REACT_COOLDOWN_MS,
   BOT_TYPE_CHARS_MAX,
   BOT_TYPE_CHARS_MIN,
@@ -790,7 +792,7 @@ describe('replaceSpeech — LLM 덮어쓰기', () => {
 });
 
 describe('pickResponder', () => {
-  /** 확률이 끼므로 여러 번 돌려 본다. p=0.45 · 200회면 양쪽 다 사실상 확실하다. */
+  /** 확률이 끼는 경로(chanceOverride)가 남아 있어 여러 번 돌려 본다. */
   function tally(make: () => BotState[], now: number, n = 200) {
     let hit = 0;
     let miss = 0;
@@ -800,13 +802,6 @@ describe('pickResponder', () => {
     }
     return { hit, miss };
   }
-
-  it('항상 반응하지는 않는다 — 반응률 자체가 표식이다 (I1)', () => {
-    const t0 = 1_000_000;
-    const { hit, miss } = tally(() => [walkingBot(t0)], t0);
-    expect(hit).toBeGreaterThan(0);
-    expect(miss).toBeGreaterThan(0);
-  });
 
   it('쿨다운 중인 봇은 절대 안 고른다', () => {
     const t0 = 1_000_000;
@@ -828,7 +823,7 @@ describe('pickResponder', () => {
     expect(hit).toBe(0);
   });
 
-  it('고른 봇에 쿨다운을 걸고 자발 발화도 미룬다', () => {
+  it('고른 봇은 자발 발화를 미룬다 — 대꾸하고 몇 초 뒤 혼잣말까지 하지 않는다', () => {
     const t0 = 1_000_000;
     const bots = [walkingBot(t0)];
     bots[0].nextChatAt = t0 + 100; // 곧 혼잣말할 참이었다
@@ -837,22 +832,76 @@ describe('pickResponder', () => {
     for (let i = 0; i < 200 && !picked; i += 1) picked = pickResponder(bots, t0);
     expect(picked).not.toBeNull();
 
+    // 쿨다운은 0 이다 (2026-08-07) — 점유율은 시간이 아니라 확률로 맞춘다.
     expect(picked!.nextReactAt).toBe(t0 + BOT_REACT_COOLDOWN_MS);
     expect(picked!.nextChatAt).toBeGreaterThan(t0 + 100);
+  });
+
+  /*
+   * 확률 게이트는 없앴다 (2026-08-07, 세 번째 신고 "대화를 안 하니까 AI 같다").
+   * 아껴 말하는 자리는 반응률로 갈리기 전에 **침묵으로 먼저** 갈린다 —
+   * BOT_REACT_CHANCE 의 상자. 남은 제동은 아래 두 검사(speechHeld · topicDue)다.
+   */
+  it('알맹이 있는 말은 다 받는다 — 절반을 씹지 않는다', () => {
+    const t0 = 1_000_000;
+    expect(BOT_REACT_CHANCE).toBe(1);
+    let hit = 0;
+    for (let i = 0; i < 300; i += 1) {
+      if (pickResponder([walkingBot(t0)], t0)) hit += 1;
+    }
+    expect(hit).toBe(300);
+  });
+
+  /*
+   * speak 창에서 LLM 답을 기다리는 동안 사람이 채팅을 치면, 그 대꾸 예약이
+   * speechSeq 를 올려 **날아오던 주제 답을 무효로** 만든다. 그러면 다 같이 주제에
+   * 답하는 45초에 그 자리만 주제를 씹고 잡담에만 답한 꼴이 된다 (I1).
+   */
+  it('주제에 답할 빚이 남았으면 사람 말 대꾸에 자리를 안 내준다', () => {
+    const t0 = 1_000_000;
+    const bot = walkingBot(t0);
+    primeForTopic(bot, t0, 45_000, true);
+    expect(bot.topicDue).toBe(t0 + 45_000);
+    expect(pickResponder([bot], t0 + 1_000)).toBeNull();
+
+    // 빚을 갚으면(주제 답이 실제로 나갔다 — room-do 의 botSpoke) 평소대로 받는다.
+    bot.topicDue = 0;
+    expect(pickResponder([bot], t0 + 1_000)).not.toBeNull();
+  });
+
+  it('창이 닫히면 빚도 만료된다 — 한마디도 못 한 창을 다음 단계로 끌고 가지 않는다', () => {
+    const t0 = 1_000_000;
+    const bot = walkingBot(t0);
+    primeForTopic(bot, t0, 45_000, true);
+    expect(pickResponder([bot], t0 + 45_001)).not.toBeNull();
+  });
+
+  it('침묵하기로 뽑힌 창은 빚이 없다 — 대꾸까지 막으면 45초가 통째로 조용해진다', () => {
+    const t0 = 1_000_000;
+    const bot = walkingBot(t0);
+    primeForTopic(bot, t0, 45_000, false);
+    expect(bot.topicDue).toBe(0);
+    expect(pickResponder([bot], t0 + 1_000)).not.toBeNull();
   });
 
   it('봇이 없으면 null', () => {
     expect(pickResponder([], 1_000_000)).toBeNull();
   });
 
-  it('동행자 모드는 훨씬 잘 대꾸한다 — 숨길 게 없는 방이다', () => {
+  /*
+   * ★ 예전엔 "동행자 모드가 게임보다 훨씬 잘 대꾸한다"를 검사했다. 게임 쪽 확률이
+   *   1 이 된 지금 두 무대의 값이 같아서 그 비교는 성립하지 않는다.
+   *   지켜야 할 방향은 남았다: **라운지가 게임보다 굼떠서는 안 된다.**
+   *   말동무가 판보다 조용하면 그건 위장이 아니라 고장이다.
+   */
+  it('라운지가 게임보다 굼뜨지 않다', () => {
     const t0 = 1_000_000;
     const game = tally(() => [walkingBot(t0)], t0);
     let companionHit = 0;
     for (let i = 0; i < 200; i += 1) {
       if (pickResponder([walkingBot(t0)], t0, true) !== null) companionHit += 1;
     }
-    expect(companionHit).toBeGreaterThan(game.hit);
+    expect(companionHit).toBeGreaterThanOrEqual(game.hit);
   });
 
   it('확률을 갈아끼울 수 있다 — 사람 발화가 아닌 자리(봇 발화·입퇴장)용이다', () => {
@@ -871,7 +920,7 @@ describe('pickResponder', () => {
     expect(always).toBe(200);
   });
 
-  it('확률을 갈아끼워도 쿨다운·예약 규칙은 그대로다', () => {
+  it('확률을 갈아끼워도 예약 규칙은 그대로다', () => {
     const t0 = 1_000_000;
     const held = walkingBot(t0);
     scheduleSpeech(held, null, t0);
@@ -882,17 +931,22 @@ describe('pickResponder', () => {
     expect(pickResponder([cooling], t0, true, 1)).toBeNull();
   });
 
-  it('동행자 모드의 쿨다운이 게임보다 짧다', () => {
+  /*
+   * ★ 예전엔 "동행자 모드의 쿨다운이 게임보다 짧다"를 검사했다. 이제 **양쪽 다 0**
+   *   이라 그 비교가 성립하지 않는다 (2026-08-07 — 점유율은 확률로 맞춘다).
+   *   검사해야 할 것은 남았다: 잠기는 자리가 아무 데도 없다는 것.
+   */
+  it('대꾸해도 잠기지 않는다 — 게임도 라운지도 쿨다운이 0이다', () => {
     const t0 = 1_000_000;
-    const pick = (companion: boolean) => {
+    const lockFor = (companion: boolean) => {
       for (let i = 0; i < 400; i += 1) {
-        const bots = [walkingBot(t0)];
-        const got = pickResponder(bots, t0, companion);
+        const got = pickResponder([walkingBot(t0)], t0, companion);
         if (got) return got.nextReactAt - t0;
       }
       throw new Error('한 번도 안 뽑혔다');
     };
-    expect(pick(true)).toBeLessThan(pick(false));
+    expect(lockFor(true)).toBe(0);
+    expect(lockFor(false)).toBe(0);
   });
 });
 

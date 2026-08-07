@@ -941,6 +941,9 @@ export class RoomDO {
     // 걸러야 할 곳은 말을 만드는 쪽이 아니라 **자리를 잡는 이 지점**이다.
     if (!hasContent(trigger)) return;
 
+    // 확률 게이트는 없앴다 — 알맹이 있는 말은 다 받는다 (BOT_REACT_CHANCE 의 상자).
+    // 남은 제동은 구조다: 이미 치는 중이면 안 뽑히고(speechHeld), 주제에 답할 빚이
+    // 남았으면 그 창에서는 빠진다(topicDue).
     const bot = pickResponder(bots, now, this.meta?.companionMode === true);
     if (!bot) return;
 
@@ -998,6 +1001,15 @@ export class RoomDO {
     //   은 id 가 붙어 있으므로 그 한 줄로 그 자리가 봇 확정이다.
     this.emitAsBot(bot.id, { t: 'chat', id: bot.id, nickname: bot.nickname, text, ts });
     this.rememberChat(bot.id, bot.nickname, text);
+    /*
+     * 이 창에 진 빚을 갚았다 (BotState.topicDue). 두 경로가 다 여기로 모이므로
+     * 제때 나간 주제 답도, 지각한 답도 같은 자리에서 지워진다.
+     *
+     * ★ 무슨 말이었는지는 안 따진다. speak 창에서 나간 봇의 한마디는 어차피 이
+     *   주제를 trigger 로 만든 것이고(tick 의 speakWindow), 아니라면 이미 대꾸를
+     *   허용한 뒤라는 뜻이다.
+     */
+    bot.topicDue = 0;
     // 뒷줄은 앞 줄 바로 뒤에 잇는다 — 사람은 한 생각을 두 번에 나눠 친다.
     // (tick 경로에서는 takeSpeech가 이미 걸어 뒀으므로 여기 tail은 null이다.)
     //
@@ -1099,6 +1111,10 @@ export class RoomDO {
       trigger,
       event,
       { [bot.id]: bot.facts },
+      // ★ 무대는 `synthetic` 이 아니라 **판이 도는가**로 갈린다 (RoundContext 의 상자).
+      //   월드의 판은 rooms.phase 를 'lobby' 로 둔 채 돌아서, 오리진 혼자서는
+      //   주제가 떠 있는 45초와 라운지 잡담을 구분할 방법이 없다.
+      { active: this.roundActive(), topic: this.speakTopic() },
       companion ? Math.max(budget, COMPANION_AGENT_TIMEOUT_MS) : budget,
     );
     const line = lines.find((l) => l.player_id === bot.id);

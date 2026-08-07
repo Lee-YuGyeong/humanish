@@ -46,6 +46,35 @@ export interface AgentLine {
   facts?: string[];
 }
 
+/**
+ * 지금 이 방에서 **판이 도는가**, 돈다면 화면에 무슨 주제가 떠 있는가.
+ *
+ * ┌─ 왜 이걸 보내야 하는가 (신고: "주제가 나와도 가만히 있는다") ───────────────┐
+ * │ 오리진은 월드 AI 를 `synthetic` 하나로만 판별해서 **늘 라운지 무대**를 깔았다  │
+ * │ (lib/agent/generate.ts 의 WORLD_RULES: "지금은 판이 시작되기 전이고 … 아직    │
+ * │ 아무도 질문을 받지 않았다"). 그런데 월드의 판은 rooms.phase 를 'lobby' 로     │
+ * │ 둔 채 돈다 (app/api/room/start-world) — 즉 **주제가 떠 있는 45초 동안에도**   │
+ * │ AI 는 "판은 아직 시작 전"이라고 들었다. 주제는 [지금 답할 질문]이 아니라      │
+ * │ [방금 너한테 온 말]로 들어갔고, 제 규칙과 어긋나는 답은 오리진의 거르개       │
+ * │ (fallback·isEvasive·상한)에 걸려 통째로 버려졌다 — 그래서 침묵이다.          │
+ * │                                                                            │
+ * │ 무대를 가르는 건 `synthetic` 이 아니라 **판이 도는가**다 (AgentContext.setting │
+ * │ 의 주석이 처음부터 그렇게 적어 두었다). 그 사실을 아는 건 워커뿐이라 여기서   │
+ * │ 실어 보낸다.                                                                │
+ * └──────────────────────────────────────────────────────────────────────────┘
+ */
+export interface RoundContext {
+  /** 판이 돌고 있는가. 라운지면 false. */
+  active: boolean;
+  /**
+   * speak 창에 떠 있는 주제. 그 밖의 단계면 null.
+   *
+   * trigger 와 **같은 문자열일 때만** "주제에 답하는 차례"다 — 같은 speak 창이라도
+   * 사람 말에 대꾸하는 발화는 trigger 가 그 사람 말이라 여기와 다르다.
+   */
+  topic: string | null;
+}
+
 export async function fetchAgentLines(
   env: Env,
   roomId: string,
@@ -63,6 +92,8 @@ export async function fetchAgentLines(
    * 보관만 하는 값이라 워커는 내용을 들여다보지 않는다 (AgentLine.facts).
    */
   facts: Record<string, string[]>,
+  /** 판 상황. 오리진이 무대(라운지/게임)와 질문 틀을 이걸로 고른다. */
+  round: RoundContext,
   timeoutMs: number,
 ): Promise<AgentLine[]> {
   const url = `${env.NEXT_ORIGIN.replace(/\/$/, '')}/api/internal/world-agent`;
@@ -81,6 +112,8 @@ export async function fetchAgentLines(
         trigger,
         event,
         facts,
+        in_round: round.active,
+        round_topic: round.topic,
       }),
       // speakAt을 넘겨 오는 답은 쓸 데가 없다. 호출부가 남은 시간을 그대로 넘긴다.
       // ★ 반드시 정수로 자른다. speakAt 은 읽는 시간(rand)이 섞여 **소수**라, 그대로

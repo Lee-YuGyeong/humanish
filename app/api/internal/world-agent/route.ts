@@ -84,6 +84,16 @@ interface Body {
    *   그대로 실어 보낸다 — 규칙이 두 벌이 되면 그 순간 갈린다 (lib/mp/가 겪는 문제).
    */
   facts?: Record<string, unknown>;
+  /**
+   * 지금 이 방에서 **판이 도는가** (worker/src/world-agent.ts 의 RoundContext).
+   *
+   * ★ 이 값 없이는 여기서 알 수 없다. 월드의 판은 `rooms.phase` 를 'lobby' 로 둔 채
+   *   돌기 때문에(app/api/room/start-world), buildWorldRoster 가 보는 값만으로는
+   *   "주제가 떠 있는 45초"와 "라운지 잡담"이 똑같아 보인다.
+   */
+  in_round?: boolean;
+  /** speak 창에 떠 있는 주제. trigger 와 같으면 **주제에 답하는 차례**다. */
+  round_topic?: string | null;
 }
 
 interface ChatLine {
@@ -208,6 +218,39 @@ export async function POST(req: Request): Promise<Response> {
     const event = typeof body.event === 'string' ? body.event.slice(0, MAX_TEXT_LEN) : null;
 
     /*
+     * ┌─ 무대는 `synthetic` 이 아니라 **판이 도는가**로 가른다 ────────────────────┐
+     * │ (신고 2026-08-07: "주제가 나오면 가만히 있는다")                            │
+     * │                                                                            │
+     * │ 여기는 월드 AI 면 무조건 setting:'world' 를 깔았다. 그 무대의 규칙은        │
+     * │ "지금은 판이 시작되기 전이고 … 아직 아무도 질문을 받지 않았다"이다          │
+     * │ (generate.ts 의 WORLD_RULES). 그런데 월드의 판은 rooms.phase 를 'lobby' 로  │
+     * │ 둔 채 돌아서, **주제가 화면에 떠 있는 45초 동안에도** AI 는 그 문장을 듣고  │
+     * │ 있었다. 주제는 [지금 답할 질문]이 아니라 [방금 너한테 온 말]로 들어갔고,    │
+     * │ 제 규칙과 어긋나는 답은 아래 거르개(fallback·isEvasive·상한)에 걸려         │
+     * │ 통째로 버려졌다 — 그래서 화면에서는 침묵으로 보였다.                        │
+     * │                                                                            │
+     * │ AgentContext.setting 의 주석이 처음부터 이렇게 적어 두었다:                 │
+     * │ **"두 무대의 차이는 판이 돌고 있는가뿐이다."** 그 사실을 아는 건 워커뿐이라 │
+     * │ 이제 워커가 실어 보낸다 (in_round).                                        │
+     * │                                                                            │
+     * │ ★ 인물(persona)은 그대로 월드 인물이다. 판이 열렸다고 다른 사람이 되면      │
+     * │   말투가 통째로 갈리고 그게 곧 좌석 지문이다 (worldPersonaFor 의 상자).     │
+     * │ ★ synthetic 은 여전히 synthetic 이다 — no_log·deadline_ms 는 players 행이   │
+     * │   없다는 사실에 딸린 값이라 무대와 무관하다.                                │
+     * └────────────────────────────────────────────────────────────────────────────┘
+     */
+    const inRound = body.in_round === true;
+    const roundTopic =
+      typeof body.round_topic === 'string' ? body.round_topic.slice(0, MAX_TEXT_LEN) : null;
+    /*
+     * 같은 speak 창이라도 **사람 말에 대꾸하는 발화**는 trigger 가 그 사람 말이라
+     * 주제와 다르다. 주제 그 자체가 trigger 로 올 때만 "판이 던진 질문"이다 —
+     * 그때는 되묻지 않는다 (되물어도 답할 상대가 없고, 창이 닫히면 그냥 허공이다.
+     * generate.ts 의 askBack 상자가 게임 question 페이즈를 빼 두는 것과 같은 이유).
+     */
+    const answeringTopic = inRound && trigger !== null && trigger === roundTopic;
+
+    /*
      * ★ 지금 몇 시인가 (lib/agent/clock.ts). **한 요청 안에서 한 번만 읽는다** —
      *   봇마다 따로 읽으면 자정을 넘기는 순간 같은 방의 두 봇이 다른 날짜를 말한다.
      */
@@ -232,12 +275,14 @@ export async function POST(req: Request): Promise<Response> {
         context: {
           persona,
           facts: factsOf(b.id),
-          // 월드 AI는 무대도 라운지다 — 시스템 프롬프트에서 게임 문장이 전부 빠진다
-          // (generate.ts WORLD_RULES). 페르소나가 "게임 중이 아니다"로 게임 프레임을
-          // 되받아치던 구조를 대체한다. 게임이 시작된 방의 진짜 봇은 게임 무대 그대로.
-          setting: b.synthetic ? ('world' as const) : ('game' as const),
+          // 판이 안 도는 월드 AI 만 라운지 무대다 — 시스템 프롬프트에서 게임 진행이
+          // 빠진다 (generate.ts WORLD_RULES). 판이 돌기 시작하면 **월드 AI 도 게임
+          // 무대**로 넘어간다 (위 상자). 게임이 시작된 방의 진짜 봇은 늘 게임 무대다.
+          setting: b.synthetic && !inRound ? ('world' as const) : ('game' as const),
           now,
-          phase: 'chat' as const,
+          // 주제에 답하는 차례는 게임의 question 페이즈와 같은 자리다 — 그래야
+          // generate.ts 가 [지금 답할 질문] 틀로 물어본다. 나머지는 자유 채팅이다.
+          phase: answeringTopic ? ('question' as const) : ('chat' as const),
           question: trigger ?? undefined,
           worldEvent: trigger ? undefined : (event ?? undefined),
           /*
@@ -250,7 +295,7 @@ export async function POST(req: Request): Promise<Response> {
            *   사람도 문 열고 들어온 사람에게 인사부터 하지 질문부터 하지 않는다.
            */
           askBack:
-            !trigger && event
+            answeringTopic || (!trigger && event)
               ? false
               : Math.random() < (trigger ? ASK_BACK_CHANCE : ASK_BACK_CHANCE_INITIATE),
           visibleHistory,

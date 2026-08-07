@@ -30,6 +30,12 @@ export interface AgentContext {
    * ★ "게임이 아닌 곳"이 아니다. 월드 AI는 phase === 'lobby'일 때만 세워지므로
    *   그 방은 이 게임의 대기실이고, 서 있는 사람은 전부 판을 기다리는 참가자다.
    *   두 무대의 차이는 **판이 돌고 있는가**뿐이다 (WORLD_RULES의 상자).
+   *
+   * ★ 그래서 **월드 AI 라고 늘 'world' 가 아니다.** 월드의 판은 rooms.phase 를
+   *   'lobby' 로 둔 채 돌아서(app/api/room/start-world), 판이 열리면 같은 아바타가
+   *   'game' 무대로 넘어온다 — 부르는 쪽이 in_round 로 알려 준다
+   *   (app/api/internal/world-agent). 한동안 이게 없어서 주제가 떠 있는 45초 동안
+   *   AI 가 "판은 아직 시작 전"이라고 듣고 있었고, 그 자리가 통째로 침묵이었다.
    */
   setting?: 'game' | 'world';
   question?: string;
