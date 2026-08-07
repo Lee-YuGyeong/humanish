@@ -66,6 +66,12 @@ const MAX_NICK_LEN = 20;
  */
 const MAX_REPLY_LEN = 42;
 
+/**
+ * 워커의 예산에서 빼 두는 왕복 여유 (ms) — self-fetch(/api/agent) 왕복 + 좌석 명단 조회.
+ * 이만큼을 빼야 **오리진이 워커보다 먼저** 끊긴다 (deadline_ms 를 계산하는 자리의 상자).
+ */
+const AGENT_ROUNDTRIP_HEADROOM_MS = 3_500;
+
 interface Body {
   room_id?: string;
   player_ids?: string[];
@@ -94,6 +100,12 @@ interface Body {
   in_round?: boolean;
   /** speak 창에 떠 있는 주제. trigger 와 같으면 **주제에 답하는 차례**다. */
   round_topic?: string | null;
+  /**
+   * 워커가 이 요청을 **얼마나 기다려 주는가** (ms). 여기서 왕복 여유를 빼서
+   * LLM 컷(deadline_ms)을 잡는다 — 상수로 두면 워커의 단계 클램프와 갈린다
+   * (아래 deadline_ms 계산 자리의 상자). 안 오면(구 워커) 예전 값으로 떨어진다.
+   */
+  budget_ms?: number;
 }
 
 interface ChatLine {
@@ -119,9 +131,26 @@ interface ChatLine {
  * │ 인물이 통째로 갈렸다.** 워커도 좌석 id 목록이 바뀌면 봇을 다시 세우므로        │
  * │ (room-do.ts 의 `if (before !== after) this.bots = null`) 그대로 새 인물이 된다.│
  * │                                                                          │
- * │ 그래서 **id 를 해시한다.** 월드 AI 의 id 는 stableUuid(roomId, index) 라      │
- * │ 자리가 밀려도 그대로고, roomId 가 이미 섞여 있어 방마다도 갈린다.             │
+ * │ 그래서 **id 를 해시한다.** …고 적어 두었는데, 그게 틀렸다. 아래를 볼 것.      │
  * │ ★ 자리에서 파생되는 값은 무엇이든 이 자리에 쓰지 않는다 — 자리는 움직인다.    │
+ * └──────────────────────────────────────────────────────────────────────────┘
+ *
+ * ┌─ ★ id 도 자리에서 파생된다 (2026-08-07, 이 주석이 틀렸었다) ────────────────┐
+ * │ 위 상자는 "월드 AI 의 id 는 stableUuid(roomId, index) 라 자리가 밀려도       │
+ * │ 그대로"라고 적어 두었다. **아니다** — lib/server/world-ai.ts 는              │
+ * │ `stableUuid(roomId, seat)` 이고 그 seat 는 `maxTaken + 1`, 즉 **사람이 새    │
+ * │ 자리를 채울 때마다 밀린다.** 그러니 id 를 해시해도 seat 를 해시한 것과 같고,  │
+ * │ 위 상자가 없애려던 증상("입·퇴장 한 번마다 인물이 통째로 갈렸다")이 그대로    │
+ * │ 살아 있었다.                                                                │
+ * │                                                                            │
+ * │ world-ai.ts 쪽을 고칠 수는 없다. 거기서 id 를 자리에 묶은 건 **닉네임이       │
+ * │ 익명{seat} 이라서** 다 — 자리가 밀렸는데 id 가 그대로면 워커의 명부 diff 가   │
+ * │ 아무 이벤트도 못 내고 같은 익명N 이 화면에 둘 남는다 (그 파일의 상자).        │
+ * │                                                                            │
+ * │ 그래서 **인물을 id 가 아니라 방에 묶는다.** 월드 AI 는 방마다 1대이고         │
+ * │ (AI_SEATS_PER_ROUND), 방 id 는 판이 끝날 때까지 안 움직이는 유일한 값이다.    │
+ * │ AI 를 여럿으로 늘려도 갈리도록 **좌석 순 몇 번째 AI 인가**를 같이 넣는다 —    │
+ * │ 그 순번은 자리가 통째로 밀려도 그대로다.                                     │
  * └──────────────────────────────────────────────────────────────────────────┘
  */
 function worldPersonaFor(stableId: string): (typeof WORLD_PERSONAS)[number] {
@@ -264,10 +293,21 @@ export async function POST(req: Request): Promise<Response> {
       return Array.isArray(v) ? mergeFacts([], v) : [];
     };
 
+    /*
+     * 월드 AI 의 **좌석 순 순번**. 자리도 id 도 사람이 드나들 때마다 밀리지만
+     * 이 순번은 안 밀린다 (worldPersonaFor 의 두 번째 상자). 명단은 이미 좌석 순이다
+     * (buildWorldRoster 의 seats.sort).
+     */
+    const worldOrdinal = new Map(
+      roster.seats.filter((s) => s.synthetic).map((s, i) => [s.id, i] as const),
+    );
+
     const plan = bots.map((b) => {
-      // 월드 AI 는 id 로 고른다 — 자리는 사람이 드나들 때마다 밀린다 (worldPersonaFor 의 상자).
+      // 월드 AI 는 **방 + 순번**으로 고른다 — 자리도 id 도 밀린다 (worldPersonaFor 의 상자).
       // 게임 방의 진짜 봇은 좌석이 고정이라 seat 그대로다.
-      const persona = b.synthetic ? worldPersonaFor(b.id) : personaForSeat(b.seat);
+      const persona = b.synthetic
+        ? worldPersonaFor(`${roomId}:${worldOrdinal.get(b.id) ?? 0}`)
+        : personaForSeat(b.seat);
       return {
         player_id: b.id,
         persona,
@@ -310,6 +350,14 @@ export async function POST(req: Request): Promise<Response> {
     const priorFactsOf = new Map(plan.map((p) => [p.player_id, p.priorFacts]));
 
     const synthetic = bots.some((b) => b.synthetic);
+    /*
+     * 워커가 기다려 주는 시간. 구 워커는 안 보내므로 예전 상수(22초)로 떨어진다 —
+     * 그때도 동작은 하고, 다만 단계 클램프와 어긋날 뿐이다.
+     */
+    const budgetMs =
+      typeof body.budget_ms === 'number' && Number.isFinite(body.budget_ms)
+        ? Math.max(0, Math.round(body.budget_ms))
+        : 22_000 + AGENT_ROUNDTRIP_HEADROOM_MS;
     const res = await fetch(`${AGENT_SELF_URL}/api/agent`, {
       method: 'POST',
       headers: agentHeaders(),
@@ -330,8 +378,30 @@ export async function POST(req: Request): Promise<Response> {
          *
          *   게임 방의 진짜 봇은 그대로 8초다 (§12.3) — 어차피 speakAt 을 넘긴 답은
          *   버려지므로 더 기다릴 이유가 없다.
+         *
+         * ┌─ ★ 22초 상수를 버리고 **워커가 실제로 기다리는 시간**에서 뺀다 ──────────┐
+         * │ (2026-08-07, 실측으로 잡았다)                                            │
+         * │                                                                          │
+         * │ 여기 22_000 은 /api/agent 의 MAX_DEADLINE_MS 와 짝이 되라고 손으로 적어    │
+         * │ 둔 값이었는데, **두 곳이 갈렸다** — MAX_DEADLINE_MS 를 28초로 올려도       │
+         * │ 여기가 22초를 보내니 아무것도 안 바뀌었다. 로그에서 /api/agent 가 정확히   │
+         * │ 22.2초에 붙어 있는 걸로 잡았다.                                          │
+         * │                                                                          │
+         * │ 게다가 상수로는 애초에 맞출 수가 없다. 워커의 대기는 상수가 아니라        │
+         * │ **남은 단계 시간**으로 조여지기 때문이다(room-do 의 upgradeSpeech) —      │
+         * │ speak 창에서는 20초대, 라운지에서는 32초다. 상수를 어느 쪽에 맞춰도        │
+         * │ 나머지 한쪽이 틀린다.                                                    │
+         * │                                                                          │
+         * │ 그래서 워커가 제 예산(budget_ms)을 실어 보내고, 여기서 왕복 여유만 뺀다.   │
+         * │ 상한은 /api/agent 가 MAX_DEADLINE_MS 로 다시 누르므로 여기서 또 적지       │
+         * │ 않는다 — 값이 두 군데 살면 또 갈린다.                                    │
+         * │                                                                          │
+         * │ ★ 반드시 **워커보다 먼저** 끊겨야 한다. 워커가 먼저 끊으면 이 요청이       │
+         * │   통째로 취소돼 world_agent_logs 의 after() insert 까지 같이 죽는다 —     │
+         * │   왜 조용했는지 기록조차 안 남는다 (COMPANION_AGENT_TIMEOUT_MS 의 상자).  │
+         * └──────────────────────────────────────────────────────────────────────────┘
          */
-        ...(synthetic ? { deadline_ms: 22_000 } : {}),
+        ...(synthetic ? { deadline_ms: Math.max(1_000, budgetMs - AGENT_ROUNDTRIP_HEADROOM_MS) } : {}),
       }),
     });
     if (!res.ok) {

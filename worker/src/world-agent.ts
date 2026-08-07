@@ -114,6 +114,16 @@ export async function fetchAgentLines(
         facts,
         in_round: round.active,
         round_topic: round.topic,
+        /*
+         * ★ **여기가 얼마나 기다려 주는지**를 알려 준다. 오리진은 이 값에서 왕복 여유만
+         *   빼서 제 LLM 컷을 잡는다 — 그래야 오리진이 반드시 먼저 끊긴다.
+         *
+         *   예전엔 오리진이 22초를 손으로 박아 뒀는데, 이 대기는 상수가 아니라
+         *   **남은 단계 시간**으로 조여진다 (room-do 의 upgradeSpeech: speak 창에서는
+         *   20초대, 라운지에서는 32초). 상수로는 어느 한쪽이 반드시 틀린다 —
+         *   실제로 갈려서 오리진 상한을 올려도 아무것도 안 바뀌었다.
+         */
+        budget_ms: Math.max(0, Math.round(timeoutMs)),
       }),
       // speakAt을 넘겨 오는 답은 쓸 데가 없다. 호출부가 남은 시간을 그대로 넘긴다.
       // ★ 반드시 정수로 자른다. speakAt 은 읽는 시간(rand)이 섞여 **소수**라, 그대로
