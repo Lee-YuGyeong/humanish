@@ -287,53 +287,6 @@ function RoleCard() {
   );
 }
 
-/**
- * 왼쪽 상단에 **계속 남는 내 역할** (2026-08-07 요청). 머리말(page.tsx)이 그린다.
- *
- * 예전에는 방 코드 줄 밑에 회색 한 줄이었다. 판이 도는 동안 제일 자주 확인하는
- * 값인데 코드·이름과 같은 크기·같은 색이라 눈에 걸리지 않았다 — 카드와 **같은 색**
- * (ROLE_CARD.color)으로 테두리를 둘러 한눈에 잡히게 한다.
- *
- * ★ 이름·색의 원본은 ROLE_CARD 하나다. 여기서 다시 적으면 카드와 머리말이 같은
- *   역할을 다른 이름으로 부른다.
- * ★ myRole 은 t:'role' 로 **내 것만** 온 값이다 (§18.2). 남의 역할은 여기 오지
- *   않고, 봇 좌석에는 소켓이 없어 이 뱃지가 갈 곳도 없다 (I1).
- * ★ 카드를 확인하기 전(roleAck=false)에는 뜨지 않는다. 그때는 화면 한가운데의
- *   카드가 같은 것을 더 크게 들고 있다 — 뒤에서 먼저 흘리면 딜 연출이 죽는다.
- * ★ 새 판이 시작되면 myRole·roleAck 이 같이 걷히고(roundtable-store 의 applyRound)
- *   이 뱃지도 사라진다. 지난 판의 역할이 남아 있으면 그게 더 나쁘다.
- */
-export function MyRoleBadge() {
-  const myRole = useRoundtableStore((s) => s.myRole);
-  const roleAck = useRoundtableStore((s) => s.roleAck);
-
-  if (myRole === null || !roleAck) return null;
-  const card = ROLE_CARD[myRole];
-
-  return (
-    <div
-      className="mt-2 inline-flex items-center gap-2 rounded-xl px-3 py-1.5 backdrop-blur"
-      style={{
-        background: `color-mix(in srgb, ${card.color} 14%, rgba(0,0,0,0.6))`,
-        border: `1px solid color-mix(in srgb, ${card.color} 55%, transparent)`,
-        boxShadow: `0 0 20px color-mix(in srgb, ${card.color} 20%, transparent)`,
-      }}
-    >
-      <span style={{ color: card.color }}>
-        {myRole === 'actor' ? <MaskIcon size={18} /> : <EyeIcon size={18} />}
-      </span>
-      <span className="leading-tight">
-        <span className="block text-[9px] uppercase tracking-[0.2em] text-neutral-400">
-          내 역할
-        </span>
-        <span className="block text-[13px] font-black" style={{ color: card.color }}>
-          {card.name}
-        </span>
-      </span>
-    </div>
-  );
-}
-
 /* ─────────────────────────────── 좌석 메모 ─────────────────────────────── */
 
 /**
@@ -342,29 +295,43 @@ export function MyRoleBadge() {
  * 색은 이 화면이 이미 쓰는 말과 맞춘다 — 연기자는 월드 금색(#d4a373), AI 는
  * emerald(ROLE_TAG.ai), 사람은 시민 카드의 하늘색(ROLE_CARD.citizen). 여기서
  * 새 색을 지어내면 결과 화면과 메모가 서로 다른 색으로 같은 말을 하게 된다.
+ *
+ * ★ 라벨 칸은 **고정 너비**다 (아래 chip). '?' 와 '연기자' 는 글자 수가 달라서,
+ *   폭을 글자에 맡기면 한 칸 누를 때마다 명단 전체가 좌우로 출렁인다.
  */
 const GUESS_LOOK: Record<'none' | SeatGuess, { label: string; color: string }> = {
-  none: { label: '?', color: '#737373' },
+  none: { label: '?', color: '#6b6b6b' },
   human: { label: '사람', color: '#7dd3fc' },
   actor: { label: '연기자', color: '#d4a373' },
   ai: { label: 'AI', color: '#34d399' },
 };
 
 /**
- * 왼쪽의 **내 메모** — 누가 뭐라고 생각하는지 눌러서 적어 둔다 (2026-08-07 요청).
- * 한 번 누를 때마다 ? → 사람 → 연기자 → AI → ? 로 돈다.
+ * 왼쪽 판 하나 — **맨 위가 내 역할(고정), 그 밑이 좌석 메모**다 (2026-08-07 요청).
+ * 남의 자리를 누를 때마다 ? → 사람 → 연기자 → AI → ? 로 돈다.
  *
- * ┌─ 이건 화면 밖으로 나가지 않는다 ───────────────────────────────────────────┐
- * │ 값은 roundtable-store 의 guesses 하나뿐이고 소켓·서버와 아무 관계가 없다.   │
- * │ 그래서 무엇을 찍든 I1 과 무관하다. **거꾸로가 위험하다** — 여기에 서버가    │
- * │ 준 정체(reveal.identities)를 미리 채워 넣지 마라. 그 순간 이 판은 남의      │
- * │ 역할을 그리는 자리가 된다.                                                 │
+ * ┌─ 왜 역할과 메모가 한 판인가 ───────────────────────────────────────────────┐
+ * │ 처음에는 역할 뱃지가 따로 떠 있고 그 밑에 메모가 붙어서, 같은 화면에        │
+ * │ 「연기자」가 4px 떨어져 두 번 적혔다. 하나로 합치면 내 자리가 명단의 맨 위   │
+ * │ 라는 것도 같이 말해진다 — 이 판은 **한 방의 자리 전부**이고, 그중 첫 줄만   │
+ * │ 짐작이 아니라 아는 값이다.                                                 │
  * └────────────────────────────────────────────────────────────────────────────┘
  *
+ * ┌─ 메모는 화면 밖으로 나가지 않는다 ─────────────────────────────────────────┐
+ * │ 값은 roundtable-store 의 guesses 하나뿐이고 소켓·서버와 아무 관계가 없다.   │
+ * │ 그래서 무엇을 찍든 I1 과 무관하다. **거꾸로가 위험하다** — 여기에 서버가    │
+ * │ 준 정체(reveal.identities)를 채워 넣지 마라. 그 순간 이 판은 남의 역할을    │
+ * │ 그리는 자리가 된다. 첫 줄에 오는 myRole 은 t:'role' 로 **내 것만** 온       │
+ * │ 값이라 예외다 (§18.2).                                                     │
+ * └────────────────────────────────────────────────────────────────────────────┘
+ *
+ * ★ 이름·색의 원본은 ROLE_CARD 하나다 (역할 카드와 같은 것을 읽는다). 여기서 다시
+ *   적으면 카드와 이 판이 같은 역할을 다른 이름·다른 색으로 부른다.
  * ★ 명단은 투표 패널과 **같은 useSeats()** 다. 여기서 따로 모으면 판 중간에 들어온
  *   사람이 한쪽에만 뜬다. 이름은 '익명N', 점 색은 좌석 색으로 좌석표와 맞춘다.
- * ★ 내 자리는 「나」로 두고 못 누르게 한다. 내 역할은 짐작할 것이 아니다
- *   (왼쪽 위 MyRoleBadge 가 이미 말하고 있다).
+ * ★ 카드를 확인하기 전(roleAck=false)에는 역할 이름을 쓰지 않는다. 그때는 화면
+ *   한가운데의 카드가 같은 것을 더 크게 들고 있다 — 뒤에서 먼저 흘리면 딜 연출이
+ *   죽는다. 새 판이 열리면 myRole·roleAck·guesses 가 한자리에서 같이 걷힌다.
  * ★ **걸어 다니는 동안에는 못 누른다.** 그때는 포인터가 잠겨 커서가 없기 때문이다
  *   (world-scene 의 포인터락). ESC 로 커서를 되찾거나, 투표처럼 이동이 잠긴 단계
  *   에서는 그냥 눌린다 — 어차피 찍어 두고 싶은 순간이 거기다.
@@ -374,51 +341,112 @@ export function SeatNotes() {
   const seats = useSeats();
   const guesses = useRoundtableStore((s) => s.guesses);
   const cycleGuess = useRoundtableStore((s) => s.cycleGuess);
+  const myRole = useRoundtableStore((s) => s.myRole);
+  const roleAck = useRoundtableStore((s) => s.roleAck);
 
   if (seats.length < 2) return null;
 
+  const me = seats.find((s) => s.isSelf) ?? null;
+  const others = seats.filter((s) => !s.isSelf);
+  // 아직 카드를 안 봤으면 이름을 쓰지 않는다 (위 머리말). 색도 그때는 월드 금색이다.
+  const mine = myRole && roleAck ? ROLE_CARD[myRole] : null;
+  const accent = mine?.color ?? '#d4a373';
+
   return (
-    <div className="pointer-events-auto mt-3 w-[9.5rem] rounded-xl border border-white/10 bg-black/55 p-1.5 backdrop-blur">
-      <p className="px-1.5 pb-1 text-[8px] uppercase tracking-[0.2em] text-neutral-500">내 메모</p>
-      <ul className="flex flex-col gap-0.5">
-        {seats.map((s) => {
-          const look = GUESS_LOOK[s.isSelf ? 'none' : (guesses[s.id] ?? 'none')];
+    <div
+      className={`${cardStyles.panel} mt-3 w-[11.5rem] overflow-hidden rounded-2xl`}
+      style={{ '--rc': accent } as React.CSSProperties}
+    >
+      {/* ── 맨 위: 내 역할. 짐작이 아니라 아는 값이라 못 누른다 ── */}
+      <div
+        className="flex items-center gap-2.5 px-3 py-2.5"
+        style={{ borderBottom: `1px solid color-mix(in srgb, ${accent} 22%, transparent)` }}
+      >
+        <span
+          aria-hidden
+          className="grid h-9 w-9 shrink-0 place-items-center rounded-full"
+          style={{
+            color: accent,
+            border: `1px solid color-mix(in srgb, ${accent} 50%, transparent)`,
+            background: `radial-gradient(circle, color-mix(in srgb, ${accent} 18%, transparent), transparent 70%)`,
+            boxShadow: `0 0 16px color-mix(in srgb, ${accent} 25%, transparent)`,
+          }}
+        >
+          {/* 확인 전에는 가면을 미리 보여주지 않는다 — 그림도 역할을 말한다 */}
+          {mine && myRole === 'actor' ? <MaskIcon size={18} /> : <EyeIcon size={18} />}
+        </span>
+        <span className="min-w-0 leading-tight">
+          <span className="block text-[8px] uppercase tracking-[0.22em] text-neutral-500">
+            내 역할
+          </span>
+          <span
+            className="block truncate text-[15px] font-black"
+            style={{
+              color: mine ? accent : '#8a8378',
+              textShadow: mine ? `0 0 18px color-mix(in srgb, ${accent} 45%, transparent)` : undefined,
+            }}
+          >
+            {/* 역할이 아직 안 온 것과 카드를 안 누른 것은 다른 상태다 */}
+            {mine ? mine.name : myRole ? '카드 확인' : '대기 중'}
+          </span>
+          {me ? (
+            <span className="block truncate font-mono text-[9px] text-neutral-500">
+              {me.nickname} · 나
+            </span>
+          ) : null}
+        </span>
+      </div>
+
+      {/* ── 그 밑: 남의 자리. 눌러서 찍는다 ── */}
+      <ul className="flex flex-col gap-1 p-1.5">
+        {others.map((s) => {
+          const look = GUESS_LOOK[guesses[s.id] ?? 'none'];
+          // '?' 는 값이 아니라 **키가 없는 것**이다 (roundtable-store) — 그래서
+          // 라벨과 비교하지 않고 키를 직접 본다.
+          const marked = s.id in guesses;
           return (
             <li key={s.id}>
               <button
                 type="button"
-                disabled={s.isSelf}
                 onClick={() => cycleGuess(s.id)}
-                aria-label={`${s.nickname} — 지금 ${s.isSelf ? '나' : look.label}`}
-                className="flex w-full items-center gap-1.5 rounded-lg px-1.5 py-1 text-left transition-colors enabled:cursor-pointer enabled:hover:bg-white/[0.07] disabled:cursor-default"
+                aria-label={`${s.nickname} — 지금 ${look.label}`}
+                className="flex w-full cursor-pointer items-center gap-2 rounded-lg px-2 py-1.5 text-left transition-colors hover:bg-white/[0.07]"
+                style={
+                  marked
+                    ? { background: `color-mix(in srgb, ${look.color} 10%, transparent)` }
+                    : undefined
+                }
               >
                 <span
                   aria-hidden
-                  className="h-1.5 w-1.5 shrink-0 rounded-full"
+                  className="h-2 w-2 shrink-0 rounded-full"
                   style={{ backgroundColor: seatColor(s.seat) }}
                 />
-                <span className="min-w-0 flex-1 truncate text-[10px] text-neutral-300">
+                <span className="min-w-0 flex-1 truncate text-[11px] text-neutral-300">
                   {s.nickname}
                 </span>
                 <span
-                  className="shrink-0 rounded px-1 py-px text-[9px] font-bold leading-tight"
-                  style={
-                    s.isSelf
-                      ? { color: '#a3a3a3' }
-                      : {
-                          color: look.color,
-                          background: `color-mix(in srgb, ${look.color} 16%, transparent)`,
-                          border: `1px solid color-mix(in srgb, ${look.color} 40%, transparent)`,
-                        }
-                  }
+                  className="w-[2.9rem] shrink-0 rounded-md py-[1px] text-center text-[9px] font-bold leading-normal"
+                  style={{
+                    color: look.color,
+                    background: `color-mix(in srgb, ${look.color} 16%, transparent)`,
+                    border: `1px solid color-mix(in srgb, ${look.color} ${marked ? 45 : 22}%, transparent)`,
+                  }}
                 >
-                  {s.isSelf ? '나' : look.label}
+                  {look.label}
                 </span>
               </button>
             </li>
           );
         })}
       </ul>
+
+      {/* 처음 한 번만. 한 칸이라도 찍었으면 조작법을 설명할 이유가 없다 */}
+      {Object.keys(guesses).length === 0 ? (
+        <p className="px-3 pb-2 text-[8px] leading-relaxed text-neutral-600">
+          눌러서 표시 — ? → 사람 → 연기자 → AI
+        </p>
+      ) : null}
     </div>
   );
 }
