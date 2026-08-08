@@ -618,6 +618,22 @@ describe('★ 월드 시작 신호 (world_started_at)', () => {
     await waitFor(() => expect(nav.replace).toHaveBeenCalledWith('/world?code=UFJR'));
   });
 
+  it('★ 넘어가는 동안 좌석판을 그리지 않는다', async () => {
+    // 신고(2026-08-08): 시작 순간 전원의 자리가 다시 섞이는데, /world 로드가 끝날
+    // 때까지 대기방이 화면에 남아 있어 새 익명 번호가 한 번 그려졌다. DB 가 신호를
+    // 하나로 줄여도(bump_roster_seq 가드) 좌석 쿼리가 그 틈에 새 명단을 물어다 주면
+    // 그대로 보인다. 그래서 시작 신호가 온 순간부터는 덮개만 그린다 — 어떤 순서로
+    // 뭐가 도착하든 새 번호가 설 자리 자체가 없어야 한다 (room-lobby.tsx).
+    db.fetchRoomByCode.mockResolvedValue(room({ world_started_at: '2026-08-06T00:00:00.000Z' }));
+    renderRoom();
+
+    expect(await screen.findByText(/월드로 이동하는 중/)).toBeInTheDocument();
+    // 좌석 칸(li)이 하나라도 있으면 그 위에 번호가 뜬다 — 회귀다.
+    expect(screen.queryAllByRole('listitem')).toHaveLength(0);
+    expect(screen.queryByText('익명1')).not.toBeInTheDocument();
+    await waitFor(() => expect(nav.replace).toHaveBeenCalledWith('/world?code=UFJR'));
+  });
+
   it('★ 월드로 넘어가는 이동은 자리를 빼지 않는다', async () => {
     // 떠남 감지(useLeaveRoomOnExit)는 "주소가 바뀐 채 걷히면 나갔다"로 본다.
     // 월드 이동이 markLeft 없이 걷히면 **전원이 동시에 자리를 빼서** 마지막
