@@ -44,7 +44,7 @@ import {
 } from '@/lib/agent/generate';
 import { describeNow } from '@/lib/agent/clock';
 import { mergeFacts, pinFact } from '@/lib/agent/facts';
-import { AGENT_SELF_URL, agentHeaders } from '@/lib/agent/self-call';
+import { agentHeaders, agentSelfUrl } from '@/lib/agent/self-call';
 import { WORLD_PERSONAS } from '@/lib/agent/world-persona';
 import { apiError, readJson } from '@/lib/server/auth';
 import { getServiceClient } from '@/lib/server/supabase';
@@ -362,7 +362,7 @@ export async function POST(req: Request): Promise<Response> {
       typeof body.budget_ms === 'number' && Number.isFinite(body.budget_ms)
         ? Math.max(0, Math.round(body.budget_ms))
         : 22_000 + AGENT_ROUNDTRIP_HEADROOM_MS;
-    const res = await fetch(`${AGENT_SELF_URL}/api/agent`, {
+    const res = await fetch(`${agentSelfUrl(req)}/api/agent`, {
       method: 'POST',
       headers: agentHeaders(),
       body: JSON.stringify({

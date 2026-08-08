@@ -26,15 +26,19 @@
 		"binding": "ASSETS"
 	},
 
-	// 비밀이 아닌 값만 여기 둔다. 비밀은 `wrangler secret put` 으로 넣는다.
+	// ★ "vars" 는 비워 둔다. 계정 주소를 여기 적지 않는다 (2026-08-09).
 	//
-	// AGENT_SELF_URL  봇 답변 재생성(lib/agent/prefill.ts)이 /api/agent 를 self-fetch 할 주소.
-	//   기본값이 http://127.0.0.1:3000 이라 배포본에서는 엣지가 자기 컴퓨터를 부르려다 실패한다
-	//   (전환은 성공하고 봇 답변만 조용히 안 바뀐다). 자기 공개 주소를 못 박아 둔다 —
-	//   compatibility_flags 의 global_fetch_strictly_public 이 이 self-fetch 를 위한 것이다.
-	"vars": {
-		"AGENT_SELF_URL": "https://humanish.shdnjstkd12.workers.dev"
-	}
+	//   예전엔 AGENT_SELF_URL 로 `https://humanish.<계정>.workers.dev` 를 적어 뒀다.
+	//   봇 답변 재생성이 /api/agent 를 self-fetch 할 자기 공개 주소인데,
+	//   **배포 계정을 옮기면 커밋이 필요했고 옛 주소가 남아도 에러가 안 났다** —
+	//   전환은 성공하고 봇 답변만 조용히 폴백으로 떨어진다.
+	//   지금은 lib/agent/self-call.ts 가 **들어온 요청의 host 에서** 딴다. 설정이 없다.
+	//   (compatibility_flags 의 global_fetch_strictly_public 이 그 self-fetch 를 위한 것이다.)
+	//
+	//   여기에 값을 더할 때 알아둘 것: `wrangler deploy` 는 vars 를 **이 파일 기준으로
+	//   통째 덮어쓴다.** 대시보드에 손으로 넣은 평문 변수는 다음 배포에 사라진다.
+	//   배포마다 달라지는 값은 vars 가 아니라 `wrangler secret put` 으로 넣는다 —
+	//   비밀은 배포가 지우지 않는다.
 
 	// 아래 둘은 어댑터 기본 템플릿에 있지만 이 앱엔 필요 없어서 뺐다.
 	//
