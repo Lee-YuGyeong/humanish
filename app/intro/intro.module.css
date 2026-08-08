@@ -621,6 +621,218 @@
   overflow: hidden;
 }
 
+/* ── 배역 덱 (cast.tsx) ───────────────────────────────────────────────── */
+/*
+ * 왼쪽 줄 셋 · 오른쪽 인물 한 명. 색은 고른 배역이 정한다 — 두 축(--accent 와
+ * --accent-rgb)을 컴포넌트가 인라인으로 꽂는다. hex 하나로 안 되는 이유는
+ * rgba(…, 0.3) 처럼 **투명도를 섞어 쓰는 자리**가 많아서다.
+ *
+ * ★ 켜진 모양은 전부 `[aria-selected="true"]` 로 잡는다. 켜짐을 나타내는 클래스를
+ *   따로 두면 화면과 스크린리더가 서로 다른 말을 하게 된다 — 한쪽만 고치는 사고가
+ *   이 저장소에서 반복됐다.
+ */
+.castRow {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 0.7rem;
+  width: 100%;
+  padding: 1.15rem 1.3rem 1.25rem 1.5rem;
+  text-align: left;
+  color: inherit;
+  cursor: pointer;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 0.9rem;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.022), rgba(255, 255, 255, 0));
+  transition:
+    border-color 0.25s ease,
+    background 0.25s ease;
+}
+
+/* 왼쪽 레일 — 고른 줄에서만 자란다. 목록의 어디에 서 있는지가 곁눈으로 읽힌다 */
+.castRow::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 50%;
+  width: 2px;
+  height: 0;
+  border-radius: 0 2px 2px 0;
+  background: var(--accent);
+  transform: translateY(-50%);
+  transition: height 0.3s ease;
+}
+
+.castRow:hover {
+  border-color: rgba(var(--accent-rgb), 0.22);
+}
+
+.castRow:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+}
+
+.castRow[aria-selected="true"] {
+  border-color: rgba(var(--accent-rgb), 0.32);
+  background: linear-gradient(180deg, rgba(var(--accent-rgb), 0.07), rgba(255, 255, 255, 0));
+}
+
+.castRow[aria-selected="true"]::before {
+  height: 62%;
+}
+
+/*
+ * 이름과 설명은 **같은 세로선**에서 시작한다. 앞 판본은 이름 앞에 영문 라벨 알약을
+ * 세웠는데, 알약 너비가 배역마다 달라(AI · ACTOR · CITIZEN) 이름 셋의 왼쪽 끝이
+ * 계단처럼 어긋났다. 알약을 빼서 줄을 맞췄다 (사용자 지정 2026-08-08).
+ */
+.castName {
+  font-size: 1.7rem;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  color: #b3b3b3;
+  transition: color 0.25s ease;
+}
+
+.castRow[aria-selected="true"] .castName {
+  color: var(--accent);
+}
+
+.castLine {
+  font-size: 0.93rem;
+  font-weight: 300;
+  line-height: 1.95;
+  color: #7d7d7d;
+  transition: color 0.25s ease;
+}
+
+.castRow[aria-selected="true"] .castLine {
+  color: #c9c9c9;
+}
+
+/*
+ * 인물이 서는 자리. 그림 원본이 2:3 이라 액자도 2:3 이다 — 다른 비율로 두면
+ * object-fit 이 발이나 머리를 자른다.
+ *
+ * ★ touch-action: pan-y — 세로 스크롤은 브라우저에 그대로 두고 **가로만** 가져온다.
+ *   여기를 none 으로 두면 휴대폰에서 이 칸에 손이 닿는 동안 페이지가 스크롤되지 않는다.
+ */
+.castStage {
+  position: relative;
+  aspect-ratio: 2 / 3;
+  overflow: hidden;
+  border: 1px solid rgba(var(--accent-rgb), 0.18);
+  border-radius: 1.25rem;
+  background: #0b0b0b;
+  box-shadow: 0 45px 90px -60px rgba(var(--accent-rgb), 0.55);
+  touch-action: pan-y;
+  cursor: grab;
+  user-select: none;
+  transition:
+    border-color 0.35s ease,
+    box-shadow 0.35s ease;
+}
+
+.castStage:active {
+  cursor: grabbing;
+}
+
+.castStage:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 4px;
+}
+
+.castPlate {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  pointer-events: none;
+  transform: translateX(var(--off)) scale(0.97);
+  transition:
+    opacity 0.42s ease,
+    transform 0.42s cubic-bezier(0.22, 0.61, 0.36, 1);
+}
+
+.castPlate[data-active="true"] {
+  opacity: 1;
+  /* 끌고 있는 동안에는 --drag 만큼 손을 따라간다 (놓으면 0으로 돌아온다) */
+  transform: translateX(var(--drag, 0px)) scale(1);
+}
+
+.castImg {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  /* 얼굴이 액자 위쪽 1/3 에 오게 잡는다 — 셋의 눈높이가 대충 맞는다 */
+  object-position: 50% 14%;
+  filter: brightness(0.96) contrast(1.05) saturate(0.95);
+}
+
+/*
+ * 세 그림은 각자 배경을 물고 있다 (회색 · 연녹색 · 회색). 그대로 두면 페이지 위에
+ * 밝은 사각형 셋이 뜬다. 가장자리를 페이지 색(#080808)으로 눌러 인물만 남긴다 —
+ * .figureVeil 이 히어로 인물에 쓰는 것과 같은 수법이다.
+ */
+.castShade {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background:
+    radial-gradient(76% 58% at 50% 30%, rgba(8, 8, 8, 0) 0%, rgba(8, 8, 8, 0.4) 66%, rgba(8, 8, 8, 0.82) 100%),
+    linear-gradient(to top, #080808 0%, rgba(8, 8, 8, 0.6) 20%, rgba(8, 8, 8, 0) 48%);
+}
+
+/* 배역 색을 위에서 한 겹 흘린다. 셋을 갈아 끼워도 액자가 같은 화면에 있게 묶는 끈이다 */
+.castTint {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: radial-gradient(62% 42% at 50% 6%, rgba(var(--accent-rgb), 0.18), transparent 72%);
+  mix-blend-mode: screen;
+}
+
+.castCaption {
+  position: absolute;
+  left: 1.4rem;
+  bottom: 1.3rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  pointer-events: none;
+}
+
+.castCaptionTag {
+  font-size: 0.7rem;
+  letter-spacing: 0.3em;
+  text-transform: uppercase;
+  color: var(--accent);
+}
+
+.castCaptionName {
+  font-size: 1.9rem;
+  font-weight: 700;
+  letter-spacing: -0.03em;
+  color: #e8e8e8;
+}
+
+.castDot {
+  width: 26px;
+  height: 3px;
+  padding: 0;
+  border: none;
+  border-radius: 2px;
+  background: rgba(255, 255, 255, 0.14);
+  cursor: pointer;
+  transition:
+    background 0.25s ease,
+    width 0.25s ease;
+}
+
+.castDot[data-on="true"] {
+  width: 40px;
+  background: var(--accent);
+}
+
 @media (prefers-reduced-motion: reduce) {
   .scanline,
   .blink,
@@ -635,5 +847,15 @@
   /* 애니메이션만 끄면 0.92 로 굳는다. 원래 밝기로 세워 둔다 */
   .heroLamp {
     opacity: 1;
+  }
+
+  /* 인물이 미끄러지는 연출만 끈다 — 바뀌는 것 자체는 보여야 한다 */
+  .castPlate {
+    transition: opacity 0.15s ease;
+    transform: none;
+  }
+
+  .castPlate[data-active="true"] {
+    transform: none;
   }
 }

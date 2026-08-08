@@ -27,6 +27,18 @@ import Image from "next/image";
 import Link from "next/link";
 import { Space_Grotesk } from "next/font/google";
 import { PlayButton } from "@/components/play-button";
+import {
+  ROUND_DEFENSE_MS,
+  ROUND_FREECHAT_MS,
+  ROUND_REVEAL_MS,
+  ROUND_SPEAK_MS,
+  ROUND_TOPIC_MS,
+  ROUND_TOPIC_ROUNDS,
+  ROUND_VERDICT_MS,
+  ROUND_VOTE_MS,
+  VERDICT_MAX_REVOTES,
+} from "@/lib/mp/constants";
+import { CastDeck } from "./cast";
 import styles from "./intro.module.css";
 import { RulesProvider, RulesTrigger } from "./rules";
 
@@ -54,7 +66,8 @@ const HUMANS_IN_EXAMPLE = 5;
 /** 동그라미 한 개 = 자리 하나. `plus` 만 자리가 아니라 기호다 */
 type Seat = "human" | "ai" | "unknown" | "plus";
 
-const seatsOf = (n: number, kind: Seat): Seat[] => Array.from({ length: n }, () => kind);
+const seatsOf = (n: number, kind: Seat): Seat[] =>
+  Array.from({ length: n }, () => kind);
 
 /** AI는 사람이 몇이든 1대다 (2026-08-06 결정 — lib/game/rules.ts 의 AI_SEATS_PER_ROUND) */
 const AI_IN_EXAMPLE = 1;
@@ -70,7 +83,11 @@ const setup: { index: string; title: string; body: string; seats: Seat[] }[] = [
     index: "02",
     title: "게임이 시작되면 다 같이 입장한다",
     body: "전원이 캐릭터로 한 공간에 입장하고, 그 사이에 AI 1명이 사람인 척 섞여 들어온다. 언제나 한 대이고, 어느 자리인지만 숨긴다.",
-    seats: [...seatsOf(HUMANS_IN_EXAMPLE, "human"), "plus", ...seatsOf(AI_IN_EXAMPLE, "ai")],
+    seats: [
+      ...seatsOf(HUMANS_IN_EXAMPLE, "human"),
+      "plus",
+      ...seatsOf(AI_IN_EXAMPLE, "ai"),
+    ],
   },
   {
     index: "03",
@@ -81,27 +98,28 @@ const setup: { index: string; title: string; body: string; seats: Seat[] }[] = [
 ];
 
 /**
- * 배역 — 한 줄씩. 승리 조건만 적는다.
- * 셋 다 **처형된 한 명이 누구였나** 하나로 갈린다 (worker/src/roundtable.ts 의
- * decideWinner). 아무도 처형하지 못한 판은 AI 승이다.
- */
-const roles = [
-  { tag: "AI", name: "AI", line: "사람인 척한다. 시민이 처형되거나 아무도 처형되지 않으면 승리." },
-  { tag: "Actor", name: "연기자", line: "사람이면서 AI인 척한다. 연기자 중 누구든 처형되면 승리." },
-  { tag: "Citizen", name: "시민", line: "질문하고 의심한다. 진짜 AI를 처형하면 승리." },
-];
-
-/**
  * 한 판의 흐름 — 3D 월드 라운드테이블 기준 (lib/mp/constants.ts 의 ROUND_*).
  * 이름은 게임 HUD(app/world/game-hud.tsx 의 PHASE_LABEL)와 같은 말을 쓴다.
+ *
+ * ★ 2026-08-08 — 세 군데를 고쳤다. 전부 **숫자를 손으로 적어서** 생긴 일이다:
+ *   · 주제(6초)가 통째로 빠져 있었다. 화면에 「곧 주제가 나온다」가 뜨고 세는 진짜
+ *     단계다 (stepRound 의 topic → speak). 말하기 앞에 붙여 한 칸으로 묶는다.
+ *   · 결과가 "—" 였다. 끝나고 마는 게 아니라 ROUND_REVEAL_MS 동안 정체가 한 겹씩
+ *     열린다.
+ *   · **한 줄로 흐르지 않는다.** 생사 투표가 부결되면 지목 투표로 되돌아간다
+ *     (VERDICT_MAX_REVOTES 번까지). 목록 밑에 그 한 줄을 붙인다.
+ *   이제 초는 전부 상수에서 뽑는다 — 다음에 시간이 바뀌면 여기도 같이 바뀐다.
  */
+const sec = (ms: number) => `${Math.round(ms / 1000)}s`;
+
 const flow = [
-  { name: "다같이 말하기", sec: "45s ×2" },
-  { name: "자유 대화", sec: "60s" },
-  { name: "지목 투표", sec: "30s" },
-  { name: "최후변론", sec: "20s" },
-  { name: "생사 투표", sec: "20s" },
-  { name: "결과", sec: "—" },
+  { name: "주제 공개", sec: `${sec(ROUND_TOPIC_MS)} ×${ROUND_TOPIC_ROUNDS}` },
+  { name: "다같이 말하기", sec: `${sec(ROUND_SPEAK_MS)} ×${ROUND_TOPIC_ROUNDS}` },
+  { name: "자유 대화", sec: sec(ROUND_FREECHAT_MS) },
+  { name: "지목 투표", sec: sec(ROUND_VOTE_MS) },
+  { name: "최후변론", sec: sec(ROUND_DEFENSE_MS) },
+  { name: "생사 투표", sec: sec(ROUND_VERDICT_MS) },
+  { name: "결과", sec: sec(ROUND_REVEAL_MS) },
 ];
 
 export default function IntroPage() {
@@ -132,7 +150,9 @@ export default function IntroPage() {
             <RulesTrigger className={styles.navLink}>규칙</RulesTrigger>
             <span className="hidden items-center gap-2 md:flex">
               <span aria-hidden className={styles.glowDot} />
-              <span className="text-[0.8rem] uppercase tracking-[0.25em] text-[#00ff66]">Live</span>
+              <span className="text-[0.8rem] uppercase tracking-[0.25em] text-[#00ff66]">
+                Live
+              </span>
             </span>
           </div>
         </nav>
@@ -166,22 +186,34 @@ export default function IntroPage() {
             <p
               className={`${styles.fadeUp} ${styles.d2} mx-auto mb-11 max-w-md text-[1.05rem] font-light leading-[1.95] text-[#b3b3b3]`}
             >
-              사람들 사이에 <span className="text-[#e8e8e8]">AI가</span> 섞여 있다.
+              사람들 사이에 <span className="text-[#e8e8e8]">AI가</span> 섞여
+              있다.
               <br />
-              사람 중 누군가는 <span className="text-[#e8e8e8]">AI인 척 연기 중일지도 모른다.</span>
+              사람 중 누군가는{" "}
+              <span className="text-[#e8e8e8]">
+                AI인 척 연기 중일지도 모른다.
+              </span>
               <br />
-              <span className="font-semibold text-[#00ff66]">진짜 AI를 처형하면 이긴다.</span>
+              <span className="font-semibold text-[#00ff66]">
+                진짜 AI를 처형하면 이긴다.
+              </span>
             </p>
 
-            <div className={`${styles.fadeUp} ${styles.d3} flex flex-wrap justify-center gap-4`}>
+            <div
+              className={`${styles.fadeUp} ${styles.d3} flex flex-wrap justify-center gap-4`}
+            >
               {/*
                 ★ 여기가 게임의 문이다. 누르면 로그인부터 한다 (SPEC §15-2-결정).
                   이미 로그인해 있으면 곧장 /main 으로 넘어간다.
                   <Link href="/main"> 로 되돌리지 않는다 — 그러면 로그인하지 않은
                   사람이 로비에 닿았다가 RequireLogin 에 걸려 튕긴다.
               */}
-              <PlayButton className={styles.btnPrimary}>게임 접속하기</PlayButton>
-              <RulesTrigger className={styles.btnGhost}>게임 규칙 보기</RulesTrigger>
+              <PlayButton className={styles.btnPrimary}>
+                게임 접속하기
+              </PlayButton>
+              <RulesTrigger className={styles.btnGhost}>
+                게임 규칙 보기
+              </RulesTrigger>
             </div>
           </div>
 
@@ -189,7 +221,9 @@ export default function IntroPage() {
             aria-hidden
             className="absolute bottom-10 left-1/2 z-10 flex -translate-x-1/2 flex-col items-center gap-2 opacity-60"
           >
-            <span className="text-[0.75rem] uppercase tracking-[0.4em]">Scroll</span>
+            <span className="text-[0.75rem] uppercase tracking-[0.4em]">
+              Scroll
+            </span>
             <svg width="10" height="7" viewBox="0 0 10 7">
               <path
                 d="M1 1l4 4 4-4"
@@ -203,10 +237,15 @@ export default function IntroPage() {
         </section>
 
         {/* ── 001 게임 소개 ─────────────────────────────────────────────── */}
-        <section id="about" className="mx-auto max-w-6xl scroll-mt-24 px-6 py-16 sm:px-10 lg:py-24">
+        <section
+          id="about"
+          className="mx-auto max-w-6xl scroll-mt-24 px-6 py-16 sm:px-10 lg:py-24"
+        >
           <div className="grid items-center gap-20 lg:grid-cols-2 lg:gap-28">
             <div>
-              <span className={`${styles.numberLabel} block`}>001 — 게임 소개</span>
+              <span className={`${styles.numberLabel} block`}>
+                001 — 게임 소개
+              </span>
               <h2 className="mt-8 text-[clamp(2.2rem,5vw,3.2rem)] font-bold leading-[1.1] tracking-[-0.03em]">
                 인간인 척하는
                 <br />
@@ -221,39 +260,51 @@ export default function IntroPage() {
               */}
               <div className="mt-10 flex flex-col gap-5 text-[1.1rem] font-light leading-[1.9] text-[#b3b3b3]">
                 <p>
-                  사람들 사이에 <span className="text-[#e8e8e8]">AI가</span> 섞여 앉는다. AI는 사람인
-                  척한다.
+                  사람들 사이에 <span className="text-[#e8e8e8]">AI가</span>{" "}
+                  섞여 앉는다. AI는 사람인 척한다.
                 </p>
                 <p>
                   그리고 사람 중 누군가는 반대로{" "}
-                  <span className="text-[#e8e8e8]">AI인 척 연기 중일지도 모른다.</span>
+                  <span className="text-[#e8e8e8]">
+                    AI인 척 연기 중일지도 모른다.
+                  </span>
                 </p>
                 <p>
                   시민 · 연기자 · 진짜 AI —{" "}
-                  <span className="text-[#00ff66]">이 셋 중에서 진짜 AI를 처형하면 시민이 이긴다.</span>
+                  <span className="text-[#00ff66]">
+                    이 셋 중에서 진짜 AI를 처형하면 시민이 이긴다.
+                  </span>
                 </p>
               </div>
 
               <div className="mt-12 flex flex-col gap-6">
                 <div className="flex items-start gap-5">
-                  <span aria-hidden className="mt-1 h-10 w-px shrink-0 bg-[rgba(0,255,102,0.3)]" />
+                  <span
+                    aria-hidden
+                    className="mt-1 h-10 w-px shrink-0 bg-[rgba(0,255,102,0.3)]"
+                  />
                   <div>
                     <div className="mb-1.5 text-[0.88rem] uppercase tracking-[0.2em] text-[#00ff66]">
                       One Of Us Is Acting
                     </div>
                     <p className="text-[0.9rem] leading-[1.8] text-[#b3b3b3]">
-                      연기자는 AI처럼 말하려 한다. &lsquo;AI 같은 답&rsquo;이 곧 함정이다.
+                      연기자는 AI처럼 말하려 한다. &lsquo;AI 같은 답&rsquo;이 곧
+                      함정이다.
                     </p>
                   </div>
                 </div>
                 <div className="flex items-start gap-5">
-                  <span aria-hidden className="mt-1 h-10 w-px shrink-0 bg-[rgba(0,255,102,0.3)]" />
+                  <span
+                    aria-hidden
+                    className="mt-1 h-10 w-px shrink-0 bg-[rgba(0,255,102,0.3)]"
+                  />
                   <div>
                     <div className="mb-1.5 text-[0.88rem] uppercase tracking-[0.2em] text-[#00ff66]">
                       Human Imperfection
                     </div>
                     <p className="text-[0.9rem] leading-[1.8] text-[#b3b3b3]">
-                      감정, 모순, 즉흥성이 무기다. 너무 매끄러운 문장은 의심을 산다.
+                      감정, 모순, 즉흥성이 무기다. 너무 매끄러운 문장은 의심을
+                      산다.
                     </p>
                   </div>
                 </div>
@@ -285,8 +336,12 @@ export default function IntroPage() {
                 <div className="mb-2 text-[0.8rem] uppercase tracking-[0.3em] text-[#00ff66]">
                   In This Room
                 </div>
-                <div className="text-4xl font-bold tracking-[-0.03em]">AI + 1</div>
-                <div className="mt-1 text-[0.85rem] text-[#b3b3b3]">누구인지는 끝까지 모른다</div>
+                <div className="text-4xl font-bold tracking-[-0.03em]">
+                  AI + 1
+                </div>
+                <div className="mt-1 text-[0.85rem] text-[#b3b3b3]">
+                  누구인지는 끝까지 모른다
+                </div>
               </div>
             </div>
           </div>
@@ -299,7 +354,9 @@ export default function IntroPage() {
           */}
           <div className="mt-24 overflow-hidden rounded-3xl border border-white/[0.07]">
             <div className="flex flex-wrap items-baseline justify-between gap-3 border-b border-white/[0.06] px-7 py-5">
-              <p className="text-[0.8rem] uppercase tracking-[0.3em] text-[#00ff66]">How It Works</p>
+              <p className="text-[0.8rem] uppercase tracking-[0.3em] text-[#00ff66]">
+                How It Works
+              </p>
               <p className="text-[0.9rem] text-[#b3b3b3]">
                 예: 사람 {HUMANS_IN_EXAMPLE}명이 모인 방
               </p>
@@ -338,7 +395,11 @@ export default function IntroPage() {
                               : ""
                         }`}
                       >
-                        {kind === "ai" ? "AI" : kind === "unknown" ? "?" : "사람"}
+                        {kind === "ai"
+                          ? "AI"
+                          : kind === "unknown"
+                            ? "?"
+                            : "사람"}
                       </span>
                     ),
                   )}
@@ -349,21 +410,30 @@ export default function IntroPage() {
 
           {/* 그래서 어떻게 이기나 — 위 세 걸음의 결론 한 줄 */}
           <p className="mt-8 text-center text-[1rem] font-light leading-[1.9] text-[#9a9a9a]">
-            <span className="text-[#00ff66]">진짜 AI를 처형하면 시민의 승리.</span> 연기자가 처형되면
-            연기자의 승리, 시민이 처형되거나 아무도 처형하지 못하면 AI의 승리다.
+            <span className="text-[#00ff66]">
+              진짜 AI를 처형하면 시민의 승리.
+            </span>{" "}
+            연기자가 처형되면 연기자의 승리, 시민이 처형되거나 아무도 처형하지
+            못하면 AI의 승리다.
           </p>
 
           <div className="mt-14 overflow-hidden rounded-3xl border border-white/[0.07] px-7 py-8">
             <div className="flex flex-wrap items-baseline justify-between gap-3">
-              <p className="text-[0.8rem] uppercase tracking-[0.3em] text-[#00ff66]">Sequence</p>
-              <p className="text-[0.9rem] text-[#b3b3b3]">시작하면 이 순서로 흐른다</p>
+              <p className="text-[0.8rem] uppercase tracking-[0.3em] text-[#00ff66]">
+                Sequence
+              </p>
+              <p className="text-[0.9rem] text-[#b3b3b3]">
+                시작하면 이 순서로 흐른다
+              </p>
             </div>
             <ol className="mt-5 flex flex-wrap gap-x-10 gap-y-4">
               {flow.map((f, i) => (
                 <li key={f.name} className="flex items-baseline gap-2">
                   <span className="text-[0.8rem] text-[#9a9a9a]">{`0${i + 1}`}</span>
                   <span>
-                    <span className="block text-[0.92rem] font-medium text-[#e8e8e8]">{f.name}</span>
+                    <span className="block text-[0.92rem] font-medium text-[#e8e8e8]">
+                      {f.name}
+                    </span>
                     <span className="block text-[0.85rem] tracking-wider text-[#00ff66]/70">
                       {f.sec}
                     </span>
@@ -371,6 +441,16 @@ export default function IntroPage() {
                 </li>
               ))}
             </ol>
+
+            {/*
+              ★ 목록이 한 줄로 흐르는 것처럼 보이는데 실제로는 되돌아가는 길이 있다
+                (stepRound 의 verdict 분기). 그 한 줄이 없으면 부결됐을 때 화면이
+                지목으로 돌아가는 것이 고장처럼 보인다.
+            */}
+            <p className="mt-6 border-t border-white/[0.06] pt-5 text-[0.85rem] font-light leading-[1.9] text-[#9a9a9a]">
+              생사 투표가 부결되면 지목 투표로 돌아간다 — {VERDICT_MAX_REVOTES}번까지고,
+              그래도 과반이 안 나오면 살려 둔 채 결과로 넘어간다.
+            </p>
           </div>
         </section>
 
@@ -382,34 +462,48 @@ export default function IntroPage() {
           <div className="mx-auto max-w-6xl">
             <div className="flex flex-wrap items-end justify-between gap-8">
               <div>
-                <span className={`${styles.numberLabel} block`}>002 — 배역</span>
+                <span className={`${styles.numberLabel} block`}>
+                  002 — 배역
+                </span>
                 <h2 className="mt-6 text-[clamp(2.2rem,5vw,3.2rem)] font-bold leading-[1.1] tracking-[-0.03em]">
                   누구도
                   <br />
                   남의 역할을 모른다.
                 </h2>
               </div>
+              {/*
+                ★ "역할은 시작할 때 무작위로 배정된다" 한 줄이었다. 세 배역이 참가자
+                  전원에게 골고루 뿌려지는 것처럼 읽혀서 고쳤다 — **사람은 AI 역할을
+                  받지 않는다.** AI 자리는 봇이고(worker 의 seatRole 이 봇 좌석에
+                  무조건 'ai' 를 준다), 사람에게 배달되는 카드는 시민 아니면 연기자
+                  둘뿐이다 (app/world/game-hud.tsx 의 ROLE_CARD 에 그 둘만 있다).
+                ★ 둘째 줄은 사람 둘이 서로 반대로 이긴다는 것만 한 호흡에 보여주는
+                  **요약**이다 (문구는 사용자 지정, 2026-08-08). 정확한 조건 — 지목이
+                  아니라 **처형**까지 가야 갈린다는 것 — 은 바로 아래 배역 카드 세 장이
+                  적는다. 여기서 그것까지 적으면 세 줄이 규칙 카드가 된다.
+              */}
               <p className="max-w-[280px] text-[0.9rem] font-light leading-[1.9] text-[#9a9a9a] sm:text-right">
-                역할은 시작할 때 무작위로 배정된다.
+                게임에 접속한 사람은 시민 아니면 연기자다.
+                <br />
+                각자의 역할에 맞게 AI를 지목하거나 AI를 대신해 처형당하면
+                승리한다.
                 <br />
                 진행 순서는 상단 &lsquo;규칙&rsquo;에 있다.
               </p>
             </div>
 
-            <div className="mt-16 grid gap-5 md:grid-cols-3">
-              {roles.map((role) => (
-                <article key={role.name} className={styles.ruleCard}>
-                  <span className={`${styles.tag} ${styles.tagLive}`}>{role.tag}</span>
-                  <h3 className="text-3xl font-semibold tracking-tight">{role.name}</h3>
-                  <p className="text-[0.93rem] font-light leading-[1.95] text-[#9a9a9a]">
-                    {role.line}
-                  </p>
-                </article>
-              ))}
-            </div>
+            {/*
+              ★ 같은 크기 카드 세 장이었다. 셋이 동등해 보여 고를 이유가 없었고 인물이
+                설 자리도 없었다 — 왼쪽 설명 · 오른쪽 인물의 덱으로 바꿨다 (./cast.tsx).
+                배역 데이터도 그 파일로 옮겼다: 그림·색이 문구와 한 덩어리라 여기 두면
+                반드시 갈린다.
+            */}
+            <CastDeck />
 
-            <div className="mt-10 flex justify-center">
-              <RulesTrigger className={styles.btnGhost}>규칙 카드 열기</RulesTrigger>
+            <div className="mt-12 flex justify-center">
+              <RulesTrigger className={styles.btnGhost}>
+                규칙 카드 열기
+              </RulesTrigger>
             </div>
           </div>
         </section>
