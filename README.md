@@ -27,6 +27,17 @@
 
 ---
 
+## 화면
+
+<p align="center">
+  <img src="docs/game-intro/img-03.jpg" width="32%" alt="인트로 — 게임 접속하기" />
+  <img src="docs/game-intro/img-10.jpg" width="32%" alt="3D 월드 — 다같이 말하기" />
+  <img src="docs/game-intro/img-12.jpg" width="32%" alt="지목 투표" />
+</p>
+<p align="center">
+  <sub>인트로 · 3D 월드에서 다같이 말하기 · 지목 투표 — 더 많은 화면은 <a href="docs/game-intro.html">게임 소개 문서</a>에 있습니다</sub>
+</p>
+
 ## 게임 소개
 
 최대 9자리(사람 8 + **AI 1**)인 방에서 **누가 AI인지 찾아내는** 게임입니다.
@@ -114,14 +125,20 @@ npm install
 cp .env.local.example .env.local   # 값 채우기
 ```
 
-필요한 환경 변수는 `.env.local.example`에 이름과 설명이 정리돼 있습니다. 최소한 아래 네 개가 필요합니다.
+필요한 환경 변수는 `.env.local.example`에 이름과 설명이 정리돼 있습니다. 최소한 아래 여섯 개가 필요합니다.
 
 ```
 NEXT_PUBLIC_SUPABASE_URL        # Supabase 프로젝트 주소
 NEXT_PUBLIC_SUPABASE_ANON_KEY   # 읽기 전용 키 (브라우저)
 SUPABASE_SERVICE_ROLE_KEY       # 쓰기 키 (서버 전용)
 SUPABASE_DB_URL_DIRECT          # 스키마 적용용 직결(5432) 접속 문자열
+WORLD_SHARED_SECRET             # 앱 ↔ 월드 워커 공유 비밀 (openssl rand -hex 32)
+WORLD_WS_URL                    # 브라우저가 붙을 월드 워커 WebSocket 주소 (ws:// · wss://)
 ```
+
+> 아래 두 개가 없으면 **3D 월드만 조용히 안 뜹니다** — `/api/world/ticket`이 503을 돌려주고
+> 화면에는 `connection_failed`만 남습니다. 배포 시 변수 전체 표는
+> [`worker/README.md`](worker/README.md)에 있습니다.
 
 **DB 스키마 적용** — 테이블, RLS, 문구 풀, 상태머신, pg_cron 워치독을 순서대로 적용합니다.
 
@@ -144,10 +161,29 @@ npm run world:dev   # 월드 워커 (WebSocket)
 **테스트**
 
 ```bash
-npm test              # 게임 규칙 · 화면 조각 (vitest)
+npm run check         # 타입 · lint · 테스트 한 번에
+npm test              # 게임 규칙 · 화면 조각 (vitest, 696개)
+npm run test:coverage # 위 + 커버리지 리포트
 ./supabase/test.sh    # 스키마 · RLS · 상태머신 (일회용 로컬 Postgres)
 npm run world:verify  # 월드 워커 — 소켓 2개 왕복 검증
 ```
+
+> **DB가 하는 일은 목으로 흉내 내지 않습니다.** `npm test`는 DB를 모르고, 권한(RLS)과
+> 상태머신은 `supabase/test.sh`가 진짜 Postgres에 물어봅니다. 뒤의 두 개는 각각 로컬
+> Postgres와 실제 서버가 필요해 로컬 전용 게이트입니다.
+
+## 팀
+
+3명이 13일(2026-07-27 ~ 08-08) 동안 만들었습니다. 담당은 사람이 아니라 **계층으로** 나눴습니다 —
+서버·규칙·화면·3D 월드가 각각 다른 폴더에 있습니다.
+
+| 팀원 | 역할 |
+|---|---|
+| 이유경 | 서버 · 데이터베이스 · 게임 규칙 설계 |
+| 노원상 | 3D 월드 · 실시간 통신 · 배포 · 비주얼 |
+| hbkim507 | AI 에이전트 · LLM 연동 |
+
+역할 분담과 기여 분포는 [팀 소개 문서](docs/team-intro.html)에 있습니다.
 
 ## 문서
 
@@ -157,12 +193,24 @@ npm run world:verify  # 월드 워커 — 소켓 2개 왕복 검증
 | [`docs/GAMEFLOW-V2.md`](docs/GAMEFLOW-V2.md) | 진행 순서와 타이밍 명세 |
 | [`docs/MULTIPLAYER.md`](docs/MULTIPLAYER.md) | 3D 월드 구조 — Durable Object를 선택한 이유 |
 | [`docs/GAMEPLAY-PLAN.md`](docs/GAMEPLAY-PLAN.md) | 게임 디자인 의도 |
+| [`docs/QA-timing-and-indistinguishability.md`](docs/QA-timing-and-indistinguishability.md) | AI를 구분하지 못하게 만드는 타이밍 설계 |
+| [`docs/ROOM-GAME-SCREEN-UI.md`](docs/ROOM-GAME-SCREEN-UI.md) · [`docs/WORLD-VISUAL-DIRECTION.md`](docs/WORLD-VISUAL-DIRECTION.md) | 화면 · 아트 디렉션 |
+| [`worker/README.md`](worker/README.md) | 배포 절차와 환경 변수 전체 표 |
+| [`SECURITY.md`](SECURITY.md) | 위협 모델 · 계층별 방어 · **알려진 위험** |
+| [`docs/pdf-docs.md`](docs/pdf-docs.md) | 제출 문서(PDF) 만드는 법 |
 
 ## 기여하기
 
 - 작업 전에 [`docs/SPEC.md`](docs/SPEC.md)의 해당 섹션을 먼저 확인해 주세요.
-- 코드를 수정했다면 `npm run build`로 타입 검사까지 마쳐 주세요.
+- 코드를 수정했다면 `npm run check`(타입 · lint · 테스트)로 마무리해 주세요.
 - 클라이언트로 내려가는 필드를 추가할 때는 **"이 값을 모으면 AI를 특정할 수 있는가"**를 먼저 확인해 주세요.
+- 보안 관련 제보는 [`SECURITY.md`](SECURITY.md)를 봐 주세요.
+
+## 라이선스
+
+코드와 문서는 [MIT](LICENSE)입니다. `public/` 아래 3D·이미지·영상·음성 자산은 전부 생성형 AI로
+만들었고 각 도구의 이용약관을 함께 따릅니다 — 무엇을 무엇으로 만들었는지는 [`LICENSE`](LICENSE)에
+표로 정리했습니다.
 
 ---
 

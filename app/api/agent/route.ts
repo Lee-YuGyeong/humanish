@@ -22,7 +22,8 @@
  *
  * ★ 프로덕션은 내부 Bearer(AGENT_SHARED_SECRET)로만 열린다 — world-room과 같은 규약.
  *   비밀이 없거나 틀리면 404. "있는데 못 들어간다"는 것조차 알리지 않는다.
- *   선생성 층(lib/agent/prefill.ts · chat-reply.ts)이 같은 비밀을 헤더에 실어 부른다.
+ *   서버끼리 부르는 경로(월드 워커 → /api/internal/world-agent)가 같은 규약을 쓴다.
+ *   2D 게임 전용 LLM 덮어쓰기 계층(prefill.ts · chat-reply.ts)은 2026-08-08 4a60b8f 로 걷어냈다.
  *   probe · lab · 모델 오버라이드는 개발 도구라 프로덕션에서는 실전 모드만 연다.
  */
 

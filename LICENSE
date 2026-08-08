@@ -1,0 +1,41 @@
+MIT License
+
+Copyright (c) 2026 사람인 척 (humanish) — 이유경, 노원상, hbkim507
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+---
+
+## 에셋 (assets)
+
+위 MIT 는 **코드와 문서**에 적용된다. `public/` 아래 3D·이미지·영상·음성·음악 자산은
+전부 생성형 AI 도구로 만든 것이고, 각 도구의 이용약관을 함께 따른다.
+무엇을 무엇으로 만들었는지는 `docs/ai-usage.html`(「무엇을 무엇으로 만들었나」)에 있다.
+
+| 자산 | 만든 도구 |
+|---|---|
+| `public/world/robot.glb` (아바타 로봇 · 걷기/점프 모션) | Tripo AI → Meshy AI (리깅) → 자체 병합·감량 도구 |
+| `public/textures/warehouse/{wall,floor,box}.jpg` | Higgsfield AI (nano_banana_pro) |
+| `public/intro/cast/*.webp` (배역 일러스트) | Higgsfield AI |
+| `public/intro/bunker.webp` (히어로 배경) | UX Pilot AI |
+| `public/world/screen.mp4` · `topic-*.m4a` (안내 음성) | Kling AI |
+| `public/world/music.m4a` (배경 음악) | Suno AI |
+
+제3자 폰트·아이콘은 포함하지 않는다 — 폰트는 `next/font` 로 빌드 시 자체 호스팅하고
+아이콘은 인라인 SVG 다 (배포본에서 외부 요청이 나가지 않는다).

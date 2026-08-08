@@ -340,8 +340,8 @@ primeForTopic(speak=true)  → topicDue = 창 마감
 걸려 통째로 버려졌기 때문이다 (신고 2026-08-07).
 
 **`speakAt` 을 건드리지 않는 게 전부다.** 발화 타이밍 분포가 LLM 성공/실패와 무관해야
-자리 단위 봇 신호가 안 된다 — `lib/agent/chat-reply.ts` 가 `visible_at` 을 건드리지
-않는 것과 같은 규칙이다.
+자리 단위 봇 신호가 안 된다 — 2D 게임의 답변도 `visible_at` 을 건드리지 않는다
+(그 규칙을 들고 있던 `lib/agent/chat-reply.ts` 계층은 2026-08-08 4a60b8f 로 걷어냈다).
 
 그래서 `speechHeld` 와 `pendingText` 를 **따로 둔다.** 자리를 잡는 순간에는 할 말이
 정해져 있지 않고, 끝내 안 정해질 수도 있다. 그래도 **서서 치는 시간은 똑같이 흘러야**
@@ -414,8 +414,8 @@ primeForTopic(speak=true)  → topicDue = 창 마감
 
 **`speakAt` 은 정해진 뒤 바뀌지 않는다.** 나중에 LLM 이 붙으면 `pendingText` 만
 갈아끼우고 시각은 그대로 둔다 — 발화 타이밍 분포가 LLM 성공/실패와 무관해야
-자리 단위 봇 신호가 안 된다 (`lib/agent/chat-reply.ts` 가 `visible_at` 을 건드리지
-않는 것과 같은 규칙).
+자리 단위 봇 신호가 안 된다 (2D 게임의 답변도 `visible_at` 을 건드리지 않는다 —
+그 규칙을 들고 있던 `lib/agent/chat-reply.ts` 계층은 2026-08-08 4a60b8f 로 걷어냈다).
 
 최근 채팅은 DO 가 메모리로만 들고 있다(`chatLog`, 20줄). 월드 채팅은 저장하지 않으므로
 이게 유일한 기록이고, evict 로 날아가도 무해하다 — 비면 "방금 나온 문구 피하기"만

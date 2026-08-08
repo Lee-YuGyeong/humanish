@@ -216,8 +216,8 @@ export async function POST(req: Request): Promise<Response> {
     if (bots.length === 0) return empty();
 
     const history = sanitizeHistory(body.history);
-    // 말투 관측은 **사람 발화만** — 봇 풀 문구를 배우면 봇끼리 서로 닮아간다
-    // (lib/agent/chat-reply.ts와 같은 이유).
+    // 말투 관측은 **사람 발화만** — 봇 풀 문구를 배우면 봇끼리 서로 닮아간다.
+    // (걷어낸 chat-reply.ts 계층도 같은 이유로 사람 발화만 봤다 — 4a60b8f)
     const styleProfile = observeStyle(history.filter((h) => h.human).map((h) => h.text));
 
     /*

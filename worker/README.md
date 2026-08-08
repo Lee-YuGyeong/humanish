@@ -60,7 +60,7 @@ npx wrangler secret put WORLD_SHARED_SECRET --config worker/wrangler.toml
 | 방향 | 값 | 안 맞으면 |
 |---|---|---|
 | 브라우저 → Next | 사람들이 여는 주소 | 애초에 화면이 안 뜬다 |
-| 브라우저 → 워커 | `NEXT_PUBLIC_WORLD_WS_URL` (`wss://`) | `connection_failed` |
+| 브라우저 → 워커 | `WORLD_WS_URL` (`wss://`) | `connection_failed` |
 | **워커 → Next** | `NEXT_ORIGIN` | `room_unavailable` ← **여기서 제일 많이 막힌다** |
 
 세 번째가 잘 안 보이는 이유: 워커는 Cloudflare 엣지에서 돈다. 거기서 `127.0.0.1`은
@@ -82,6 +82,10 @@ Next 앱도 워커로 올린다. 그러면 대시보드에 워커가 **둘** 선
 | `humanish` | `wrangler.jsonc` (루트) | 화면 · API 라우트 · Supabase | `https://humanish.<계정>.workers.dev` |
 | `humanish-world` | `worker/wrangler.toml` | 좌표 릴레이 · 봇 아바타 | `wss://humanish-world.<계정>.workers.dev` |
 
+루트와 `worker/` 의 **wrangler 는 같은 버전으로 맞춘다**(현재 `^4.120.0`) — CLI 가 갈리면 한쪽 배포만
+조용히 다른 동작을 한다. 반대로 `compatibility_date` 는 **일부러 각자의 검증된 날짜에 고정**한다.
+그건 CLI 가 아니라 워커 런타임 동작을 바꾸는 값이고, 월드 워커는 좌표 릴레이 경로다.
+
 `<계정>`은 이미 아는 값이다 — 이미 배포된 `humanish-world` 주소에서 그대로 딴다.
 
 ```bash
@@ -101,7 +105,7 @@ npm run app:deploy
 #    .env.local 을 그대로 밀어 넣어도 된다:  npx wrangler secret bulk .env.local
 npx wrangler secret put NEXT_PUBLIC_SUPABASE_URL
 npx wrangler secret put NEXT_PUBLIC_SUPABASE_ANON_KEY
-npx wrangler secret put NEXT_PUBLIC_WORLD_WS_URL   # wss://humanish-world.<계정>.workers.dev
+npx wrangler secret put WORLD_WS_URL   # wss://humanish-world.<계정>.workers.dev
 npx wrangler secret put SUPABASE_SERVICE_ROLE_KEY
 npx wrangler secret put WORLD_SHARED_SECRET
 
@@ -146,7 +150,7 @@ grep -rho 'process\.env\.[A-Z_]*' .open-next/server-functions --include='*.js' |
 | `SUPABASE_SERVICE_ROLE_KEY` | `wrangler secret put` | 서버 라우트 전용. 브라우저로 절대 안 나간다 (I9) |
 | `WORLD_SHARED_SECRET` | `wrangler secret put` **워커 둘 다** | Next 가 티켓에 서명하고 월드 워커가 검증한다 — **두 값이 같아야 한다** |
 | `NEXT_PUBLIC_SUPABASE_URL` · `..._ANON_KEY` | `wrangler secret put` | 서버가 읽고, 브라우저에는 `/api/config` 가 내려준다. 원래 공개값이라 anon 키는 RLS 가 지킨다 |
-| `NEXT_PUBLIC_WORLD_WS_URL` | `wrangler secret put` | `/api/world/ticket` 이 서버에서 읽어 티켓에 실어 준다. 브라우저는 이 이름을 안 본다 |
+| `WORLD_WS_URL` | `wrangler secret put` | `/api/world/ticket` 이 서버에서 읽어 티켓에 실어 준다. 브라우저는 이 이름을 안 본다.<br>옛 이름 `NEXT_PUBLIC_WORLD_WS_URL` 도 아직 받지만(하위 호환) **새로 넣을 때는 이 이름을 쓴다** — `NEXT_PUBLIC_` 은 빌드에 박혀서 고치려면 재빌드해야 한다 (`app/api/world/ticket/route.ts:45`) |
 | `AGENT_SELF_URL` | **넣지 않는다** | 봇 답변 재생성의 self-fetch 주소. `lib/agent/self-call.ts` 가 들어온 요청의 `host` 에서 딴다 — 계정을 옮겨도 저절로 맞는다. 못 박고 싶을 때만 `secret put` (vars 는 배포가 지운다) |
 | `AGENT_SHARED_SECRET` | `wrangler secret put` | **없으면 프로덕션 `/api/agent` 가 통째로 404 다** (fail-closed). 워커 안에서 자기가 서명하고 자기가 검증하므로 아무 랜덤값이면 된다 — `openssl rand -hex 32` |
 | `NEXT_ORIGIN` | `.env.local` (로컬 전용) | Next 는 안 읽는다. `next.config.ts` 의 dev 설정과, `world:deploy` 가 월드 워커에 `--var` 로 실어 보낼 때만 쓴다 |

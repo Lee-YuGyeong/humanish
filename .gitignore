@@ -72,3 +72,7 @@ next-env.d.ts
 # 변환 명령은 app/world/music.ts · warehouse.tsx 머리말에 적어 둔다.
 /3d_video/
 /3d_music/
+
+# 제출용 PDF. **산출물이지 소스가 아니다** — 소스는 docs/*.html 이고
+# 만드는 법은 docs/pdf-docs.md 에 있다. 루트에만 걸어서 docs/ 아래는 건드리지 않는다.
+/*.pdf

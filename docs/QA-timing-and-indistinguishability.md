@@ -139,7 +139,7 @@
 **§18.5의 대칭 장치 2개가 코드에 없다. 이게 E의 최대 리스크다.**
 
 1. **봇 15% 답 거르기(§18.5, SPEC:402) — 티켓 철회 (2026-08-08).** 월드에는 한 번 들어갔다가 되돌렸다. 거른 봇도 사람 말에는 대꾸해서 "주제만 골라 씹는 자리"가 새 표식이 됐기 때문이다. 아래는 철회 전 기록이다.
-   - 실측: 답 생성 경로(`supabase/functions/advance_phase.sql` question/target 진입 훅, `lib/agent/prefill.ts`)에 "15% 확률로 답을 건너뛴다"는 분기가 없다. 코드에서 `0.15`는 `lib/agent/disguise.ts:64`의 **오타율(typoRate)**뿐, 답 거르기가 아니다.
+   - 실측: 답 생성 경로(`supabase/functions/advance_phase.sql` question/target 진입 훅, `lib/agent/prefill.ts` — 2026-08-08 4a60b8f 로 제거됨)에 "15% 확률로 답을 건너뛴다"는 분기가 없다. 코드에서 `0.15`는 `lib/agent/disguise.ts:64`의 **오타율(typoRate)**뿐, 답 거르기가 아니다.
    - 증상: 봇이 **항상** 답한다 → 빈 답은 사람만 만든다 → **"답이 빈 자리 = 사람" 확정 신호.** SPEC이 §5.3→§18.5로 두 번 고친 함정 그대로 노출.
    - Pass 기준(구현 후): question·target 각각에서 봇 무응답률 ≈15%, 사람 무응답과 구분 불가.
 
