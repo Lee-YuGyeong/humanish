@@ -70,8 +70,46 @@
   color: #8a8378;
 }
 
+/*
+ * 역할 인물 (2026-08-08). 카드 폭을 꽉 채운다 — 좌우 -1.5rem 은 카드의 px-6 을
+ * 되돌리는 값이라 **카드 안쪽 여백을 바꾸면 여기도 같이 바꿔야 한다** (game-hud 의
+ * RoleCard). 그림 파일은 인트로 배역 덱과 같은 것을 본다 (ROLE_CARD.art 의 상자).
+ */
+.art {
+  position: relative;
+  margin: 0.9rem -1.5rem 0;
+  height: 11rem;
+  overflow: hidden;
+}
+
+.artImg {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  /* 얼굴이 이 창의 위쪽에 오게 잡는다. 가운데로 두면 셋 다 가슴만 나온다 */
+  object-position: 50% 10%;
+  filter: saturate(0.92) contrast(1.05) brightness(0.98);
+}
+
+/*
+ * 그림이 물고 있는 제 배경(회색 · 연녹색)을 카드 색으로 눌러 인물만 남기고,
+ * 아래턱을 카드 바탕(#0a0806)까지 완전히 녹인다 — 그래야 그림이 "붙인 사진"이
+ * 아니라 카드에 인쇄된 것처럼 읽힌다. 위쪽에는 역할 색을 한 겹 흘린다.
+ */
+.artFade {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background:
+    radial-gradient(72% 62% at 50% 26%, color-mix(in srgb, var(--rc) 16%, transparent), transparent 74%),
+    radial-gradient(78% 66% at 50% 32%, transparent 0%, rgba(10, 8, 6, 0.45) 68%, rgba(10, 8, 6, 0.85) 100%),
+    linear-gradient(to top, #0a0806 2%, rgba(10, 8, 6, 0.55) 34%, transparent 72%);
+}
+
+/* 그림 아래턱에 걸쳐 앉는다 — 상징(가면 · 눈)과 인물이 한 덩어리로 보인다 */
 .emblem {
-  margin: 1.1rem auto 0;
+  position: relative;
+  margin: -2rem auto 0;
   display: flex;
   width: 64px;
   height: 64px;
@@ -80,7 +118,14 @@
   border-radius: 9999px;
   color: var(--rc);
   border: 1px solid color-mix(in srgb, var(--rc) 50%, transparent);
-  background: radial-gradient(circle, color-mix(in srgb, var(--rc) 16%, transparent), transparent 70%);
+  /*
+   * 카드 바탕색을 아래에 깐다. 예전엔 투명한 색 원 하나였는데, 그때는 뒤가 카드
+   * 바탕뿐이라 그걸로 충분했다. 지금은 **인물 그림 위에 앉으므로** 바탕이 없으면
+   * 인물의 옷 무늬가 아이콘을 뚫고 올라온다.
+   */
+  background:
+    radial-gradient(circle, color-mix(in srgb, var(--rc) 18%, transparent), transparent 70%),
+    #0a0806;
   box-shadow: 0 0 22px color-mix(in srgb, var(--rc) 30%, transparent);
 }
 

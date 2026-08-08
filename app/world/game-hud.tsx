@@ -27,6 +27,7 @@
  *   exitPointerLock 을 부르면 두 곳이 같은 잠금을 두고 싸운다.
  */
 
+import Image from 'next/image';
 import { useEffect, useMemo, useRef, useState } from 'react';
 
 import { VERDICT_MAX_REVOTES } from '@/lib/mp/constants';
@@ -205,7 +206,15 @@ export default function GameHud({
  */
 export const ROLE_CARD: Record<
   'citizen' | 'actor',
-  { name: string; tagline: string; lines: string[]; accent: string; color: string }
+  {
+    name: string;
+    tagline: string;
+    lines: string[];
+    accent: string;
+    color: string;
+    art: string;
+    artAlt: string;
+  }
 > = {
   citizen: {
     name: '일반 시민',
@@ -216,19 +225,40 @@ export const ROLE_CARD: Record<
     ],
     accent: 'text-sky-300',
     color: '#7dd3fc',
+    art: '/intro/cast/citizen.webp',
+    artAlt: '검은 재킷을 입고 주머니에 손을 넣은 채 서 있는 사람',
   },
   actor: {
     name: '연기자',
     tagline: 'AI 인 척하는 스파이',
+    /*
+     * ★ 둘째 줄은 "당신이 **지목**되면 이긴다" 였다 — 규칙과 다르다 (2026-08-08).
+     *   decideWinner 는 `!executed` 면 무조건 AI 승이다: 지목은 첫 관문일 뿐이고,
+     *   생사 투표에서 **찬성 과반**이 나와 처형까지 가야 연기자 승이다. 지목됐다가
+     *   살아남으면 판은 vote 로 되돌아가고(stepRound 의 verdict 분기) 연기자는
+     *   아무것도 얻지 못한다. 그 상태로 두면 "지목까지 갔는데 왜 졌지"가 된다.
+     */
     lines: [
       'AI 인 척 연기해서 지목을 받아내라.',
-      '당신이 지목되면 연기자 진영이 이긴다.',
+      '당신이 처형되면 연기자 진영이 이긴다.',
       '다른 연기자가 누구인지는 당신도 모른다.',
     ],
     accent: 'text-[#d4a373]',
     color: '#d4a373',
+    art: '/intro/cast/actor.webp',
+    artAlt: '중절모를 눌러쓴 코트 차림의 사람이 입에 손가락을 대고 조용히 하라는 시늉을 한다',
   },
 };
+
+/*
+ * ★ 그림은 인트로 배역 덱과 **같은 파일**을 쓴다 (public/intro/cast/*.webp,
+ *   app/intro/cast.tsx 머리말에 굽는 법이 있다). 두 벌로 나누면 인트로에서 본 인물과
+ *   판에서 받은 카드의 인물이 조용히 달라진다 — 배역 색을 월드에서 가져다 쓴 것과
+ *   같은 이유다.
+ * ★ AI 그림은 여기 없다. **AI 역할 카드가 존재하지 않기 때문이다** — 봇 좌석에는
+ *   소켓이 없어 카드가 갈 곳이 없고(RoleCard 머리말), myRole 은 citizen|actor 뿐이다.
+ *   여기에 ai 항목을 만들면 그 자체가 "사람도 AI 카드를 받을 수 있다"는 거짓말이 된다.
+ */
 
 /**
  * 내 역할 카드 — 게이트가 열리는 순간(전원 집결, 카운트다운 시작) 딜되어 들어온다
@@ -262,6 +292,29 @@ function RoleCard() {
           <div aria-hidden className={cardStyles.shine} />
 
           <p className={cardStyles.kicker}>Secret Role — 당신의 역할</p>
+
+          {/*
+            ★ 인물 그림 한 장 (사용자 요청 2026-08-08). 카드 폭을 꽉 채우고 아래로
+              녹아들어 문장과 한 덩어리로 읽힌다 — 액자선(frame)이 그 위를 지나므로
+              "인쇄된 카드" 라는 이 오버레이의 말이 깨지지 않는다.
+              문장(lines)만 있을 때보다 자기 편이 무엇인지가 먼저 눈에 들어온다.
+            ★ 상징(가면 · 눈)은 버리지 않고 그림 아래턱에 걸쳐 둔다. 좌석 목록에서
+              같은 아이콘을 쓰므로(아래 SeatList) 여기서 사라지면 둘이 이어지지 않는다.
+          */}
+          <div className={cardStyles.art}>
+            <Image
+              src={card.art}
+              alt={card.artAlt}
+              width={820}
+              height={1230}
+              sizes="19rem"
+              className={cardStyles.artImg}
+              draggable={false}
+              priority
+            />
+            <div aria-hidden className={cardStyles.artFade} />
+          </div>
+
           <div className={cardStyles.emblem} aria-hidden>
             {myRole === 'actor' ? <MaskIcon /> : <EyeIcon />}
           </div>
