@@ -28,8 +28,13 @@
 
 import { after } from 'next/server';
 import { timingSafeEqual } from '@/lib/mp/ticket';
-import { fitChatReply } from '@/lib/agent/chat-reply';
-import { applyTypo, observeStyle, stretchLaugh, stripAvoidedPunct } from '@/lib/agent/disguise';
+import {
+  applyTypo,
+  fitChatReply,
+  observeStyle,
+  stretchLaugh,
+  stripAvoidedPunct,
+} from '@/lib/agent/disguise';
 import {
   ASK_BACK_CHANCE,
   ASK_BACK_CHANCE_INITIATE,
@@ -39,8 +44,7 @@ import {
 } from '@/lib/agent/generate';
 import { describeNow } from '@/lib/agent/clock';
 import { mergeFacts, pinFact } from '@/lib/agent/facts';
-import { personaForSeat } from '@/lib/agent/persona';
-import { AGENT_SELF_URL, agentHeaders } from '@/lib/agent/prefill';
+import { AGENT_SELF_URL, agentHeaders } from '@/lib/agent/self-call';
 import { WORLD_PERSONAS } from '@/lib/agent/world-persona';
 import { apiError, readJson } from '@/lib/server/auth';
 import { getServiceClient } from '@/lib/server/supabase';
@@ -236,8 +240,9 @@ export async function POST(req: Request): Promise<Response> {
     /*
      * ★ 월드 AI 에게는 **월드 인물**을 준다 (lib/agent/world-persona.ts).
      *   게임 페르소나는 의심·투표를 전제로 만들어져서, 그냥 노는 공간에서는
-     *   동문서답으로 보인다 (실측: "안녕하세요" → "야 근데 야근 너무 힘들어").
-     *   게임이 시작된 방의 진짜 봇은 그대로 게임 페르소나를 쓴다.
+     *   동문서답으로 보였다 (실측: "안녕하세요" → "야 근데 야근 너무 힘들어").
+     *   그 게임 페르소나 자체가 2026-08-08 에 지워졌다 — 2D 게임 방이 흐름에서
+     *   빠지면서 "게임이 시작된 방의 진짜 봇" 분기도 함께 없어졌다.
      */
     /*
      * ★ 입·퇴장 같은 **사건**은 trigger 가 아니라 event 로 온다 (generate.ts 의
@@ -304,10 +309,9 @@ export async function POST(req: Request): Promise<Response> {
 
     const plan = bots.map((b) => {
       // 월드 AI 는 **방 + 순번**으로 고른다 — 자리도 id 도 밀린다 (worldPersonaFor 의 상자).
-      // 게임 방의 진짜 봇은 좌석이 고정이라 seat 그대로다.
-      const persona = b.synthetic
-        ? worldPersonaFor(`${roomId}:${worldOrdinal.get(b.id) ?? 0}`)
-        : personaForSeat(b.seat);
+      // synthetic 아닌 봇(2D로 시작된 방의 진짜 봇)은 게임 페르소나와 함께 지워졌다 —
+      // 옛 방이 남아 있어도 월드 인물로 답하는 게 침묵보다 낫다.
+      const persona = worldPersonaFor(`${roomId}:${worldOrdinal.get(b.id) ?? 0}`);
       return {
         player_id: b.id,
         persona,

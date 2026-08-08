@@ -374,3 +374,20 @@ export const MAX_TYPING_MS = 6_500;
 export function typingDelayMs(text: string): number {
   return Math.min(MAX_TYPING_MS, MIN_TYPING_MS + text.length * 55);
 }
+
+/**
+ * 순수 — 상한 안이면 다듬은 텍스트, 넘치면 null.
+ *
+ * 자르지 않고 **통째로 버리는** 소비자용이다 (월드 말풍선) — 잘린 문장
+ * ("…주말에 일도 많이")은 폴백 문구보다 봇 티가 난다 (world-agent 실측).
+ * 넘침 판정은 이 함수가 직접 계약한다 — "다른 함수를 돌려서 결과가 원문과
+ * 다른지 비교"하는 우회는 그 함수 내부가 바뀌는 순간 상한 안의 멀쩡한
+ * 발화까지 조용히 버리게 된다.
+ *
+ * 원래 chat-reply.ts(2D 게임 덮어쓰기 계층)에 있었는데, 그 계층을 지우면서
+ * (2026-08-08) 남은 소비자인 world-agent 를 위해 여기로 옮겼다.
+ */
+export function fitChatReply(text: string, maxLen: number): string | null {
+  const t = text.trim();
+  return t !== '' && t.length <= maxLen ? t : null;
+}

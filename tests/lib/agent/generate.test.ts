@@ -15,14 +15,16 @@ import {
   parseOutput,
   type AgentContext,
 } from '@/lib/agent/generate';
-import { PERSONAS } from '@/lib/agent/persona';
 import { WORLD_PERSONAS } from '@/lib/agent/world-persona';
 import { DEFAULT_STYLE, MIN_TYPING_MS } from '@/lib/agent/disguise';
 import type { LlmChatMessage } from '@/lib/game/types';
 
+// 게임 페르소나 4인은 2026-08-08에 지워졌다 (persona.ts 머리말). 인물 구조 검사
+// (id 중복·이름 일치·avoidPunct·laugh)는 world-persona.test.ts가 맡는다 —
+// 여기서는 buildMessages·parseOutput의 구조만 본다.
 function ctx(over: Partial<AgentContext> = {}): AgentContext {
   return {
-    persona: PERSONAS[0],
+    persona: WORLD_PERSONAS[0],
     phase: 'question',
     question: '요즘 제일 자주 시켜 먹는 야식이 뭐야?',
     visibleHistory: [{ speaker: '익명2', text: '나는 무조건 엽떡 ㅋㅋ' }],
@@ -31,38 +33,6 @@ function ctx(over: Partial<AgentContext> = {}): AgentContext {
     ...over,
   };
 }
-
-describe('PERSONAS — 봇 4명이 서로 구분돼야 한다 (§9)', () => {
-  it('최소 4종이고 id가 겹치지 않는다', () => {
-    expect(PERSONAS.length).toBeGreaterThanOrEqual(4);
-    expect(new Set(PERSONAS.map((p) => p.id)).size).toBe(PERSONAS.length);
-  });
-
-  it('시스템 프롬프트가 비어 있지 않다', () => {
-    for (const p of PERSONAS) expect(p.system.length).toBeGreaterThan(50);
-  });
-
-  it('name이 system 속 이름과 같다 — 어긋나면 자기소개 그물이 헛돈다', () => {
-    for (const p of PERSONAS) expect(p.system, p.id).toContain(`"${p.name}"`);
-  });
-
-  it('avoidPunct는 인물이 "절대 안 쓰는 것"에 적어 둔 부호뿐이다', () => {
-    // 쓰는 부호를 실수로 넣으면 그 인물의 지문이 통째로 지워진다 (느낌표 쓰는 인물 등)
-    const word: Record<string, string> = { '!': '느낌표', '~': '물결', '.': '마침표' };
-    for (const p of PERSONAS) {
-      for (const ch of p.avoidPunct ?? []) expect(p.system, `${p.id}: ${ch}`).toContain(word[ch]);
-    }
-  });
-
-  it('laugh는 그 인물이 실제로 쓰는 글자다 — 금지해 둔 웃음에 폭을 주지 않는다', () => {
-    for (const p of PERSONAS) {
-      if (!p.laugh) continue;
-      const banned = p.system.match(/절대 안 쓰는 것: (.*)/)?.[1] ?? '';
-      expect(banned, `${p.id}가 금지한 글자에 laugh가 걸렸다`).not.toContain(p.laugh.ch);
-      expect(p.laugh.max, p.id).toBeGreaterThanOrEqual(p.laugh.base);
-    }
-  });
-});
 
 describe('cleanMessage — 말끝에 겹친 요를 접는다', () => {
   /*
@@ -120,7 +90,7 @@ describe('buildMessages — 인젝션 방어 구조 (§9.1)', () => {
 
   it('system에 페르소나와 방 말투가 실린다', () => {
     const msgs = buildMessages(ctx());
-    expect(msgs[0].content).toContain(PERSONAS[0].system.split('\n')[0]);
+    expect(msgs[0].content).toContain(WORLD_PERSONAS[0].system.split('\n')[0]);
     expect(msgs[0].content).toContain('말투');
   });
 
@@ -513,7 +483,8 @@ describe('parseOutput — 뭐가 오든 발화 가능한 모양으로 (§12.3)',
   });
 
   it('한 글자 이름에는 그물을 걸지 않는다 — "준"은 "기준"에도 들어 있다', () => {
-    const short = PERSONAS.find((p) => p.name.length === 1)!;
+    // 한 글자 이름 인물은 지금 없다 — 그물의 계약 자체를 지키려고 가상 인물로 잰다
+    const short = { ...WORLD_PERSONAS[0], name: '준' };
     const out = parseOutput(
       JSON.stringify({ messages: ['그건 기준이 다르지'] }),
       ctx({ persona: short }),

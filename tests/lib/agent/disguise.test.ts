@@ -8,6 +8,7 @@ import { describe, expect, it } from 'vitest';
 import {
   applyTypo,
   DEFAULT_STYLE,
+  fitChatReply,
   MAX_TYPING_MS,
   MIN_TYPING_MS,
   observeStyle,
@@ -328,4 +329,23 @@ describe('toPolite — 존댓말 인물이 만든 없는 말', () => {
     expect(toPolite('저도 안녕요')).toBe('저도 안녕하세요');
   });
 
+});
+
+describe('fitChatReply — 잘라 내보내느니 버리는 소비자용 (월드 말풍선)', () => {
+  it('상한 안이면 다듬어서 돌려준다', () => {
+    expect(fitChatReply(' 소파 푹신하네 ', 25)).toBe('소파 푹신하네');
+  });
+
+  it('정확히 상한이면 살린다', () => {
+    expect(fitChatReply('ㅋ'.repeat(25), 25)).toBe('ㅋ'.repeat(25));
+  });
+
+  it('상한을 넘으면 자르지 않고 null — 잘린 말끝은 폴백 문구보다 봇 티가 난다', () => {
+    expect(fitChatReply('나 어제 야식으로 엽떡 시켰는데 진짜 맛있었음 완전 추천함', 25)).toBeNull();
+  });
+
+  it('빈 문자열·공백뿐이면 null', () => {
+    expect(fitChatReply('', 25)).toBeNull();
+    expect(fitChatReply('   ', 25)).toBeNull();
+  });
 });

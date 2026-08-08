@@ -35,7 +35,8 @@ import {
   type AgentContext,
 } from '@/lib/agent/generate';
 import { describeNow } from '@/lib/agent/clock';
-import { PERSONAS, type Persona } from '@/lib/agent/persona';
+import type { Persona } from '@/lib/agent/persona';
+import { WORLD_PERSONAS } from '@/lib/agent/world-persona';
 import { observeStyle } from '@/lib/agent/disguise';
 import type { LlmChatMessage, Phase } from '@/lib/game/types';
 import { ApiError, apiError, readJson } from '@/lib/server/auth';
@@ -336,7 +337,10 @@ const MAX_PROBE_PROMPT_LEN = 500;
 const MAX_LAB_TEXT_LEN = 300;
 const MAX_LAB_HISTORY = 30;
 
-/** /lab: 페르소나 전원에게 같은 상황을 준다. 조립은 서버에서 — 프롬프트가 새면 안 된다. */
+/**
+ * /lab: 인물 전원에게 같은 상황을 준다. 조립은 서버에서 — 프롬프트가 새면 안 된다.
+ * 게임 페르소나가 지워진 뒤로(2026-08-08) 비교 대상은 월드 인물 7인이다.
+ */
 function labJobs(body: Body): BotJob[] {
   const history = (body.history ?? [])
     .filter((h): h is { speaker?: string; text: string } => typeof h?.text === 'string' && h.text.trim() !== '')
@@ -352,7 +356,7 @@ function labJobs(body: Body): BotJob[] {
   // 인물 전원이 **같은 시각**을 본다 — /lab 은 나란히 비교하는 화면이라 특히 그렇다
   const now = describeNow(new Date().toISOString()) ?? undefined;
 
-  return PERSONAS.map((persona) => ({
+  return WORLD_PERSONAS.map((persona) => ({
     player_id: `lab-${persona.id}`,
     persona: { id: persona.id, traits: persona.traits },
     context: {

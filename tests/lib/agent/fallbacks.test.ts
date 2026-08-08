@@ -7,10 +7,10 @@
 import { describe, expect, it } from 'vitest';
 import { DEFAULT_STYLE } from '@/lib/agent/disguise';
 import { FALLBACK_POOL, fallbackOutput, isFallbackLine, parseOutput } from '@/lib/agent/generate';
-import { PERSONAS } from '@/lib/agent/persona';
 import { WORLD_PERSONAS } from '@/lib/agent/world-persona';
 
-const ALL = [...PERSONAS, ...WORLD_PERSONAS];
+// 게임 페르소나 4인은 2026-08-08에 지워졌다 (persona.ts 머리말) — 남은 건 월드 인물뿐이다.
+const ALL = [...WORLD_PERSONAS];
 
 function ctxFor(persona: (typeof ALL)[number]) {
   return {
@@ -39,13 +39,11 @@ describe('인물마다 제 폴백을 쓴다', () => {
   });
 
   it('인물끼리도 폴백이 겹치지 않는다 — 두 자리가 같은 말을 하면 묶인다', () => {
-    for (const group of [PERSONAS, WORLD_PERSONAS]) {
-      const seen = new Map<string, string>();
-      for (const p of group) {
-        for (const line of p.fallbacks ?? []) {
-          expect(seen.get(line), `${line}: ${seen.get(line)} vs ${p.id}`).toBeUndefined();
-          seen.set(line, p.id);
-        }
+    const seen = new Map<string, string>();
+    for (const p of WORLD_PERSONAS) {
+      for (const line of p.fallbacks ?? []) {
+        expect(seen.get(line), `${line}: ${seen.get(line)} vs ${p.id}`).toBeUndefined();
+        seen.set(line, p.id);
       }
     }
   });
@@ -177,9 +175,11 @@ describe('접객 말투는 폴백으로 바뀐다 — 정체 자백과 같은 �
     }
   });
 
-  it('접객이 화제인 건 막지 않는다 — 카페 알바가 손님 얘기를 할 수 있다', () => {
-    const cafe = PERSONAS.find((p) => p.name === '하늘')!;
-    const out = parseOutput(JSON.stringify({ messages: ['오늘 손님 진짜 많았어'] }), ctxFor(cafe));
+  it('접객이 화제인 건 막지 않는다 — 손님 얘기를 화제로 할 수 있다', () => {
+    const out = parseOutput(
+      JSON.stringify({ messages: ['오늘 손님 진짜 많았어'] }),
+      ctxFor(anyPersona),
+    );
     expect(out.messages[0]).toContain('손님');
   });
 });
