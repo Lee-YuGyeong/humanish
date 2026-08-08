@@ -89,10 +89,24 @@ export async function hedgeOnStall<T>(
 
   if (!second) return first.promise;
 
+  /*
+   * ★ 헤지가 걸렸다는 사실을 남긴다 (wrangler tail).
+   *
+   *   world_agent_logs 로는 이걸 볼 수 없다 — 거기 남는 건 "몇 초 걸렸나"뿐이라
+   *   두 번째를 걸고도 못 건진 것인지, 애초에 안 걸린 것인지 구분이 안 된다.
+   *   실제로 그 구분이 안 돼서 한 번 헛다리를 짚었다 (2026-08-09).
+   *   자리·방을 싣지 않는다 — 운영자만 보는 로그지만 봇을 특정할 값은 안 넣는다 (I1).
+   */
+  const t0 = Date.now();
+  console.warn(`[hedge] ${hedgeAfterMs}ms 무응답 — 두 번째 연결을 건다`);
+
   try {
     // Promise.any 는 **먼저 성공하는** 쪽을 준다 — 한쪽이 실패해도 다른 쪽을 기다린다.
-    return await Promise.any([first.promise, second.promise]);
+    const winner = await Promise.any([first.promise, second.promise]);
+    console.warn(`[hedge] 건짐 — 두 번째를 건 뒤 ${Date.now() - t0}ms`);
+    return winner;
   } catch {
+    console.warn(`[hedge] 둘 다 실패 — 두 번째를 건 뒤 ${Date.now() - t0}ms`);
     // 둘 다 실패. AggregateError 대신 첫 시도의 사유로 되돌린다 (위 머리말).
     return await first.promise;
   } finally {
