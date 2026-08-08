@@ -35,6 +35,7 @@ import {
   type AgentContext,
 } from '@/lib/agent/generate';
 import { describeNow } from '@/lib/agent/clock';
+import { hedgeOnStall } from '@/lib/agent/hedge';
 import type { Persona } from '@/lib/agent/persona';
 import { WORLD_PERSONAS } from '@/lib/agent/world-persona';
 import { observeStyle } from '@/lib/agent/disguise';
@@ -149,6 +150,11 @@ async function callNim(
   cfg: NimConfig,
   messages: LlmChatMessage[],
   signal?: AbortSignal,
+  /**
+   * 첫 토큰이 도착한 순간 한 번 불린다. 헤지(callNimHedged)가 "이 연결이 살아
+   * 있는가"를 판단하는 유일한 신호다 — 응답 헤더는 큐에 걸린 요청도 바로 준다.
+   */
+  onFirstToken?: () => void,
 ): Promise<string> {
   const res = await fetch(`${cfg.baseUrl}/chat/completions`, {
     method: 'POST',
@@ -198,7 +204,10 @@ async function callNim(
       try {
         const piece = (JSON.parse(payload) as { choices?: { delta?: { content?: unknown } }[] })
           .choices?.[0]?.delta?.content;
-        if (typeof piece === 'string') acc += piece;
+        if (typeof piece === 'string' && piece.length > 0) {
+          if (!acc) onFirstToken?.();
+          acc += piece;
+        }
       } catch {
         // 조각난 줄은 버린다 — 다음 청크에서 온전한 줄로 다시 온다.
       }
@@ -222,6 +231,35 @@ async function callNim(
 
   if (!acc.trim()) throw new Error('NIM 응답이 비었다');
   return acc.trim();
+}
+
+/**
+ * 첫 토큰이 이만큼 안 오면 **한 번 더 건다** (같은 컷 안에서 나란히).
+ *
+ * 성공한 호출의 첫 토큰은 1~2초 안에 온다 (실측). 6초는 "느린 것"이 아니라
+ * "안 오고 있는 것"의 문턱이다 — 그 이상 기다려도 대개 끝까지 안 온다.
+ * 왜 이게 필요한지는 lib/agent/hedge.ts 머리말에 있다.
+ */
+const HEDGE_AFTER_MS = 6_000;
+
+/**
+ * 헤지를 켤 최소 컷. 게임(2D)의 8초 규칙(§12.3)에서는 두 번째 요청이 답을 낼
+ * 시간이 애초에 없다 — 남의 지갑만 쓰고 결과는 같다. 월드 AI 의 긴 컷
+ * (deadline_ms, 최대 MAX_DEADLINE_MS)에서만 켠다.
+ */
+const HEDGE_MIN_DEADLINE_MS = 15_000;
+
+/** 무응답 헤지를 얹은 callNim. 언제 한 번 더 거는지는 hedgeOnStall 이 정한다. */
+function callNimHedged(
+  cfg: NimConfig,
+  messages: LlmChatMessage[],
+  signal: AbortSignal,
+): Promise<string> {
+  return hedgeOnStall(
+    (attemptSignal, onFirstToken) => callNim(cfg, messages, attemptSignal, onFirstToken),
+    signal,
+    HEDGE_AFTER_MS,
+  );
 }
 
 // ── 공급자 무관 층 — 타임아웃 ───────────────────────────────────────────────
@@ -445,11 +483,28 @@ export async function POST(req: Request): Promise<Response> {
       : typeof body.deadline_ms === 'number'
         ? Math.min(MAX_DEADLINE_MS, Math.max(1_000, Math.round(body.deadline_ms)))
         : AGENT_TIMEOUT_MS;
+    /*
+     * 컷이 넉넉한 경로(월드 AI)에서는 무응답 헤지를 켠다 — 첫 토큰이 안 오는 연결에
+     * 컷을 통째로 태우지 않는다 (callNimHedged 의 상자). 게임의 8초는 그대로다.
+     *
+     * ★ lab 은 뺀다. 컷은 넉넉하지만(60초) 인물 전원을 **동시에** 쏘는 화면이라,
+     *   거기서 안 오는 첫 토큰은 공급자 무응답이 아니라 **내 요청들끼리의 큐**다
+     *   (LAB_TIMEOUT_MS 의 상자 — 순차 p50 17초가 4병렬에서 30초). 큐를 헤지로
+     *   밀면 줄만 두 배로 길어진다.
+     */
+    const hedge = !body.lab && deadlineMs >= HEDGE_MIN_DEADLINE_MS;
     const t0 = Date.now();
     const settled = await Promise.allSettled(
       jobs.map((job) =>
         withDeadline(
-          (signal) => generate(job.context, cfg ? (msgs) => callNim(cfg, msgs, signal) : null),
+          (signal) =>
+            generate(
+              job.context,
+              cfg
+                ? (msgs) =>
+                    hedge ? callNimHedged(cfg, msgs, signal) : callNim(cfg, msgs, signal)
+                : null,
+            ),
           deadlineMs,
         ).then((output) => ({ output, tookMs: Date.now() - t0 })),
       ),
