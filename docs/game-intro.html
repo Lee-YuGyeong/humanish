@@ -1,0 +1,345 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<title>사람인 척 — 게임 소개 및 설명</title>
+<style>
+  :root{
+    --ink:#16181C;
+    --body:#3F444B;
+    --muted:#8A9099;
+    --line:#E8E9EB;
+    --zebra:#F5F6F7;
+    --callout:#FAFBFC;
+    --green:#01A344;        /* 밝은 배경용 */
+    --neon:#01FF66;         /* 어두운 배경용 */
+    --dark:#0A0B0D;
+    --sans:"Helvetica Neue","Apple SD Gothic Neo",sans-serif;
+    --mono:Menlo,monospace;
+  }
+  @page{ size:A4; margin:0; }
+  *{ box-sizing:border-box; margin:0; padding:0; }
+  html{ -webkit-print-color-adjust:exact; print-color-adjust:exact; }
+  body{ font-family:var(--sans); color:var(--ink); background:#fff; }
+  img{ display:block; max-width:100%; }
+
+  .page{
+    width:210mm; height:297mm; padding:19mm 17mm 13mm;
+    display:flex; flex-direction:column; position:relative;
+    page-break-after:always; overflow:hidden;
+  }
+  .page:last-child{ page-break-after:auto; }
+
+  /* ── 표지 ─────────────────────────────────────── */
+  .cover{ padding:0; background:var(--dark); color:#fff; }
+  .cover .hero{ height:46%; position:relative; overflow:hidden; }
+  .cover .hero img{ width:100%; height:100%; object-fit:cover; object-position:center 42%; }
+  .cover .hero::after{
+    content:""; position:absolute; inset:auto 0 0 0; height:38%;
+    background:linear-gradient(to bottom, rgba(10,11,13,0) 0%, rgba(10,11,13,.75) 55%, var(--dark) 100%);
+  }
+  .cover .body{ flex:1; padding:0 20mm 16mm; display:flex; flex-direction:column; }
+  .pill{
+    margin-top:-3.7mm; position:relative; z-index:2;
+    border:1px solid rgba(1,255,102,.45); border-radius:999px;
+    padding:2.6mm 7mm; font-family:var(--mono); font-size:8.5pt;
+    letter-spacing:.36em; color:var(--neon);
+  }
+  .cover h1{ margin-top:12mm; font-size:32pt; font-weight:700; letter-spacing:-.015em; line-height:1.18; }
+  .cover h1 .en{ display:block; color:var(--neon); }
+  .cover p.lead{ margin-top:9mm; font-size:11pt; line-height:2.05; color:#C6CBD1; max-width:150mm; }
+  .cover p.lead b{ color:#fff; font-weight:700; }
+  .cta{
+    margin-top:10mm; align-self:flex-start; background:var(--neon); color:#06210F;
+    border-radius:999px; padding:4.6mm 11mm; font-size:13pt; font-weight:700;
+  }
+  .cover .sub{ margin-top:4.5mm; font-size:8.5pt; letter-spacing:.06em; color:#7E858D; }
+  .cover .meta{ margin-top:auto; padding-top:7mm; border-top:1px solid #23262B;
+                display:grid; grid-template-columns:1fr 1.6fr; gap:10mm; }
+  .cover .meta .k{ font-family:var(--mono); font-size:7.5pt; letter-spacing:.22em; color:var(--neon); text-transform:uppercase; }
+  .cover .meta .v{ margin-top:3.5mm; font-size:10pt; color:#DCE0E4; }
+
+  /* ── 본문 페이지 ──────────────────────────────── */
+  .eyebrow{ font-family:var(--mono); font-size:8pt; letter-spacing:.28em; color:var(--green); text-transform:uppercase; }
+  h1.sec{ margin-top:4mm; font-size:16.5pt; font-weight:700; letter-spacing:-.01em; }
+  h1.sec .thin{ font-weight:400; color:var(--body); }
+  h2{ margin-top:7mm; font-size:12pt; font-weight:700; }
+  p{ font-size:10.5pt; line-height:2.0; color:var(--body); }
+  p.intro{ margin-top:6mm; }
+  p b, li b, td b{ color:var(--ink); font-weight:700; }
+  .g{ color:var(--green); font-weight:700; }
+  em{ font-style:italic; }
+
+  ul.sum{ margin:5mm 0 0 5mm; }
+  ul.sum li{ font-size:10.5pt; line-height:2.0; color:var(--body); margin-top:2.5mm; padding-left:1.5mm; }
+  ul.sum li::marker{ color:var(--muted); }
+
+  .callout{
+    margin-top:7mm; background:var(--callout); border-left:4px solid var(--green);
+    padding:5mm 6mm;
+  }
+  .callout h3{ font-size:11pt; font-weight:700; }
+  .callout p{ margin-top:3.5mm; font-size:9.5pt; line-height:1.95; }
+
+  figure{ margin-top:5.5mm; }
+  figure img{ width:100%; border-radius:2mm; }
+  figcaption{ margin-top:2.5mm; font-size:9pt; line-height:1.75; color:var(--body); }
+  figcaption b{ color:var(--ink); font-weight:700; }
+  .shots{ display:grid; grid-template-columns:1fr 1fr; gap:9mm 8mm; margin-top:7mm; }
+  .shots figure{ margin-top:0; }
+  /* 03 접속 흐름 4컷은 원본과 같이 높이를 맞춰 자른다 (원본 비율이 서로 다르다) */
+  .shots.norm figure img{ aspect-ratio:2.02; object-fit:cover; object-position:center top; }
+
+  table{ width:100%; border-collapse:collapse; margin-top:4.5mm; }
+  th{ background:var(--zebra); font-size:9.5pt; font-weight:700; text-align:left;
+      padding:3mm 4mm; }
+  td{ font-size:9.5pt; color:var(--body); padding:2.3mm 4mm; border-bottom:1px solid var(--line);
+      vertical-align:top; }
+  td.c{ text-align:center; }
+  .roles td:first-child{ font-weight:700; color:var(--ink); }
+  .roles .emoji{ margin-right:2mm; }
+  p.after{ margin-top:3mm; font-size:9.5pt; line-height:1.95; }
+
+  /* 페이즈 스트립 */
+  .strip{ margin-top:4mm; border-top:2px solid var(--green); display:grid;
+          grid-template-columns:repeat(7,1fr); text-align:center; padding-top:3mm; }
+  .strip .n{ font-size:10pt; font-weight:700; }
+  .strip .t{ margin-top:2.5mm; font-size:9.5pt; color:var(--body); }
+
+  .flow td.num{ color:var(--muted); font-size:9.5pt; }
+  .flow td.step{ font-weight:700; color:var(--ink); }
+  .flow td.time{ color:var(--green); font-weight:700; }
+
+  kbd{ font-family:var(--mono); font-size:9pt; background:var(--zebra);
+       border-radius:1mm; padding:1mm 2.5mm; letter-spacing:.08em; color:var(--ink); }
+
+  .foot{ margin-top:auto; padding-top:5mm; border-top:1px solid var(--line);
+         display:flex; font-size:9pt; color:var(--muted); }
+  .foot .p{ margin-left:auto; }
+</style>
+</head>
+<body>
+
+<!-- ══════════ 표지 ══════════ -->
+<section class="page cover">
+  <div class="hero"><img src="game-intro/img-07.jpg" alt="3D 월드 대기 화면"></div>
+  <div class="body">
+    <div class="pill">SOCIAL DEDUCTION GAME</div>
+    <h1>사람인 척<span class="en">Who is AI?</span></h1>
+    <p class="lead">최대 8자리 방에 <b>AI가 정확히 한 명</b> 섞여 앉는다. 3D 공간에서 대화하고, 의심하고, 한 명을 지목해 처형한다. 그런데 사람 중 일부는 반대로 <b>AI인 척 연기하는 중</b>이다 — 그 수는 아무도 모른다.</p>
+    <div class="cta">▶ 게임 접속하기</div>
+    <div class="sub">설치 없이 브라우저에서 바로 · 사람 2명부터 시작할 수 있다</div>
+    <div class="meta">
+      <div><div class="k">Stack</div><div class="v">Next.js 15 · three.js · Durable Objects</div></div>
+      <div><div class="k">Doc</div><div class="v">게임 개요 · 플레이 방법 · 화면</div></div>
+    </div>
+  </div>
+</section>
+
+<!-- ══════════ 01 게임 개요 ══════════ -->
+<section class="page">
+  <div class="eyebrow">01 — Overview</div>
+  <h1 class="sec">게임 개요</h1>
+
+  <p class="intro">「<b>사람인 척</b>」은 설치 없이 브라우저에서 바로 즐기는 <b>웹 소셜 추리 게임</b>이다. 사람 최대 8자리 + AI 1자리인 3D 방에 모여 4분 동안 대화하고, 투표로 한 명을 처형한다. <span class="g">처형된 한 명의 정체</span>가 곧 그 판의 결론이다.</p>
+
+  <h2>세 줄 요약</h2>
+  <ul class="sum">
+    <li><b>AI는 언제나 1명이다 — 그리고 그건 공개된 규칙이다.</b> 숨겨진 것은 <em>몇 명인가</em>가 아니라 <em>어느 자리인가</em>뿐이다.</li>
+    <li><b>사람 중 일부는 AI인 척 연기한다.</b> 그 수는 0~2명 사이 랜덤이고, 연기자끼리도 서로를 모른다. 0명인 판도 정상이다.</li>
+    <li><b>그래서 “AI 같은 말”이 곧 함정이 된다.</b> 진짜 AI를 찾아야 시민이 이긴다.</li>
+  </ul>
+
+  <div class="callout">
+    <h3>이 게임의 설계 목표는 “AI를 이기는 것”이 아니다</h3>
+    <p>대부분의 설계 결정은 <b>“어느 자리가 AI인지 드러나지 않게 하는 것”</b> 하나에 집중돼 있다. 좌석 번호, 응답 도착 시각, 입·퇴장 이벤트, 좌표 전송 방식까지 — 사람과 AI가 <b>같은 모양으로</b> 나가도록 만든 것이 이 프로젝트의 기술적 핵심이다 (7쪽 「AI를 숨기는 설계」).</p>
+  </div>
+
+  <figure>
+    <img src="game-intro/img-01.jpg" alt="인트로 화면">
+    <figcaption><b>인트로 화면</b> — 게임의 전제를 한 화면에 담았다. 방 안의 AI 수(언제나 1)는 공개하고, 자리만 감춘다.</figcaption>
+  </figure>
+
+  <div class="foot"><span>사람인 척 · Who is AI?</span><span class="p">1</span></div>
+</section>
+
+<!-- ══════════ 02 배역과 승리 조건 ══════════ -->
+<section class="page">
+  <div class="eyebrow">02 — Roles</div>
+  <h1 class="sec">배역과 승리 조건</h1>
+
+  <p class="intro"><b>게임에 접속한 사람에게 배달되는 카드는 시민 아니면 연기자 둘뿐이다.</b> AI 자리는 서버가 조종하는 봇이므로 사람이 AI 역할을 받는 일은 없다. 역할 카드는 판이 열리는 순간 본인에게만 전달되고, 끝까지 남에게 공개되지 않는다.</p>
+
+  <table class="roles">
+    <colgroup><col style="width:26%"><col style="width:26%"><col></colgroup>
+    <thead><tr><th>역할</th><th>인원</th><th>승리 조건</th></tr></thead>
+    <tbody>
+      <tr><td><span class="emoji">🧑</span>시민</td><td>나머지 전부</td><td><b>AI가</b> 처형됐을 때</td></tr>
+      <tr><td><span class="emoji">🎭</span>연기자</td><td>0~2명 (랜덤 · 비공개)</td><td><b>연기자가</b> 처형됐을 때</td></tr>
+      <tr><td><span class="emoji">🤖</span>AI</td><td>언제나 1명 (공개)</td><td><b>시민이</b> 처형됐거나, <b>아무도 처형되지 않았을 때</b></td></tr>
+    </tbody>
+  </table>
+
+  <p class="after">연기자 상한은 사람 수로 정해진다 — 3명 이하면 0명, 4~5명이면 1명, 6~8명이면 2명. 그 상한 안에서 0부터 균등 랜덤으로 뽑히므로, 인원을 알아도 실제 연기자 수는 알 수 없다. <b>지목만으로는 아무도 이기지 않는다</b> — 생사 투표에서 찬성이 과반이어야 처형이 확정된다.</p>
+
+  <figure>
+    <img src="game-intro/img-02.jpg" alt="배역 소개 화면">
+    <figcaption><b>배역 소개</b> — 세 배역의 승리 조건. 셋 다 “누가 처형됐나” 하나로 갈린다.</figcaption>
+  </figure>
+
+  <h2>왜 연기자가 있는가</h2>
+  <p style="margin-top:4mm">연기자가 없다면 이 게임은 “가장 어색한 사람 찾기”로 끝난다. 연기자는 그 판단 기준 자체를 무너뜨린다 — <b>AI처럼 말하는 사람이 진짜 AI라는 보장이 사라지기 때문이다.</b> 게다가 연기자 수가 고정이 아니라 <b>0~2명 랜덤</b>이라, 인원표를 외워도 “이 판에 연기자가 있는지”조차 알 수 없다.</p>
+
+  <div class="foot"><span>사람인 척 · Who is AI?</span><span class="p">2</span></div>
+</section>
+
+<!-- ══════════ 03 접속부터 시작까지 ══════════ -->
+<section class="page">
+  <div class="eyebrow">03 — How to play</div>
+  <h1 class="sec">접속부터 시작까지</h1>
+
+  <p class="intro">인트로에서 「게임 접속하기」를 누르는 순간부터 판이 열리기까지 네 화면이다. 설치는 없다.</p>
+
+  <div class="shots norm">
+    <figure>
+      <img src="game-intro/img-03.jpg" alt="인트로">
+      <figcaption><b>① 인트로 — 「게임 접속하기」</b><br>여기가 게임의 문이다. 누르면 로그인부터 시작한다.</figcaption>
+    </figure>
+    <figure>
+      <img src="game-intro/img-04.jpg" alt="구글 로그인">
+      <figcaption><b>② 구글 로그인</b><br>계정을 만들 필요 없이 구글 계정으로 들어오고, 처음 한 번 사용할 이름을 정한다.</figcaption>
+    </figure>
+    <figure>
+      <img src="game-intro/img-05.jpg" alt="게임 로비">
+      <figcaption><b>③ 게임 로비 — 방 만들기 · 코드로 입장</b><br>열려 있는 방과 인원이 보인다. 「방 만들기」로 새 방을 열거나 <b>4자리 코드</b>로 친구 방에 들어간다.</figcaption>
+    </figure>
+    <figure>
+      <img src="game-intro/img-06.jpg" alt="대기방">
+      <figcaption><b>④ 대기방 — 준비하고 시작</b><br>좌석이 8칸이다. 「코드 복사」로 친구를 부르고, 전원이 준비하면 방장이 시작한다.</figcaption>
+    </figure>
+  </div>
+
+  <p style="margin-top:8mm"><b>사람이 2명만 모이면 시작할 수 있고</b>, 최대 8명까지 들어온다. 방장을 제외한 전원이 준비 → 방장이 시작 → <b>AI 1명이 합류하고 좌석이 다시 섞인다.</b> (방 링크를 그대로 보내도 상대는 로그인 후 그 방으로 들어온다)</p>
+
+  <div class="callout">
+    <h3>시작 버튼을 누르는 순간 — 좌석 번호로는 AI를 찾을 수 없다</h3>
+    <p>시작하는 순간 좌석 순열을 다시 뽑고, <b>AI도 그 순열 안에 포함된다.</b> 사람만 1번부터 순서대로 정리하면 AI가 언제나 방에서 가장 큰 번호가 되어 그것만 찍으면 맞는 게임이 된다.</p>
+  </div>
+
+  <div class="foot"><span>사람인 척 · Who is AI?</span><span class="p">3</span></div>
+</section>
+
+<!-- ══════════ 게임의 흐름 ══════════ -->
+<section class="page">
+  <div class="eyebrow">03 — How to play</div>
+  <h1 class="sec">게임의 흐름 <span class="thin">— 약 4분</span></h1>
+
+  <figure>
+    <img src="game-intro/img-07.jpg" alt="3D 공간">
+    <figcaption><b>판은 이 3D 공간 안에서 돈다.</b> 정면 스크린이 지금 단계와 주제를 띄우고, 사람도 AI도 이 방을 같이 걸어 다닌다 — 아래 여덟 단계가 여기서 순서대로 흐른다.</figcaption>
+  </figure>
+
+  <div class="strip">
+    <div><div class="n">주제</div><div class="t">6초</div></div>
+    <div><div class="n">말하기</div><div class="t">45초</div></div>
+    <div><div class="n">자유 대화</div><div class="t">60초</div></div>
+    <div><div class="n">지목 투표</div><div class="t">30초</div></div>
+    <div><div class="n">최후변론</div><div class="t">20초</div></div>
+    <div><div class="n">생사 투표</div><div class="t">20초</div></div>
+    <div><div class="n">결과</div><div class="t">20초</div></div>
+  </div>
+
+  <table class="flow">
+    <colgroup><col style="width:7%"><col style="width:22%"><col style="width:13%"><col></colgroup>
+    <thead><tr><th>#</th><th>단계</th><th>시간</th><th>설명</th></tr></thead>
+    <tbody>
+      <tr><td class="num">1</td><td class="step">주제 제시</td><td class="time">6초</td><td>중앙 스크린에 이번 라운드의 주제가 표시된다</td></tr>
+      <tr><td class="num">2</td><td class="step">다같이 말하기</td><td class="time">45초</td><td>전원이 <b>동시에</b> 각자 답을 작성하고, 페이즈가 끝나면 <b>한꺼번에</b> 공개된다</td></tr>
+      <tr><td class="num">3</td><td class="step">↺ 2라운드</td><td class="time">—</td><td>1라운드는 <b>사실형</b>, 2라운드는 <b>감정형</b> 주제다. 두 답 사이의 <b>일관성</b>이 단서가 된다</td></tr>
+      <tr><td class="num">4</td><td class="step">자유 대화</td><td class="time">60초</td><td>서로 추궁하고 반박한다. 판이 갈리는 구간이다</td></tr>
+      <tr><td class="num">5</td><td class="step">지목 투표</td><td class="time">30초</td><td>AI라고 생각하는 한 명에게 투표한다. <b>자기 자신은 선택할 수 없다</b></td></tr>
+      <tr><td class="num">6</td><td class="step">최후변론</td><td class="time">20초</td><td>지목된 한 명에게만 조명이 켜진다</td></tr>
+      <tr><td class="num">7</td><td class="step">생사 투표</td><td class="time">20초</td><td>찬성(처형) / 반대(생존). <b>찬성이 과반</b>이어야 처형이 확정된다</td></tr>
+      <tr><td class="num">8</td><td class="step">결과 공개</td><td class="time">20초</td><td>전원의 정체와 승리 진영이 공개된다</td></tr>
+    </tbody>
+  </table>
+
+  <p class="after">생사 투표가 부결되면 같은 사람에게 다시 묻지 않고 <b>지목 투표(5번)부터 다시 진행한다.</b> 최대 4번까지 반복하며, 그래도 처형이 확정되지 않으면 아무도 처형되지 않은 채 <b>AI의 승리</b>로 끝난다.</p>
+
+  <div class="foot"><span>사람인 척 · Who is AI?</span><span class="p">4</span></div>
+</section>
+
+<!-- ══════════ 04 화면으로 보는 게임 ══════════ -->
+<section class="page">
+  <div class="eyebrow">04 — A full round</div>
+  <h1 class="sec">화면으로 보는 게임</h1>
+
+  <p class="intro">앞의 대기방에서 「게임 시작」을 누른 뒤 실제로 진행한 판을 순서대로 캡처했다. 사람 3명 + AI 1명이 들어간 방이다.</p>
+
+  <div class="shots">
+    <figure>
+      <img src="game-intro/img-08.jpg" alt="집결 대기">
+      <figcaption><b>① 집결 대기</b> — 방 사람이 전부 3D 공간에 들어와야 판이 열린다. 이 화면에는 좌석 정보가 실리지 않는다.</figcaption>
+    </figure>
+    <figure>
+      <img src="game-intro/img-09.jpg" alt="역할 카드">
+      <figcaption><b>② 역할 카드</b> — 판이 열리는 순간 본인에게만 전달된다. 사람에게 오는 카드는 시민 아니면 연기자뿐이다.</figcaption>
+    </figure>
+    <figure>
+      <img src="game-intro/img-10.jpg" alt="다같이 말하기">
+      <figcaption><b>③ 다같이 말하기</b> — 중앙 스크린의 주제에 45초 동안 답한다. 답은 도착 순서와 무관하게 페이즈 종료 시 한꺼번에 공개된다.</figcaption>
+    </figure>
+    <figure>
+      <img src="game-intro/img-11.jpg" alt="자유 대화">
+      <figcaption><b>④ 자유 대화</b> — 60초. 오른쪽에 전체 대화 기록이 쌓이고, 왼쪽 명부에서 각 좌석에 의심 표시를 붙일 수 있다.</figcaption>
+    </figure>
+  </div>
+
+  <h2>조작</h2>
+  <p style="margin-top:4mm">판이 도는 동안 3D 공간 안에서 쓰는 키다. 마우스로 시점을 돌린다.</p>
+
+  <table>
+    <colgroup><col style="width:26%"><col></colgroup>
+    <thead><tr><th>키</th><th>동작</th></tr></thead>
+    <tbody>
+      <tr><td><kbd>W A S D</kbd></td><td>이동 (<kbd>Shift</kbd> 달리기, <kbd>Space</kbd> 점프)</td></tr>
+      <tr><td><kbd>Enter / T</kbd></td><td>말하기 — 입력창이 열린다</td></tr>
+      <tr><td><kbd>ESC</kbd></td><td>전체 대화 기록 열기</td></tr>
+      <tr><td><kbd>M · − · +</kbd></td><td>음소거 · 음량 조절</td></tr>
+    </tbody>
+  </table>
+
+  <div class="foot"><span>사람인 척 · Who is AI?</span><span class="p">5</span></div>
+</section>
+
+<!-- ══════════ 판의 후반 ══════════ -->
+<section class="page">
+  <div class="shots" style="margin-top:0">
+    <figure>
+      <img src="game-intro/img-12.jpg" alt="지목 투표">
+      <figcaption><b>⑤ 지목 투표</b> — 30초. 누가 누구를 찍었는지는 마감 전까지 보이지 않고, 진행 현황은 <b>숫자 둘</b>로만 표시된다.</figcaption>
+    </figure>
+    <figure>
+      <img src="game-intro/img-13.jpg" alt="최후변론">
+      <figcaption><b>⑥ 최후변론</b> — 지목된 한 명에게만 조명이 켜진다. 20초.</figcaption>
+    </figure>
+    <figure>
+      <img src="game-intro/img-14.jpg" alt="생사 투표">
+      <figcaption><b>⑦ 생사 투표</b> — 찬성이 과반일 때만 처형된다. 동수면 살아남고, 판은 지목 투표부터 다시 시작된다.</figcaption>
+    </figure>
+    <figure>
+      <img src="game-intro/img-15.jpg" alt="결과 공개">
+      <figcaption><b>⑧ 결과 공개</b> — 전원의 정체가 한 겹씩 열린다. 처형된 한 명이 누구였는지가 승패를 가른다.</figcaption>
+    </figure>
+  </div>
+
+  <div class="callout" style="margin-top:10mm">
+    <h3>화면 곳곳이 “정보를 안 주려고” 설계돼 있다</h3>
+    <p>투표 진행 현황을 숫자 둘로만 보여주는 것, 답변을 한꺼번에 공개하는 것, 입·퇴장 알림을 아예 없앤 것은 모두 같은 이유다 — <b>좌석과 묶이는 신호는 무엇이든 AI를 특정하는 단서가 된다.</b></p>
+  </div>
+
+  <div class="foot"><span>사람인 척 · Who is AI?</span><span class="p">6</span></div>
+</section>
+
+</body>
+</html>
