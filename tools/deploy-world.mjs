@@ -166,10 +166,24 @@ function checkWsUrl(raw, origin, name = 'WORLD_WS_URL') {
 
   // https 화면에서 ws:// 는 브라우저가 mixed content 로 막는다.
   // 콘솔을 열지 않으면 "월드 서버에 붙지 못했다" 한 줄만 보여서 원인을 찾기 어렵다.
-  if (origin.startsWith('https://') && url.protocol === 'ws:') {
+  //
+  // ★ 로컬 주소를 이미 허락한 판(--allow-local)에서는 따지지 않는다 (2026-08-09).
+  //   ws://127.0.0.1 은 **로컬 개발용 값**이고, 배포본이 브라우저에 내려주는 주소는
+  //   이 파일이 아니라 워커 비밀 WORLD_WS_URL 에서 온다 (app/api/world/ticket 이
+  //   `WORLD_WS_URL ?? NEXT_PUBLIC_WORLD_WS_URL` 순으로 읽는다). 즉 여기서 막아도
+  //   배포본은 안 바뀌고, 통과시키려고 .env.local 을 배포 주소로 되돌리면 **로컬 3D 가
+  //   죽은 원격 워커로 나간다.** 바로 위 LOCAL_HOST 검사와 같은 이유로 같이 면제한다.
+  const localWs = LOCAL_HOST.test(url.hostname);
+  if (origin.startsWith('https://') && url.protocol === 'ws:' && !(allowLocal && localWs)) {
     bad(
       `NEXT_ORIGIN 은 https 인데 ${name} 이 ws:// 다: ${url.origin}`,
       'https 로 열린 화면에서 ws:// 는 브라우저가 막는다. wss:// 로 바꿀 것.',
+    );
+  } else if (allowLocal && localWs) {
+    warn(
+      `${name} 이 로컬 주소다 — 넘어간다 (--allow-local)`,
+      '배포본이 브라우저에 내려주는 ws 주소는 워커 비밀 WORLD_WS_URL 에서 온다.',
+      '확인:  npx wrangler secret list | grep WORLD_WS_URL',
     );
   }
 }
