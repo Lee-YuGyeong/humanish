@@ -1,4 +1,24 @@
 # https://developers.cloudflare.com/workers/static-assets/headers
 # https://opennext.js.org/cloudflare/caching#static-assets-caching
+#
+# 여기 값은 ASSETS 바인딩이 워커를 거치지 않고 바로 내보내는 응답에 붙는다 —
+# 그래서 next.config.ts 의 headers() 가 닿지 않는 자리다. 최소 방어를 겹쳐 둔다.
+/*
+  X-Content-Type-Options: nosniff
+  Referrer-Policy: strict-origin-when-cross-origin
+
 /_next/static/*
   Cache-Control: public,max-age=31536000,immutable
+
+# 아래 자산들은 파일명에 해시가 없다. immutable·1년을 걸면 자산을 다시 구웠을 때
+# 재방문자가 옛 파일을 붙든다 (robot.glb·screen.mp4 는 실제로 교체된 이력이 있다).
+# 얻는 것은 대역폭이 아니라 조건부 왕복(304) 제거다.
+/textures/*
+  Cache-Control: public,max-age=604800
+
+/intro/*
+  Cache-Control: public,max-age=604800
+
+# 자주 다시 굽는 쪽이라 하루만.
+/world/*
+  Cache-Control: public,max-age=86400
