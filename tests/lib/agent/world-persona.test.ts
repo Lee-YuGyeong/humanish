@@ -16,7 +16,10 @@ describe('WORLD_PERSONAS — 라운지 인물 4명', () => {
   it('게임 어휘가 없다 — "게임 중이 아니다" 같은 부정문도 없다 (무대는 setting이 깐다)', () => {
     for (const p of WORLD_PERSONAS) {
       for (const word of ['게임', '투표', '의심', '봇', '스파이']) {
-        expect(p.system, `${p.id}에 "${word}"`).not.toContain(word);
+        // '로봇'은 게임 어휘가 아니라 아바타 생김새다 (지호의 소재 목록) —
+        // 부분 문자열 '봇' 검사의 오탐이라 지우고 잰다.
+        const system = p.system.replaceAll('로봇', '');
+        expect(system, `${p.id}에 "${word}"`).not.toContain(word);
       }
     }
   });
