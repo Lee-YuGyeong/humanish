@@ -51,8 +51,10 @@
  *   - eslint 의 no-img-element 를 피하고, next/image 원격 도메인 설정(next.config,
  *     남의 파일)을 건드리지 않는다.
  *   - 순수 장식이라 alt 텍스트가 필요 없다(aria-hidden).
- * ★ 배포본은 Workers 로 나가므로 원격 CDN 요청이 실제로 나간다. 나중에
- *   public/intro/bunker.webp 로 자체 호스팅하고 아래 url() 만 바꾸는 게 낫다.
+ * ★ 자체 호스팅이다 (2026-08-08). 예전엔 uxpilot 의 storage.googleapis.com 원본을
+ *   그대로 물고 있어서 배포본에서 외부 요청이 나갔다 — 받아서 webp 로 굽고
+ *   public/intro/bunker.webp 로 옮겼다 (278KB → 73KB).
+ *   레시피: sharp(원본).webp({ quality: 80 })  — cast.tsx 와 같은 값.
  * 주신 그라디언트의 var(--bg2) 는 이 화면 페이지 색(#080808)으로 치환했다.
  */
 .heroBg {
@@ -61,7 +63,7 @@
   z-index: 0;
   overflow: hidden;
   pointer-events: none;
-  background-image: url("https://storage.googleapis.com/uxpilot-auth.appspot.com/gen_97d42373fb_8afc21945e00c85f.png");
+  background-image: url("/intro/bunker.webp");
   background-size: cover;
   background-position: center;
 }

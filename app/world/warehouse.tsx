@@ -7,7 +7,7 @@
  * 바닥·벽·박공지붕·트러스·스크린·가구가 전부 별개의 메시라 카메라가 움직이면 시차가 생긴다.
  *
  * 텍스처는 Higgsfield(nano_banana_pro)로 뽑은 타일링용 3장이다.
- *   public/textures/warehouse/{wall,floor,box}.jpg
+ *   public/textures/warehouse/{wall,floor,box}.webp
  * 벽·바닥은 이음매가 맞물리고, 조명이 구워져 있지 않아 아래 조명 설정이 그대로 먹는다.
  *
  * 여기에는 **씬만 있다.** 캔버스·카메라·이동·네트워크는 world-scene.tsx 가 쥔다.
@@ -48,10 +48,17 @@ const RISE = ROOM.ridge - ROOM.eave;
 const SLOPE_ANGLE = Math.atan2(RISE, HALF_W);
 const SLOPE_LEN = Math.hypot(HALF_W, RISE);
 
+/**
+ * 창고 텍스처. Higgsfield AI 생성물을 webp 로 구워 쓴다 (1,002KB → 348KB, -65%).
+ *
+ * 레시피(cast.tsx 와 같은 값):  sharp(원본).webp({ quality: 80 })
+ * 반복 타일링이라 품질을 더 낮추면 이음매에 블록이 보인다. 원본 .jpg 는 지웠다 —
+ * 남겨 두면 둘 다 배포돼서 줄인 만큼이 그대로 도로 나간다.
+ */
 const TEX = {
-  wall: "/textures/warehouse/wall.jpg",
-  floor: "/textures/warehouse/floor.jpg",
-  box: "/textures/warehouse/box.jpg",
+  wall: "/textures/warehouse/wall.webp",
+  floor: "/textures/warehouse/floor.webp",
+  box: "/textures/warehouse/box.webp",
 };
 
 useTexture.preload([TEX.wall, TEX.floor, TEX.box]);
