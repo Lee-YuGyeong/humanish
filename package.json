@@ -2,13 +2,21 @@
   "name": "humanish",
   "version": "0.1.0",
   "private": true,
+  "license": "MIT",
+  "engines": {
+    "node": ">=20.9"
+  },
   "scripts": {
     "build": "next build --turbopack",
     "dev": "next dev --turbopack",
     "start": "next start",
-    "lint": "eslint",
+    "lint": "eslint --max-warnings=0",
+    "typecheck": "tsc --noEmit",
+    "check": "npm run typecheck && npm run lint && npm test",
+    "audit:prod": "npm audit --omit=dev --audit-level=critical",
     "test": "vitest run",
     "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
     "world:dev": "npm --prefix worker run dev",
     "world:deploy": "node tools/deploy-world.mjs",
     "world:typecheck": "npm --prefix worker run typecheck",
@@ -24,12 +32,9 @@
     "@supabase/ssr": "^0.12.4",
     "@supabase/supabase-js": "^2.110.8",
     "@tanstack/react-query": "^5.101.4",
-    "clsx": "^2.1.1",
-    "motion": "^12.42.2",
     "next": "15.5.22",
     "react": "19.1.0",
     "react-dom": "19.1.0",
-    "tailwind-merge": "^3.6.0",
     "three": "^0.185.1",
     "zustand": "^5.0.14"
   },
@@ -44,12 +49,13 @@
     "@types/react-dom": "^19",
     "@types/three": "^0.185.1",
     "@vitejs/plugin-react": "^4.7.0",
+    "@vitest/coverage-v8": "^3.2.7",
     "eslint": "^9",
     "eslint-config-next": "15.5.22",
     "jsdom": "^26.1.0",
     "tailwindcss": "^4",
-    "typescript": "^5",
+    "typescript": "^5.9.2",
     "vitest": "^3.2.7",
-    "wrangler": "^4.115.0"
+    "wrangler": "^4.120.0"
   }
 }
