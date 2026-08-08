@@ -131,11 +131,12 @@ export default function AdminPage() {
   return (
     <main className="min-h-screen text-bone">
       <div className="mx-auto max-w-5xl px-6 py-16">
+        {/* 작업 보드는 없앴다 (2026-08-08). 돌아갈 곳은 첫 화면인 인트로다 */}
         <Link
-          href="/"
+          href="/intro"
           className="stencil text-[10px] text-grime transition-colors hover:text-tung"
         >
-          ← manifest
+          ← intro
         </Link>
 
         <header className="mt-8 flex flex-wrap items-end justify-between gap-4">

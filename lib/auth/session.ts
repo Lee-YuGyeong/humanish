@@ -55,7 +55,7 @@ export async function getCurrentUser(): Promise<AuthUser | null> {
  * ★ 처음 오는 사람은 콜백이 /account/nickname 으로 보낸다 — 이름은 거기서 짓는다
  *   (app/api/auth/callback).
  */
-export async function signInWithGoogle(next: string = '/'): Promise<void> {
+export async function signInWithGoogle(next: string = '/main'): Promise<void> {
   const db = await getBrowserClient();
 
   // 돌아갈 곳은 쿠키에 맡긴다 (아래 rememberNext 주석). redirectTo 에는 쿼리를 안 붙인다.
@@ -101,7 +101,9 @@ const NEXT_MAX_AGE_SEC = 600;
 function rememberNext(next: string): void {
   // '//evil.com' 은 브라우저가 다른 호스트로 읽는다. 서버에서 한 번 더 막지만(두 겹)
   // 애초에 심지 않는다.
-  const safe = next.startsWith('/') && !next.startsWith('//') ? next : '/';
+  // 못 쓸 값이면 로비로 — '/' 는 이제 인트로로 리다이렉트하므로(app/page.tsx)
+  // 방금 로그인한 사람을 첫 화면으로 되돌려 보내게 된다.
+  const safe = next.startsWith('/') && !next.startsWith('//') ? next : '/main';
   const secure = window.location.protocol === 'https:' ? '; Secure' : '';
   document.cookie =
     `${NEXT_COOKIE}=${encodeURIComponent(safe)}; path=/; max-age=${NEXT_MAX_AGE_SEC}; SameSite=Lax${secure}`;

@@ -404,7 +404,7 @@ export default function WorldPage() {
    *
    * · 코드가 없으면 로비로 보낸다. 예전에는 여기서 입장 패널(방에 들어가기 카드)이
    *   떴는데 2026-08-08에 뺐다 — 방을 만들고 고르는 곳은 /main 하나여야 하고,
-   *   작업 보드·인트로 바닥의 /world 직행 링크로 들어온 사람이 로비를 건너뛰고
+   *   인트로 바닥의 /world 직행 링크로 들어온 사람이 로비를 건너뛰고
    *   옛 화면을 만나는 일이 실제로 있었다.
    * · useSearchParams 대신 location.search 를 읽는다 — 이 페이지는 전부 클라이언트
    *   상호작용이라 Suspense 경계를 새로 파느니 마운트 때 한 번 읽는 게 맞다.
@@ -965,7 +965,8 @@ export default function WorldPage() {
         */}
         <div className={live && touchMode ? 'hidden' : undefined}>
           {/*
-            방 안에서는 작업 보드 링크 대신 퇴장 버튼 — 눌러도 바로 안 나가고 한 번 더 묻는다.
+            방 안에서는 나가는 링크 대신 퇴장 버튼 — 눌러도 바로 안 나가고 한 번 더 묻는다.
+            (밖에서는 인트로로 나간다. 작업 보드는 2026-08-08에 없앴다)
           */}
           {live ? (
             <button
@@ -977,10 +978,10 @@ export default function WorldPage() {
             </button>
           ) : (
             <Link
-              href="/"
+              href="/intro"
               className="pointer-events-auto text-xs text-neutral-500 transition-colors hover:text-neutral-200"
             >
-              ← 작업 보드
+              ← 인트로
             </Link>
           )}
           <h1 className="mt-2 text-2xl font-black tracking-tight text-neutral-200 drop-shadow-[0_2px_12px_rgba(0,0,0,0.9)]">

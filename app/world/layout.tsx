@@ -1,5 +1,7 @@
 import type { Viewport } from 'next';
 
+import { RequireLogin } from '@/components/require-login';
+
 /**
  * /world 에만 거는 viewport. 소유: 원상
  *
@@ -28,6 +30,21 @@ export const viewport: Viewport = {
   themeColor: '#07050a',
 };
 
+/**
+ * ★ 2026-08-08 — /world 도 로그인해야 열린다.
+ *
+ *   예전에는 "남의 작업 공간이라 게임 계정과 무관하게 돌아야 한다"고 열어 뒀는데,
+ *   그 전제는 작업 보드와 함께 사라졌다. `/world?code=ABCD` 는 지금 사람들이 실제로
+ *   복사해서 보내는 **게임 주소**다. 열어 두면 로그인 안 한 사람이 들어와서
+ *   /api/world/ticket 이 401 로 끊는 자리까지 간 다음 에러 화면을 본다 — 로그인
+ *   화면을 보여주고 끝나면 그 방으로 돌려보내는 편이 맞다.
+ *
+ *   페이지가 아니라 여기(layout)에서 감싸는 이유: page.tsx 는 'use client' 한 덩어리라
+ *   게이트를 그 안에 넣으면 본체 전체가 게이트 안쪽으로 들어간다. 레이아웃은
+ *   서버 컴포넌트라 게이트만 얹고 지나간다.
+ *
+ *   /lab · /admin 은 그대로 연다. 그쪽은 게임이 아니라 개발용 점검 화면이다.
+ */
 export default function WorldLayout({ children }: { children: React.ReactNode }) {
-  return children;
+  return <RequireLogin>{children}</RequireLogin>;
 }

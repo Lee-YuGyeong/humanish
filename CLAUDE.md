@@ -79,12 +79,16 @@ npm test               # 순수 함수 · 화면 조각 (vitest, tests/ 아래)
 - **`app/world/store.ts`는 이 4계층을 따르지 않는다.** 좌표를 Map 안에서 제자리 변형한다 — 8인 × 10Hz를 불변 업데이트로 바꾸면 초당 80번 리렌더가 난다. 그 파일 머리말에 이유가 있다. **거기에 reducer를 들이지 않는다.**
 - **DB 동작은 여전히 목으로 흉내 내지 않는다.** `tests/components/room-view.test.tsx`가 대신 세우는 건 `lib/api/*`(네트워크 경계)뿐이고, RLS·상태머신은 `supabase/test.sh`가 진짜 Postgres에 물어본다.
 
-## 작업 보드 (`/`)
+## 라우트
 
-`/`는 게임 화면이 아니라 진입 버튼 목록이다.
+**`/`는 인트로다** (2026-08-08 — `app/page.tsx` 가 `/intro` 로 리다이렉트한다).
+예전에 여기 있던 **작업 보드는 없앴다.** 팀 내부용 진입 버튼 목록이었는데 첫 화면을
+인트로로 쓰기로 하면서 쓸 일이 없어졌다 — 화면(`app/board/`)도 목록(`app/workspaces.ts`)도
+지웠고, 필요하면 git 이력에서 꺼낸다. 각 화면 구석의 「← intro」가 그 자리를 대신한다.
 
 | 라우트 | 폴더 | 무엇 |
 |---|---|---|
+| `/` | `app/page.tsx` | `/intro` 로 리다이렉트 (첫 화면) |
 | `/intro` | `app/intro/` | 제목 · 역할 소개 |
 | `/main` | `app/main/` | 방 만들기 · 입장 |
 | `/room/[code]` | `app/room/` | 게임 화면 |
@@ -93,11 +97,12 @@ npm test               # 순수 함수 · 화면 조각 (vitest, tests/ 아래)
 | `/admin` | `app/admin/` | 방 · 페이즈 점검 |
 | `/login` | `app/login/` | 구글 로그인 (SPEC §15-2-결정) |
 | `/account` | `app/account/` | 이름 짓기 · 바꾸기 |
-| 목록 자체 | `app/workspaces.ts` | 진입 버튼 목록 |
 
-새 작업 공간은 `app/workspaces.ts`에 한 줄 추가 + `app/<경로>/page.tsx` 생성.
+새 화면은 `app/<경로>/page.tsx` 를 만들면 그게 곧 라우트다 (등록할 목록은 없다).
 
-**게임 화면(`/main` · `/room`)은 로그인해야 열린다** (`components/require-login.tsx`). 실제 진입은 `/intro` 의 「게임 접속하기」이고 그 버튼이 로그인을 건다. `/` · `/intro` · `/lab` · `/world` · `/admin` 은 감싸지 않는다 — 게임 계정과 무관하게 돌아야 한다.
+**게임 화면(`/main` · `/room` · `/world`)은 로그인해야 열린다** (`components/require-login.tsx`). 실제 진입은 `/intro` 의 「게임 접속하기」이고 그 버튼이 로그인을 건다. `/` · `/intro` 는 첫 화면이라, `/lab` · `/admin` 은 개발용 점검 화면이라 감싸지 않는다.
+
+**게이트는 원래 가려던 주소를 쿼리까지 들고 간다** (2026-08-08). `/world?code=ABCD` 로 초대받은 사람은 `/login?next=%2Fworld%3Fcode%3DABCD` → 구글 → 콜백을 거쳐 **그 방으로** 돌아온다. 경로만 담으면 `?code=` 가 날아가서 로비로 떨어진다. 돌아온 주소에 `?auth=` 를 덧붙이는 자리(`app/api/auth/callback`, `app/account/nickname/nickname-form.tsx`)는 쿼리가 이미 있는지 보고 `?`/`&` 를 고른다.
 
 ## 비밀 파일
 

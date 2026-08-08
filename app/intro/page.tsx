@@ -542,10 +542,7 @@ export default function IntroPage() {
             Who is AI? — 사람인 척
           </span>
           <div className="flex gap-8">
-            {/* 개발용 작업 보드로 돌아가는 길. 눈에 덜 띄게 둔다 */}
-            <Link href="/" className={styles.navLink}>
-              Manifest
-            </Link>
+            {/* 개발용 작업 보드(Manifest)로 가던 길은 2026-08-08에 뺐다 — 보드 자체가 없다 */}
             <Link href="/world" className={styles.navLink}>
               World
             </Link>

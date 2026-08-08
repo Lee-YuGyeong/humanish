@@ -1,8 +1,8 @@
 /**
  * 로그인 화면. 소유: A (SPEC §15-2-결정)
  *
- * 두 곳이 그린다 — `/` (입구)와 `/login` (RequireLogin 이 보내는 곳).
- * 같은 화면이라 컴포넌트를 하나로 두고, 페이지는 Suspense 만 씌운다.
+ * `/login` 이 그린다 (RequireLogin 이 보내는 곳). 페이지는 Suspense 만 씌운다 —
+ * ?next= 를 읽으려면 그 경계가 있어야 한다 (Next 15).
  *
  * ┌─ 게임에 들어가려면 여기를 지난다 ──────────────────────────────────────────┐
  * │ 원래 §15-2-결정은 "첫 화면에 로그인 벽을 세우지 않는다" 였다. 익명으로     │
@@ -25,9 +25,17 @@ import { signInWithGoogle } from '@/lib/auth';
 import { useAuthUser } from '@/lib/queries/auth';
 import styles from './login-screen.module.css';
 
-/** 콜백 라우트와 같은 규칙. 열린 리다이렉트를 막는다 (app/api/auth/callback). */
+/**
+ * 콜백 라우트와 같은 규칙. 열린 리다이렉트를 막는다 (app/api/auth/callback).
+ *
+ * ★ raw 에는 쿼리가 붙어 올 수 있다 — `/world?code=ABCD` 처럼 (RequireLogin 이
+ *   주소를 통째로 담아 보낸다). URLSearchParams 가 이미 풀어서 주므로 여기서
+ *   다시 decode 하지 않는다.
+ */
 function safeNext(raw: string | null): string {
   if (!raw || !raw.startsWith('/') || raw.startsWith('//')) return '/main';
+  // 로그인 화면으로 되돌리지 않는다 — 여기서 여기로 보내면 고리가 된다.
+  if (raw === '/login' || raw.startsWith('/login?')) return '/main';
   return raw;
 }
 

@@ -5,8 +5,9 @@
  * 내려주고, 화면과 상태는 ./nickname-form.tsx("use client")가 맡는다.
  * /login · /main 과 같은 구조다.
  *
- * ★ 작업 보드(app/workspaces.ts)에 넣지 않는다. 거기는 개발용 진입 목록이고
- *   이 화면은 사용자 흐름의 일부다.
+ * ★ 예전에는 "작업 보드(app/workspaces.ts)에 넣지 않는다" 는 단서가 붙어 있었다.
+ *   그 보드는 2026-08-08에 없앴다 — 이 화면은 원래부터 개발용 목록이 아니라
+ *   사용자 흐름의 일부였고, 이제 그 목록 자체가 없다.
  */
 import { Space_Grotesk } from 'next/font/google';
 import { Suspense } from 'react';

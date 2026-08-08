@@ -36,7 +36,21 @@ const NEXT_COOKIE = 'hp_next';
  */
 function safeNext(raw: string | null | undefined): string {
   if (!raw || !raw.startsWith('/') || raw.startsWith('//')) return '/main';
+  // 로그인 화면으로 되돌리지 않는다 — 그 화면이 다시 여기로 보내면 고리가 된다.
+  if (raw === '/login' || raw.startsWith('/login?')) return '/main';
   return raw;
+}
+
+/**
+ * 도착 주소에 `?auth=` 를 붙인다.
+ *
+ * ★ next 에 이미 쿼리가 있을 수 있다 (2026-08-08). `/world?code=ABCD` 로 초대받은
+ *   사람이 로그인하고 돌아올 때 `?` 를 한 번 더 붙이면 `?code=ABCD?auth=linked` 가
+ *   되어 **코드 값이 `ABCD?auth=linked` 로 읽힌다** — 그런 방은 없으니 입장이 실패한다.
+ *   app/account/nickname/nickname-form.tsx 가 쓰는 규칙과 같은 규칙이다.
+ */
+function withAuth(next: string, result: 'linked' | 'cancelled' | 'failed'): string {
+  return `${next}${next.includes('?') ? '&' : '?'}auth=${result}`;
 }
 
 /**
@@ -70,12 +84,12 @@ export async function GET(req: Request): Promise<Response> {
     // 에러 페이지를 띄우지 않는다 — 취소는 실패가 아니다. 원래 화면으로 돌려보낸다.
     const authError = url.searchParams.get('error');
     if (authError) {
-      return Response.redirect(`${origin}${next}?auth=cancelled`, 303);
+      return Response.redirect(`${origin}${withAuth(next, 'cancelled')}`, 303);
     }
 
     const code = url.searchParams.get('code');
     if (!code) {
-      return Response.redirect(`${origin}${next}?auth=failed`, 303);
+      return Response.redirect(`${origin}${withAuth(next, 'failed')}`, 303);
     }
 
     /*
@@ -88,7 +102,7 @@ export async function GET(req: Request): Promise<Response> {
 
     if (error || !data.user) {
       console.error('[auth] 코드 교환 실패:', error?.message);
-      return Response.redirect(`${origin}${next}?auth=failed`, 303);
+      return Response.redirect(`${origin}${withAuth(next, 'failed')}`, 303);
     }
 
     /*
@@ -118,7 +132,7 @@ export async function GET(req: Request): Promise<Response> {
       return Response.redirect(`${origin}/account/nickname?${q}`, 303);
     }
 
-    return Response.redirect(`${origin}${next}?auth=linked`, 303);
+    return Response.redirect(`${origin}${withAuth(next, 'linked')}`, 303);
   } catch (e) {
     return apiError(e);
   }

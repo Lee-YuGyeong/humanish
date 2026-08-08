@@ -96,8 +96,9 @@ export default function LabPage() {
   return (
     <main className="min-h-screen">
       <div className="mx-auto max-w-4xl px-6 py-20">
-        <Link href="/" className="stencil text-[10px] text-grime transition-colors hover:text-tung">
-          ← manifest
+        {/* 작업 보드는 없앴다 (2026-08-08). 돌아갈 곳은 첫 화면인 인트로다 */}
+        <Link href="/intro" className="stencil text-[10px] text-grime transition-colors hover:text-tung">
+          ← intro
         </Link>
 
         <h1 className="engraved mt-6 text-3xl font-black">에이전트 실험실</h1>
