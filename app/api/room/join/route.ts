@@ -4,12 +4,21 @@
  * POST /api/room/join  { code }  →  { room, player }
  *
  * 정원 초과(409), 이미 시작된 방(409), 없는 코드(404)는 SQL 쪽에서 걸러진다.
+ * **내보내진 방(409)도 그렇다** (2026-08-08 — room_bans). 코드를 아는 것과
+ * 들어갈 수 있는 것은 다르다는 규칙이 SQL 한 군데에만 있다.
  * 이미 그 방에 들어가 있으면(쿠키가 있으면) 새 자리를 만들지 않고 원래 자리를 돌려준다 —
  * 새로고침 때마다 자리가 하나씩 늘면 방이 금방 찬다.
  */
 
 import { joinRoom, findRoomByCode } from '@/lib/server/room';
-import { apiError, currentPlayer, currentUser, readJson, setPlayerCookie } from '@/lib/server/auth';
+import {
+  apiError,
+  currentPlayer,
+  currentUser,
+  playerCookieToken,
+  readJson,
+  setPlayerCookie,
+} from '@/lib/server/auth';
 
 interface Body {
   code?: string;
@@ -45,8 +54,14 @@ export async function POST(req: Request): Promise<Response> {
      * 요청 본문의 값을 쓰지 않는다 — 그러면 남의 계정으로 전적을 쌓을 수 있다 (I9).
      * 로그인 전이면 null 이고, 그래도 방에는 들어간다.
      */
+    /*
+     * 옛 쿠키를 같이 넘긴다 (2026-08-08). 여기까지 왔다는 것은 그 방에 자리가
+     * 없다는 뜻인데, **왜 없는지**는 join_room 만 안다 — 스스로 나갔으면 다시
+     * 들어오고, 내보내졌으면 거절된다 (room_bans). 로그인하지 않은 사람은
+     * 계정이 없어서 이 값이 유일한 단서다.
+     */
     const user = await currentUser();
-    const joined = await joinRoom(code, user?.id ?? null);
+    const joined = await joinRoom(code, user?.id ?? null, await playerCookieToken(room.id));
     await setPlayerCookie(joined.room.id, joined.token);
     return Response.json({ room: joined.room, player: joined.player }, { status: 201 });
   } catch (e) {

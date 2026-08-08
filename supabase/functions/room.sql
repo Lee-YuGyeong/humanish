@@ -147,12 +147,17 @@ $$;
 -- 인자가 늘었으므로 옛 시그니처를 지운다. 남겨두면 오버로드가 공존해서
 -- PostgREST가 어느 쪽을 부를지 정하지 못하고 PGRST203으로 죽는다 (위 create_room 참고).
 drop function if exists join_room(text);
+drop function if exists join_room(text, uuid);
 
 create or replace function join_room(
   p_code text,
   -- 들어온 사람의 계정 (SPEC §15-2-결정). create_room의 p_user_id와 같은 규칙 —
   -- 라우트가 쿠키 세션에서 되찾아 넘긴다. 없으면 null이고 게임은 그대로 된다.
-  p_user_id uuid default null
+  p_user_id uuid default null,
+  -- 이 브라우저가 **전에** 이 방에서 들고 있던 열쇠 (players.token). 라우트가
+  -- 쿠키에서 꺼내 넘긴다. 내보내진 사람을 알아보는 데만 쓴다 (아래 room_bans) —
+  -- 자리를 되찾는 길이 아니다. 그건 라우트가 currentPlayer 로 먼저 처리한다.
+  p_token text default null
 )
 returns table (room_id uuid, player_id uuid, player_token text, seat int, nickname text)
 language plpgsql
@@ -176,6 +181,18 @@ begin
   -- 시작한 방에는 못 들어간다. 역할이 이미 배정됐고 질문도 지나갔기 때문이다.
   if v_room.phase <> 'lobby' then
     raise exception '이미 시작된 방이다' using errcode = 'P0001';
+  end if;
+
+  -- ★ 내보내진 사람은 다시 못 들어온다 (2026-08-08). 이게 없으면 강퇴가 아무것도
+  --   막지 못한다 — 코드는 그 사람이 이미 알고 있어서 곧바로 새 자리를 받는다.
+  --   계정과 옛 열쇠를 둘 다 본다 (schema.sql 의 room_bans 머리말).
+  if exists (
+    select 1 from room_bans b
+     where b.room_id = v_room.id
+       and ((p_user_id is not null and b.user_id = p_user_id)
+         or (p_token   is not null and b.token   = p_token))
+  ) then
+    raise exception '내보내진 방이다. 다시 들어갈 수 없다' using errcode = 'P0001';
   end if;
 
   -- pick_free_seat이 방의 capacity를 읽으므로 정원이 3이든 8이든 자동으로 맞는다.
@@ -308,6 +325,11 @@ $$;
 -- ★ 봇은 대상이 아니다(is_bot = false). 지금 대기방에는 봇이 없지만, 나중에
 --   생기더라도 **봇을 지목해 봐서 되는지 안 되는지로 봇을 찾아내는 길**을 막는다 (I1).
 --
+-- ★ **내보낸 사람은 다시 못 들어온다** (2026-08-08). 자리만 지우면 그 사람은
+--   이미 아는 코드로 곧장 다시 들어온다 — 강퇴가 아무것도 막지 못했다.
+--   그래서 지우는 김에 room_bans 에 한 줄 적고, join_room 이 그걸 본다.
+--   같은 트랜잭션이라 "지워졌는데 못 막는" 중간 상태가 없다.
+--
 -- 이미 나간 사람을 또 내보내는 것은 에러가 아니다. 방장 화면이 아직 옛 명단을
 -- 들고 있는 흔한 경우라, 빨간 배너를 띄울 이유가 없다 — kicked = false 로 돌려준다.
 create or replace function kick_player(
@@ -320,7 +342,10 @@ security definer
 set search_path = public, pg_temp
 as $$
 declare
-  v_room rooms%rowtype;
+  v_room   rooms%rowtype;
+  v_user   uuid;
+  v_token  text;
+  v_kicked boolean;
 begin
   select * into v_room from rooms where id = p_room_id for update;
 
@@ -328,7 +353,9 @@ begin
     raise exception '방이 없다' using errcode = 'P0001';
   end if;
 
-  if v_room.phase <> 'lobby' then
+  -- ★ 월드 판은 phase 가 계속 'lobby' 다 (schema.sql 의 world_started_at). phase 만
+  --   보면 3D 판이 도는 중에도 자리가 빠져서, 그 사람 화면만 조용히 죽는다.
+  if v_room.phase <> 'lobby' or v_room.world_started_at is not null then
     raise exception '시작한 방에서는 내보낼 수 없다' using errcode = 'P0001';
   end if;
 
@@ -342,11 +369,26 @@ begin
 
   -- room_id 를 조건에 같이 건다. id 만 믿으면 남의 방 사람을 뺄 수 있다 (I9).
   delete from players
-   where id = p_target_id and room_id = p_room_id and is_bot = false;
+   where id = p_target_id and room_id = p_room_id and is_bot = false
+  returning user_id, token into v_user, v_token;
+
+  -- ★ found 를 **여기서** 붙든다. 아래 insert 가 found 를 자기 결과로 덮어써서,
+  --   그 뒤에 읽으면 "이미 나간 사람"까지 kicked = true 로 돌려준다.
+  v_kicked := found;
+
+  if v_kicked then
+    -- 다시 못 들어오게 적어 둔다 (schema.sql 의 room_bans). 계정과 옛 열쇠를 둘 다
+    -- 남긴다 — 로그아웃하면 계정이, 쿠키를 지우면 열쇠가 각각 빗나가기 때문이다.
+    -- 같은 사람을 두 번 적을 일은 없지만(다시 못 들어오므로) 부분 유니크가 있으니
+    -- 조용히 넘긴다.
+    insert into room_bans (room_id, user_id, token)
+    values (p_room_id, v_user, v_token)
+    on conflict do nothing;
+  end if;
 
   -- 명단이 바뀐 신호(roster_seq)는 players 트리거가 이미 올렸다 (schema.sql).
   -- 내보내진 사람의 화면은 그 신호로 자기 자리가 없어진 것을 안다.
-  return query select found;
+  return query select v_kicked;
 end;
 $$;
 
@@ -621,7 +663,7 @@ revoke all on function default_room_capacity()    from public, anon, authenticat
 revoke all on function room_capacity(uuid)        from public, anon, authenticated;
 revoke all on function pick_free_seat(uuid)       from public, anon, authenticated;
 revoke all on function create_room(text,int,text,uuid) from public, anon, authenticated;
-revoke all on function join_room(text,uuid)       from public, anon, authenticated;
+revoke all on function join_room(text,uuid,text)  from public, anon, authenticated;
 revoke all on function leave_room(uuid,uuid)      from public, anon, authenticated;
 revoke all on function kick_player(uuid,uuid,uuid) from public, anon, authenticated;
 revoke all on function fill_with_bots(uuid)       from public, anon, authenticated;
@@ -630,7 +672,7 @@ revoke all on function shuffle_seats(uuid)        from public, anon, authenticat
 revoke all on function start_world_seats(uuid,int) from public, anon, authenticated;
 
 grant execute on function create_room(text,int,text,uuid) to service_role;
-grant execute on function join_room(text,uuid)    to service_role;
+grant execute on function join_room(text,uuid,text) to service_role;
 grant execute on function leave_room(uuid,uuid)   to service_role;
 grant execute on function kick_player(uuid,uuid,uuid) to service_role;
 grant execute on function fill_with_bots(uuid)    to service_role;

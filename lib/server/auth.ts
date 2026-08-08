@@ -42,6 +42,17 @@ export interface SessionPlayer {
   is_bot: boolean;
 }
 
+/**
+ * 그 방의 쿠키 토큰 그 자체. 자리가 이미 없어졌어도 값은 남아 있다.
+ *
+ * ★ **입장 판정에만 쓴다** (join_room 의 p_token — 내보내진 사람인지 본다).
+ *   본인 확인은 언제나 currentPlayer 다. 이 값이 있다고 해서 그 방 사람인 것은
+ *   아니다 — 강퇴·나가기로 행이 사라진 뒤에도 브라우저에는 그대로 남는다.
+ */
+export async function playerCookieToken(roomId: string): Promise<string | null> {
+  return (await cookies()).get(playerCookieName(roomId))?.value ?? null;
+}
+
 /** 쿠키의 토큰으로 플레이어를 되찾는다. 없으면 null. */
 export async function currentPlayer(roomId: string): Promise<SessionPlayer | null> {
   const token = (await cookies()).get(playerCookieName(roomId))?.value;

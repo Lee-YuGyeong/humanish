@@ -83,6 +83,24 @@ schema_checks() {
   check "world_ai_seats 테이블이 있다" "1" \
     "$(q "select count(*) from information_schema.tables where table_name='world_ai_seats';")"
 
+  # 내보내진 사람 (2026-08-08). 없으면 강퇴가 42P01 로 죽고, 그 방은 아무도 못 내보낸다.
+  check "room_bans 테이블이 있다" "1" \
+    "$(q "select count(*) from information_schema.tables where table_name='room_bans';")"
+
+  # ★ 방이 사라지면 같이 사라져야 한다. 방 코드는 24시간 뒤 재사용되므로(§16.4)
+  #   cascade 가 없으면 **다음에 그 코드를 쓴 방의** 애먼 사람이 입장을 거절당한다.
+  #   화면에는 "내보내진 방이다"만 뜨고, 그 사람은 그 방에 간 적도 없다.
+  check "room_bans.room_id 가 방과 함께 지워진다 (cascade)" "c" \
+    "$(q "select c.confdeltype from pg_constraint c
+           where c.conrelid = to_regclass('room_bans') and c.contype = 'f';")"
+
+  # ★ 사람마다 한 줄이어야 한다. 유니크가 없으면 같은 사람이 여러 줄로 쌓이고,
+  #   있어야 kick_player 의 on conflict do nothing 이 실제로 무언가를 막는다.
+  #   부분 인덱스(where … is not null)라 pg_constraint 가 아니라 pg_indexes 에 있다.
+  check "room_bans 에 계정·열쇠 부분 유니크가 둘 있다" "2" \
+    "$(q "select count(*) from pg_indexes where tablename='room_bans'
+           and indexname in ('room_bans_user_key','room_bans_token_key');")"
+
   # ★ 방마다 한 줄이어야 한다. 기본키가 없으면 시작을 두 번 눌렀을 때 줄이 둘 되고,
   #   buildWorldRoster 의 maybeSingle 이 그 순간 에러가 되어 월드 명단이 통째로 멈춘다.
   check "world_ai_seats 기본키가 room_id 다" "room_id" \
@@ -408,7 +426,7 @@ schema_checks() {
     "advance_phase(uuid,int,uuid)" \
     "advance_expired_rooms(int)" \
     "create_room(text,int,text,uuid)" \
-    "join_room(text,uuid)" \
+    "join_room(text,uuid,text)" \
     "leave_room(uuid,uuid)" \
     "kick_player(uuid,uuid,uuid)" \
     "fill_with_bots(uuid)" \
@@ -426,7 +444,8 @@ schema_checks() {
   # ★ 시그니처가 바뀔 때마다 **옛 것이 지워졌는지**를 같이 본다. 남아 있으면 인자
   #   개수가 다른 오버로드가 공존하고, PostgREST가 어느 쪽을 부를지 정하지 못해
   #   PGRST203으로 죽는다. 화면에는 "방 생성 실패"만 뜬다.
-  for old in "create_room(text)" "create_room(text,int)" "create_room(text,int,text)" "join_room(text)"; do
+  for old in "create_room(text)" "create_room(text,int)" "create_room(text,int,text)" \
+             "join_room(text)" "join_room(text,uuid)"; do
     check "옛 ${old} 이 남아 있지 않다" "f" \
       "$(q "select (to_regprocedure('$old') is not null);")"
   done
@@ -448,6 +467,13 @@ schema_checks() {
       "$(q "select has_table_privilege('$r','world_ai_seats','select');")"
   done
 
+  # 내보내진 사람의 계정·방 열쇠가 방마다 줄줄이 들어 있다 (2026-08-08). 열리면
+  # "저 방에서 누가 쫓겨났나"가 브라우저에서 그대로 읽힌다. 판정은 join_room 안에서만 한다.
+  for r in anon authenticated; do
+    check "$r 는 room_bans 를 못 읽는다" "f" \
+      "$(q "select has_table_privilege('$r','room_bans','select');")"
+  done
+
   # 쓰기는 전부 service role 서버를 거친다 (I9). anon에 쓰기 권한이 남아 있으면 안 된다.
   for t in rooms questions answers messages votes players; do
     check "anon은 $t 에 쓰기 권한이 없다" "f" \
@@ -465,7 +491,7 @@ schema_checks() {
     "bot_reply(uuid,int)" \
     "send_message(uuid,uuid,text,int)" \
     "create_room(text,int,text,uuid)" \
-    "join_room(text,uuid)" \
+    "join_room(text,uuid,text)" \
     "leave_room(uuid,uuid)" \
     "kick_player(uuid,uuid,uuid)" \
     "fill_with_bots(uuid)" \

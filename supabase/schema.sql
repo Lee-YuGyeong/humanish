@@ -254,6 +254,45 @@ alter table players add column if not exists user_id uuid
 
 create index if not exists players_user_idx on players (user_id) where user_id is not null;
 
+------------------------------------------------------------------------------
+-- room_bans — 내보내진 사람 (2026-08-08)
+------------------------------------------------------------------------------
+-- ┌─ 왜 자리를 지우는 것만으로는 부족한가 ────────────────────────────────────┐
+-- │ 강퇴는 players 한 줄을 지우는 것뿐이었다. 그런데 **코드는 그 사람이 이미   │
+-- │ 알고 있다** — 방금까지 그 방에 앉아 있었으니까. /main 에 같은 코드를 다시  │
+-- │ 치면 join_room 이 새 자리를 하나 내준다. 방장은 같은 사람을 무한히 내보내는│
+-- │ 수밖에 없었다 (신고 2026-08-08: "강퇴하고 다시 들어가는거 이상해").        │
+-- │ 게다가 월드 방은 시작한 뒤에도 phase 가 'lobby' 라, 그 재입장이 **판이     │
+-- │ 도는 중에** 성사된다.                                                     │
+-- │                                                                          │
+-- │ 그래서 "누가 내보내졌나"를 방마다 남긴다. 방이 사라지면 같이 사라진다     │
+-- │ (cascade) — 이 명단은 그 방 한 판보다 오래 살 이유가 없다.               │
+-- └──────────────────────────────────────────────────────────────────────────┘
+--
+-- ★ 사람을 가리키는 값이 둘이라 둘 다 적는다. 하나만으로는 새는 길이 있다:
+--     user_id  계정. 브라우저를 바꾸거나 쿠키를 지워도 따라온다. 게임 화면은
+--              로그인해야 열리므로(components/require-login.tsx) 보통 이쪽이 잡는다.
+--     token    그 브라우저의 방 열쇠(players.token). 로그인 전이라 user_id 가
+--              null 인 사람은 이것으로만 구분된다. 자리는 지워도 쿠키는 남아 있다.
+--   둘 다 null 인 행은 아무도 못 막으므로 애초에 넣지 않는다 (check).
+--
+-- ★ **anon 에게 한 칸도 열지 않는다** (policies.sql). 봇 이야기는 아니지만,
+--   방마다 "쫓겨난 계정" 목록이 공개되면 그건 그 자체로 남의 기록이다.
+create table if not exists room_bans (
+  room_id    uuid not null references rooms(id) on delete cascade,
+  user_id    uuid,
+  token      text,
+  created_at timestamptz not null default now(),
+  check (user_id is not null or token is not null)
+);
+
+-- 같은 사람을 두 번 적지 않는다. 부분 유니크라 null 인 쪽은 서로 부딪히지 않는다
+-- (계정 없이 들어온 사람 여럿이 한 방에서 내보내져도 각자 token 으로 남는다).
+create unique index if not exists room_bans_user_key
+  on room_bans (room_id, user_id) where user_id is not null;
+create unique index if not exists room_bans_token_key
+  on room_bans (room_id, token) where token is not null;
+
 -- 프로필. auth.users와 1:1이고, **이름이 붙은 계정만** 행을 갖는다.
 --
 -- 익명 계정에는 행이 없다 — 아직 부를 이름이 없기 때문이다. 구글을 연결하는

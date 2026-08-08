@@ -558,10 +558,60 @@ check "봇은 못 내보낸다 (I1)"              "f" \
 check "봇 자리는 그대로"                    "1" \
   "$(q "select count(*) from players where room_id='$KK_R' and is_bot = true;")"
 
+# ★ 월드 판은 phase 가 계속 'lobby' 다 (schema.sql 의 world_started_at). phase 만 보면
+#   3D 판이 도는 중에 자리가 빠지고, 그 사람 화면만 조용히 죽는다.
+psql -q -c "update rooms set world_started_at = now() where id='$KK_R';"
+check "월드가 도는 중에는 못 내보낸다"       "denied" \
+  "$(denied_if "select * from kick_player('$KK_R','$KK_HOST','$KK_P2');" '시작한 방')"
+psql -q -c "update rooms set world_started_at = null where id='$KK_R';"
+
 # 게임 중 이탈은 SPEC §15-4 미결정이다. 한쪽만 열어두면 강퇴가 그 미결정을 우회한다.
 psql -q -c "update rooms set phase='question' where id='$KK_R';"
 check "시작한 방에서는 못 내보낸다 (§15-4)" "denied" \
   "$(denied_if "select * from kick_player('$KK_R','$KK_HOST','$KK_P2');" '시작한 방')"
+
+echo ""
+echo "── 내보내진 사람은 다시 못 들어온다 (2026-08-08) ──"
+# ┌─ 왜 이 검사가 필요한가 ──────────────────────────────────────────────────┐
+# │ 자리만 지우던 시절에는 강퇴가 아무것도 막지 못했다. **코드는 그 사람이   │
+# │ 이미 안다** — /main 에 다시 치면 join_room 이 새 자리를 하나 내줬다.     │
+# │ 화면(RoomKicked)은 "코드를 다시 받아야 한다"고 말하고 있었지만 사실이    │
+# │ 아니었다. 신고 2026-08-08: "강퇴하고 다시 들어가는거 이상해".            │
+# └─────────────────────────────────────────────────────────────────────────┘
+BAN_U=bbbbbbbb-1111-1111-1111-111111111111
+psql -q -c "insert into auth.users (id) values ('$BAN_U') on conflict do nothing;"
+BAN_R="$(q "select room_id from create_room('BANN', 4);")"
+BAN_HOST="$(q "select id from players where room_id='$BAN_R';")"
+# 로그인한 사람(계정으로 잡힌다)과 로그인 안 한 사람(옛 쿠키로 잡힌다) 둘 다 본다.
+BAN_P2="$(q "select player_id from join_room('BANN', '$BAN_U');")"
+BAN_T3="$(q "select player_token from join_room('BANN');")"
+BAN_P3="$(q "select id from players where room_id='$BAN_R' and token='$BAN_T3';")"
+
+check "셋이 앉아 있다"                      "3" "$(q "select count(*) from players where room_id='$BAN_R';")"
+check "계정 있는 사람을 내보낸다"            "t" \
+  "$(q "select kicked from kick_player('$BAN_R','$BAN_HOST','$BAN_P2');")"
+check "계정으로 다시 못 들어온다"            "denied" \
+  "$(denied_if "select * from join_room('BANN', '$BAN_U');" '내보내진 방')"
+# ★ 계정이 없어도 막혀야 한다. 로그아웃 한 번으로 뚫리면 막은 적이 없는 것과 같다 —
+#   그 브라우저에는 그 방 쿠키(옛 열쇠)가 그대로 남아 있다.
+check "계정 없는 사람을 내보낸다"            "t" \
+  "$(q "select kicked from kick_player('$BAN_R','$BAN_HOST','$BAN_P3');")"
+check "옛 쿠키로도 다시 못 들어온다"          "denied" \
+  "$(denied_if "select * from join_room('BANN', null, '$BAN_T3');" '내보내진 방')"
+# 쿠키를 지우고 계정도 없으면 새 사람과 구분할 값이 없다. 그건 막지 못하는 것이 맞다 —
+# **그래도 다른 사람이 못 들어오게 되면 안 된다.** 이 방은 여전히 열려 있다.
+check "관계없는 사람은 그대로 들어온다"       "t" \
+  "$(q "select player_id is not null from join_room('BANN');")"
+check "이미 나간 사람을 또 내보내도 조용하다" "f" \
+  "$(q "select kicked from kick_player('$BAN_R','$BAN_HOST','$BAN_P2');")"
+# 두 번 적히면 부분 유니크에 걸려 강퇴 자체가 23505 로 죽는다.
+check "내보낸 기록은 사람마다 한 줄"          "2" \
+  "$(q "select count(*) from room_bans where room_id='$BAN_R';")"
+# 방이 사라지면 같이 사라진다. 코드는 재사용되므로(§16.4) 남아 있으면 **다음 방의**
+# 애먼 사람이 못 들어온다.
+psql -q -c "delete from rooms where id='$BAN_R';"
+check "방이 사라지면 기록도 사라진다 (cascade)" "0" \
+  "$(q "select count(*) from room_bans where room_id='$BAN_R';")"
 
 echo ""
 echo "── 계정: 방과 이어지되 새어 나가지 않는다 (SPEC §15-2-결정) ──"

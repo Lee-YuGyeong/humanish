@@ -10,6 +10,10 @@
  *   (supabase/functions/room.sql 의 kick_player). 여기서 미리 보고 넘기면
  *   그 사이에 방장이 바뀔 수 있다 — 판정과 삭제가 같은 트랜잭션이어야 한다.
  *
+ * ★ **자리를 빼는 것으로 끝나지 않는다** (2026-08-08). 같은 트랜잭션에서
+ *   room_bans 에 한 줄이 남고, join_room 이 그걸 보고 재입장을 거절한다.
+ *   자리만 지우면 그 사람은 이미 아는 코드로 곧장 다시 들어왔다.
+ *
  * ★ 내보내진 사람에게는 아무것도 보내지 않는다. players 삭제가 roster_seq 를
  *   올리고(schema.sql 트리거), 그 rooms UPDATE 가 이미 걸려 있는 구독으로 가서
  *   그 사람 화면이 스스로 "내 자리가 없다"를 알아챈다 (components/room-view.tsx).

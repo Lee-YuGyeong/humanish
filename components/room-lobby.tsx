@@ -83,11 +83,15 @@ export function RoomKicked() {
       <div aria-hidden className={styles.backdrop} />
       <div aria-hidden className={styles.noise} />
       <div aria-hidden className={styles.scanlines} />
+      {/*
+        ★ 문구는 서버가 실제로 하는 일과 같아야 한다 (2026-08-08). 예전에는
+          "코드를 다시 받아야 합니다"였는데, 코드는 방금까지 앉아 있던 사람이
+          이미 알고 있어서 그대로 다시 들어와졌다. 지금은 join_room 이 거절한다
+          (room_bans) — 그래서 화면도 "다시 들어올 수 없다"고 말한다.
+      */}
       <p className={styles.notice} aria-live="polite">
         방장이 이 방에서 내보냈습니다.
-        <span className={styles.noticeSub}>
-          같은 방에 다시 들어가려면 방장에게 코드를 다시 받아야 합니다.
-        </span>
+        <span className={styles.noticeSub}>이 방에는 다시 들어올 수 없습니다.</span>
       </p>
       <Link href="/main" className={styles.btnGhost} style={{ width: "auto", padding: "0.7rem 1.6rem" }}>
         <ArrowLeftIcon /> 로비로
@@ -618,8 +622,9 @@ function SeatGrid({
                 안 붙는다. 서버도 자기 자신은 거절한다(kick_player). 방장이 나가려면
                 「방 나가기」다, 그쪽은 방장 자리를 다음 사람에게 넘긴다.
 
-                ★ 두 번 눌러야 나간다. 한 번에 나가면 되돌릴 수가 없다 —
-                  내보내진 사람은 코드를 다시 받아야 들어온다.
+                ★ 두 번 눌러야 나간다. 한 번에 나가면 **되돌릴 수가 없다** —
+                  내보내진 사람은 그 방에 다시 못 들어온다 (2026-08-08, room_bans).
+                  방장이 마음을 바꿔도 불러들일 방법이 없으므로 확인을 한 겹 둔다.
               */}
               {onKick != null &&
                 p != null &&

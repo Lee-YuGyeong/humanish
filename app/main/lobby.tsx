@@ -292,7 +292,8 @@ export function Lobby() {
           headers: { "content-type": "application/json" },
           body: JSON.stringify({ code: normalized }),
         });
-        // 404 그런 방이 없다 · 409 꽉 찼다 / 이미 시작된 방. 문구를 그대로 보여준다.
+        // 404 그런 방이 없다 · 409 꽉 찼다 / 이미 시작된 방 / **내보내진 방**.
+        // 문구를 그대로 보여준다 — 어느 쪽인지는 서버 문장에만 있다.
         if (!res.ok) {
           setJoinError(await errorOf(res, "입장하지 못했다"));
           return;

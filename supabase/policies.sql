@@ -43,10 +43,11 @@ alter table question_pool enable row level security;
 alter table bot_line_pool enable row level security;
 alter table world_agent_logs enable row level security;
 alter table world_ai_seats enable row level security;
+alter table room_bans     enable row level security;
 
 -- 정책이 하나도 없는 테이블 = 전면 거부. service_role만 통과한다.
 -- player_roles, agent_logs, question_pool, bot_line_pool, world_agent_logs,
--- world_ai_seats는 의도적으로 정책을 만들지 않는다.
+-- world_ai_seats, room_bans는 의도적으로 정책을 만들지 않는다.
 --
 -- 문구 풀을 막는 이유는 보안이 아니라 게임이다 (I1). 봇 문구 풀을 읽을 수 있으면
 -- 채팅을 풀과 대조해서 봇을 즉시 특정할 수 있다. is_bot을 가린 의미가 없어진다.
@@ -60,6 +61,10 @@ revoke all on world_agent_logs from anon, authenticated;
 --   들어 있다. 한 칸이라도 열면 게임이 끝난다 (I1). rooms 에 컬럼으로 두지 않은
 --   이유가 이것이다 — rooms 는 anon 이 통째로 읽는다 (아래 grant).
 revoke all on world_ai_seats from anon, authenticated;
+-- ★ 내보내진 사람의 계정·방 열쇠가 방마다 줄줄이 들어 있다 (schema.sql). 열면
+--   "저 방에서 누가 쫓겨났나"가 브라우저에서 그대로 읽힌다. 막는 데 잃을 것도 없다 —
+--   재입장 판정은 join_room 안에서 service role 로만 한다.
+revoke all on room_bans from anon, authenticated;
 
 ------------------------------------------------------------------------------
 -- players — is_bot 차단

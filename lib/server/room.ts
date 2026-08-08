@@ -280,8 +280,16 @@ export async function createRoom(
  *
  * @param userId 들어온 사람의 계정. createRoom의 userId와 같은 규칙이다 —
  *               라우트가 쿠키 세션에서 되찾아 넘긴다 (SPEC §15-2-결정, I9).
+ * @param token  그 방의 쿠키에 남아 있는 옛 열쇠 (2026-08-08). **내보내진 사람인지
+ *               알아보는 데만 쓴다** — 로그인하지 않은 사람은 계정이 없어서 이것
+ *               말고는 구분할 값이 없다. 자리를 되찾는 길이 아니다: 아직 자리가
+ *               있는 사람은 라우트가 currentPlayer 로 먼저 돌려보낸다.
  */
-export async function joinRoom(code: string, userId?: string | null): Promise<JoinResult> {
+export async function joinRoom(
+  code: string,
+  userId?: string | null,
+  token?: string | null,
+): Promise<JoinResult> {
   // 코드는 이제 방 이름일 수 있다 (codeFromName) — "알파벳 4자" 검사를 버렸다.
   // 모양 검사는 길이 하나면 된다: 존재하지 않는 코드는 어차피 P0002(404)로 떨어진다.
   const normalized = normalizeCode(code);
@@ -292,6 +300,7 @@ export async function joinRoom(code: string, userId?: string | null): Promise<Jo
   const { data, error } = await getServiceClient().rpc('join_room', {
     p_code: normalized,
     p_user_id: userId ?? null,
+    p_token: token ?? null,
   });
 
   if (error) {
