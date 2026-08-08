@@ -1005,8 +1005,8 @@ export default function WorldPage() {
           </h1>
           {ticket ? (
             <p className="mt-1 font-mono text-[11px] text-neutral-500">
-              {/* 정원은 **사람** 수다. 시작하면 여기에 AI 1대가 더 붙는다 (§15-3 — 수는 공개, 자리는 비밀) */}
-              {ticket.room.code} · {ticket.self.nickname} · 사람 {ticket.room.capacity}
+              {/* 정원(사람 8)은 적지 않는다 — 8 고정이라 정보가 없고 인원 수로 오독된다 (2026-08-08) */}
+              {ticket.room.code} · {ticket.self.nickname}
               {ticket.role ? ` · ${ROLE_LABEL[ticket.role]}` : ''}
             </p>
           ) : null}
@@ -1258,7 +1258,7 @@ export default function WorldPage() {
             <TouchMenu
               roomLine={
                 ticket
-                  ? `${ticket.room.code} · ${ticket.self.nickname} · 사람 ${ticket.room.capacity}` +
+                  ? `${ticket.room.code} · ${ticket.self.nickname}` +
                     (ticket.role ? ` · ${ROLE_LABEL[ticket.role]}` : '')
                   : ''
               }
