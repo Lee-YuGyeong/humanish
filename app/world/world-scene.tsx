@@ -17,10 +17,31 @@
 
 import { Html, PointerLockControls } from '@react-three/drei';
 import { Canvas, useFrame, useThree } from '@react-three/fiber';
-import { Suspense, memo, useCallback, useEffect, useMemo, useReducer, useRef } from 'react';
+import {
+  Suspense,
+  memo,
+  useCallback,
+  useEffect,
+  useMemo,
+  useReducer,
+  useRef,
+  useSyncExternalStore,
+} from 'react';
 import * as THREE from 'three';
 
 import { Avatar } from './avatar';
+import {
+  BASE_FOV,
+  LOOK_SENSITIVITY,
+  MAX_PITCH,
+  attachKeyboard,
+  fovForAspect,
+  getTouchMode,
+  getTouchModeServer,
+  input,
+  resetInput,
+  subscribeTouchMode,
+} from './input';
 import {
   Furniture,
   Lights,
@@ -62,6 +83,7 @@ export default function WorldScene({
   conn,
   spawn,
   composing,
+  paused,
   onLockChange,
   onReady,
 }: {
@@ -73,6 +95,14 @@ export default function WorldScene({
    * 잠금만 봐서는 이 상태를 구분할 수 없어서 따로 받는다 (page.tsx 머리말).
    */
   composing: boolean;
+  /**
+   * 만질 판이 떠 있어 조작이 멈춘 상태인가 (투표·결과·역할 카드·퇴장 확인).
+   *
+   * ★ 데스크톱에서는 page.tsx 가 그때 포인터 잠금을 풀어 주므로 이 값이 없어도
+   *   다리가 멈췄다. **터치에는 그 잠금이 없다** — 판이 떠도 손가락은 그대로 닿으니
+   *   이 값이 유일한 정지 신호다.
+   */
+  paused: boolean;
   onLockChange?: (locked: boolean) => void;
   /**
    * 캔버스가 DOM 에 붙었다. **이때부터** 포인터 잠금을 걸 수 있다 —
@@ -80,18 +110,46 @@ export default function WorldScene({
    */
   onReady?: () => void;
 }) {
+  const touchMode = useSyncExternalStore(subscribeTouchMode, getTouchMode, getTouchModeServer);
+
+  /*
+   * ★ 터치로 바뀌는 순간, 걸려 있던 마우스 잠금을 푼다 (터치스크린 노트북).
+   *
+   *   잠긴 채 화면을 탭하면 아래에서 PointerLockControls 가 언마운트되는데,
+   *   three 의 dispose 는 리스너만 뗄 뿐 **잠금 자체는 안 푼다.** 그대로 두면
+   *   마우스는 잡힌 채(커서 없음) 시야만 안 도는 상태가 되고, 해제 이벤트를 들을
+   *   리스너도 이미 없어서 page 의 locked 가 참으로 굳는다. 여기서 직접 풀고
+   *   상태도 같이 내린다.
+   */
+  useEffect(() => {
+    if (!touchMode || document.pointerLockElement === null) return;
+    document.exitPointerLock();
+    onLockChange?.(false);
+  }, [touchMode, onLockChange]);
+
   return (
     <Canvas
       shadows={false}
-      dpr={[1, 1.75]}
-      camera={{ position: [spawn.x, EYE_HEIGHT, spawn.z], fov: 60, near: 0.1, far: 60 }}
-      gl={{ antialias: true }}
+      /*
+       * ★ 터치에서 해상도를 낮춘다 — **여기가 모바일 성능의 거의 전부다.**
+       *   폰의 devicePixelRatio 는 3 쯤이라 1.75 를 그대로 쓰면 노트북의 세 배 가까운
+       *   픽셀을 칠하게 된다. 창고 씬은 조명이 여럿이고 영상 텍스처까지 있어서
+       *   그대로 두면 확실히 버벅인다. 안티앨리어싱도 같이 끈다(픽셀당 비용).
+       *
+       *   antialias 는 컨텍스트를 만들 때 한 번만 정해진다 — 나중에 마우스로 바꿔
+       *   잡아도 그대로다. 손해가 화질뿐이라 다시 만들지 않는다.
+       */
+      dpr={touchMode ? [0.75, 1] : [1, 1.75]}
+      camera={{ position: [spawn.x, EYE_HEIGHT, spawn.z], fov: BASE_FOV, near: 0.1, far: 60 }}
+      gl={{ antialias: !touchMode, powerPreference: 'high-performance' }}
       onCreated={({ gl }) => {
         gl.toneMapping = THREE.ACESFilmicToneMapping;
         gl.toneMappingExposure = 1.1;
         onReady?.();
       }}
     >
+      {/* 세로로 들면 시야각을 넓힌다 (input.ts 의 fovForAspect) */}
+      <AdaptiveFov />
       <color attach="background" args={['#080604']} />
       <fogExp2 attach="fog" args={['#0b0805', 0.028]} />
 
@@ -122,8 +180,12 @@ export default function WorldScene({
       <StageMood />
 
       <Remotes />
-      <LocalRig conn={conn} spawn={spawn} composing={composing} />
+      <LocalRig conn={conn} spawn={spawn} composing={composing} paused={paused} />
       {/*
+        ★ 터치에서는 **아예 렌더하지 않는다.** iOS 에는 포인터 잠금이 없어서 이 컨트롤이
+          할 일이 없는데, 렌더해 두면 document 에 리스너만 붙어 조이스틱 터치와 싸운다.
+          그때 시야는 LocalRig 이 input.lookX/lookY 로 직접 돌린다.
+
         ★ selector 는 **일부러 아무 것도 맞지 않는 값**이다.
           drei 는 selector 가 없으면 `document` 전체에 click→lock 을 건다. 그러면
           ESC 로 설정을 열어 놓고 볼륨 슬라이더나 채팅 판을 누르는 순간 다시 잠겨
@@ -135,13 +197,39 @@ export default function WorldScene({
           target 이 캔버스가 아니라 여기 걸리지 않는다. 이 selector 를 없애
           document 로 되돌리면 위의 문제가 그대로 돌아온다.
       */}
-      <PointerLockControls
-        selector="[data-world-click-to-lock]"
-        onLock={() => onLockChange?.(true)}
-        onUnlock={() => onLockChange?.(false)}
-      />
+      {touchMode ? null : (
+        <PointerLockControls
+          selector="[data-world-click-to-lock]"
+          onLock={() => onLockChange?.(true)}
+          onUnlock={() => onLockChange?.(false)}
+        />
+      )}
     </Canvas>
   );
+}
+
+/* ─────────────────────────── 세로 화면의 시야각 ─────────────────────────── */
+
+/**
+ * 화면 비율이 바뀔 때마다 카메라 fov 를 다시 잡는다 (input.ts 의 fovForAspect).
+ *
+ * three 의 fov 는 **세로** 시야각이라, 세로로 들면 가로가 36°까지 좁아져 옆 사람이
+ * 화면 밖으로 나간다. 16:9 에서는 계산 결과가 정확히 기본값이라 데스크톱은 그대로다.
+ */
+function AdaptiveFov() {
+  const camera = useThree((s) => s.camera);
+  const width = useThree((s) => s.size.width);
+  const height = useThree((s) => s.size.height);
+
+  useEffect(() => {
+    if (!(camera instanceof THREE.PerspectiveCamera) || height <= 0) return;
+    const next = fovForAspect(width / height);
+    if (Math.abs(camera.fov - next) < 0.01) return;
+    camera.fov = next;
+    camera.updateProjectionMatrix();
+  }, [camera, width, height]);
+
+  return null;
 }
 
 /* ─────────────────────────── 내 아바타 (송신) ─────────────────────────── */
@@ -152,12 +240,15 @@ function LocalRig({
   conn,
   spawn,
   composing,
+  paused,
 }: {
   conn: WorldConnection;
   spawn: { x: number; z: number };
   composing: boolean;
+  paused: boolean;
 }) {
   const { camera } = useThree();
+  const touchMode = useSyncExternalStore(subscribeTouchMode, getTouchMode, getTouchModeServer);
   /*
    * ★★ 내가 지금 움직일 수 있나 (I1 — lib/mp/constants.ts 의 mayMove).
    *
@@ -176,7 +267,6 @@ function LocalRig({
   const nomineeId = useRoundtableStore((s) => s.nomineeId);
   const selfId = useWorldStore((s) => s.selfId);
   const movementLocked = !mayMove(phase, nomineeId !== null && nomineeId === selfId);
-  const keys = useRef<Record<string, boolean>>({});
   // ★ pos.y 는 **발 높이**다(눈높이가 아니다). 카메라만 EYE_HEIGHT를 더해 올린다 —
   //   네트워크로 나가는 값도, 가구 충돌이 보는 값도 발 높이라 여기서 갈리면 안 된다.
   const pos = useRef(new THREE.Vector3(spawn.x, 0, spawn.z));
@@ -214,57 +304,56 @@ function LocalRig({
     camera.rotation.set(Math.min(pitch, MAX_START_PITCH), Math.atan2(-dx, -dz), 0);
   }, [camera, spawn.x, spawn.z]);
 
-  useEffect(() => {
-    // 채팅창에 타이핑하는 동안은 조작키가 아니다. 이 가드가 없으면 "왜"를 치다가
-    // 걸어다니고, Space를 칠 때마다 뛴다.
-    const typing = (e: KeyboardEvent) => {
-      const el = e.target as HTMLElement | null;
-      const tag = el?.tagName;
-      return tag === 'INPUT' || tag === 'TEXTAREA' || el?.isContentEditable === true;
-    };
+  // 키보드는 input.ts 를 거친다 — 이 컴포넌트는 **입력이 어디서 왔는지 모른다.**
+  // 조이스틱도 같은 `input` 에 쓰므로 아래 useFrame 은 한 벌이면 된다.
+  useEffect(() => attachKeyboard(), []);
 
-    const down = (e: KeyboardEvent) => {
-      if (typing(e)) return;
-      // Space는 브라우저가 스크롤·마지막 버튼 재클릭에 쓴다. 여기선 점프다
-      if (e.code === 'Space') e.preventDefault();
-      keys.current[e.code] = true;
-    };
-    const up = (e: KeyboardEvent) => {
-      keys.current[e.code] = false;
-    };
-    // 탭을 벗어나면 눌린 키가 그대로 남아 혼자 계속 걷는다
-    const blur = () => {
-      keys.current = {};
-    };
-    window.addEventListener('keydown', down);
-    window.addEventListener('keyup', up);
-    window.addEventListener('blur', blur);
-    return () => {
-      window.removeEventListener('keydown', down);
-      window.removeEventListener('keyup', up);
-      window.removeEventListener('blur', blur);
-    };
-  }, []);
-
-  // 말하기로 들어가는 순간 눌린 키를 비운다. W 를 누른 채 Enter 를 치면 그 W 의
-  // keyup 은 입력창이 가져가고, 여기 keys 에는 true 가 남아 혼자 계속 걸어간다.
+  // 말하기로 들어가는 순간 눌린 것들을 비운다 (input.ts 의 resetInput 상자).
   useEffect(() => {
-    if (composing) keys.current = {};
+    if (composing) resetInput();
   }, [composing]);
 
   useFrame((_, delta) => {
-    const k = keys.current;
-    // 조작을 받는 조건은 셋이다.
-    //   1) 마우스가 잠겨 있다 — ESC 로 풀어 설정을 여는 동안에는 걷지 않는다.
-    //   2) 말하는 중이 아니다 — 말하기는 **잠금을 유지한 채** 열리므로(page.tsx),
+    // 조작을 받는 조건은 넷이다.
+    //   1) 말하는 중이 아니다 — 말하기는 **잠금을 유지한 채** 열리므로(page.tsx),
     //      잠금만 보면 타이핑하는 동안 몸이 걸어간다. 키 핸들러의 typing() 가드가
     //      이미 한 겹 막지만, 포커스가 어디로 튀든 안전하도록 여기서도 막는다.
-    //   3) 이동이 잠긴 단계가 아니다 — 봇이 서버 틱에서 즉시 얼어붙는 그 순간에
+    //   2) 이동이 잠긴 단계가 아니다 — 봇이 서버 틱에서 즉시 얼어붙는 그 순간에
     //      맞춰 사람도 멈춰야 한다 (위 movementLocked 의 상자, I1).
-    const active = !composing && !movementLocked && document.pointerLockElement !== null;
-    const ax = active ? (k.KeyD || k.ArrowRight ? 1 : 0) - (k.KeyA || k.ArrowLeft ? 1 : 0) : 0;
-    const az = active ? (k.KeyW || k.ArrowUp ? 1 : 0) - (k.KeyS || k.ArrowDown ? 1 : 0) : 0;
-    const running = active && Boolean(k.ShiftLeft || k.ShiftRight);
+    //   3) 만질 판이 떠 있지 않다 (paused).
+    //   4) 마우스가 잠겨 있다 — ESC 로 풀어 잠깐 멈춘 동안에는 걷지 않는다.
+    //      ★ **터치에는 이 조건이 없다.** iOS 에 포인터 잠금이 아예 없어서, 이걸
+    //        그대로 두면 폰에서는 4번이 영영 거짓이라 한 발짝도 못 걷는다
+    //        (input.ts 머리말 — 이 파일이 생긴 이유가 이 한 줄이다).
+    const active =
+      !composing &&
+      !movementLocked &&
+      !paused &&
+      (touchMode || document.pointerLockElement !== null);
+
+    /*
+     * 시야. 터치에서는 PointerLockControls 가 없으므로 여기서 직접 돌린다.
+     * 카메라 회전 순서는 YXZ 라 y 가 좌우(yaw), x 가 위아래(pitch)다.
+     * 부호는 마우스와 같다 — 오른쪽으로 끌면 오른쪽을 본다.
+     *
+     * ★ 조작이 막힌 동안에도 **쌓인 값은 버린다.** 안 버리면 판을 닫는 순간
+     *   그동안 문지른 만큼 시야가 홱 돌아간다.
+     */
+    if (input.lookX !== 0 || input.lookY !== 0) {
+      if (active) {
+        camera.rotation.y -= input.lookX * LOOK_SENSITIVITY;
+        camera.rotation.x = Math.min(
+          MAX_PITCH,
+          Math.max(-MAX_PITCH, camera.rotation.x - input.lookY * LOOK_SENSITIVITY),
+        );
+      }
+      input.lookX = 0;
+      input.lookY = 0;
+    }
+
+    const ax = active ? input.moveX : 0;
+    const az = active ? input.moveZ : 0;
+    const running = active && input.running;
 
     camera.getWorldDirection(forward.current);
     forward.current.y = 0;
@@ -274,15 +363,23 @@ function LocalRig({
     let anim: AnimState = 'idle';
     if (ax !== 0 || az !== 0) {
       const speed = (running ? RUN_SPEED : WALK_SPEED) * Math.min(delta, 0.1);
-      // 대각선이 빨라지지 않게 정규화한다
+      /*
+       * ★ **길이가 1을 넘을 때만 줄인다.**
+       *
+       *   예전에는 무조건 `/len` 으로 정규화했다. 키보드만 있을 때는 그게 맞았다 —
+       *   값이 0·±1 뿐이라 대각선(√2)을 1로 되돌리는 일밖에 안 했다. 그런데
+       *   조이스틱은 0~1 사이를 연속으로 주므로, 무조건 정규화하면 살짝 민 것도
+       *   **끝까지 민 것과 똑같은 속도**가 된다. 살살 걷는 게 아예 불가능해진다.
+       */
       const len = Math.hypot(ax, az);
-      pos.current.addScaledVector(forward.current, (az / len) * speed);
-      pos.current.addScaledVector(right.current, (ax / len) * speed);
+      const fit = len > 1 ? 1 / len : 1;
+      pos.current.addScaledVector(forward.current, az * fit * speed);
+      pos.current.addScaledVector(right.current, ax * fit * speed);
       anim = running ? 'run' : 'walk';
     }
 
     // 점프. **땅에 있을 때만** 받는다 — 누른 채로 있어도 공중에서 다시 뛰지 않는다.
-    if (active && (k.Space || k.KeyE) && grounded.current) {
+    if (active && input.jump && grounded.current) {
       vy.current = JUMP_SPEED;
       grounded.current = false;
     }

@@ -55,6 +55,14 @@ export const metadata: Metadata = {
   description: "3~8명 중 누가 AI인지 찾는 게임",
 };
 
+/*
+ * ★ viewport 를 **여기 두지 않는다.** 3D 월드는 노치 끝까지 화면을 쓰려고
+ *   `viewport-fit=cover` 가 필요한데, 그건 앱 전체에 걸리면 아직 모바일 대응이 안 된
+ *   다른 화면(로비·기록·계정)의 글자를 노치 밑으로 밀어 넣는다.
+ *   그래서 그 설정은 `app/world/layout.tsx` 에만 있다 — 필요한 화면 하나에만 건다.
+ *   여기에 아무것도 없으면 Next 가 기본값(width=device-width, initial-scale=1)을 넣는다.
+ */
+
 export default function RootLayout({
   children,
 }: Readonly<{

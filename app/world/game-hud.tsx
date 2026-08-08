@@ -281,11 +281,12 @@ function RoleCard() {
 
   return (
     <div
-      className={`pointer-events-none absolute inset-0 z-[45] flex items-center justify-center p-6 ${cardStyles.backdrop}`}
+      // 낮은 화면(가로로 든 폰)에서 카드가 넘치면 굴려서 「확인」까지 닿는다 (PanelShell 상자)
+      className={`pointer-events-none absolute inset-0 z-[45] flex overflow-y-auto overscroll-contain p-4 sm:p-6 ${cardStyles.backdrop}`}
     >
-      <div className={cardStyles.deal}>
+      <div className={`${cardStyles.deal} m-auto`}>
         <div
-          className={`${cardStyles.card} relative w-[19rem] overflow-hidden rounded-2xl px-6 pb-6 pt-5 text-center`}
+          className={`${cardStyles.card} relative w-[17rem] overflow-hidden rounded-2xl px-5 pb-5 pt-4 text-center sm:w-[19rem] sm:px-6 sm:pb-6 sm:pt-5`}
           style={{ '--rc': card.color } as React.CSSProperties}
         >
           <div aria-hidden className={cardStyles.frame} />
@@ -403,7 +404,7 @@ const GUESS_LOOK: Record<'none' | SeatGuess, { label: string; color: string }> =
  *   에서는 그냥 눌린다 — 어차피 찍어 두고 싶은 순간이 거기다.
  * ★ 좌석이 2개 미만이면 그리지 않는다. 나 혼자인 라운지에서 적어 둘 것이 없다.
  */
-export function SeatNotes() {
+export function SeatNotes({ embedded = false }: { embedded?: boolean } = {}) {
   const seats = useSeats();
   const guesses = useRoundtableStore((s) => s.guesses);
   const cycleGuess = useRoundtableStore((s) => s.cycleGuess);
@@ -419,7 +420,12 @@ export function SeatNotes() {
   const accent = mine?.color ?? '#d4a373';
 
   return (
-    <div className={`${GLASS} pointer-events-auto mt-3 w-[10.5rem] overflow-hidden`}>
+    /* embedded = ☰ 판 안. 거기서는 폭이 남으므로 다 쓴다 (ChatTranscript 와 같은 규약) */
+    <div
+      className={`${GLASS} pointer-events-auto overflow-hidden ${
+        embedded ? 'w-full' : 'mt-3 w-[10.5rem]'
+      }`}
+    >
       {/* ── 맨 위: 내 역할. 짐작이 아니라 아는 값이라 못 누른다 ── */}
       <div className="flex items-center gap-2 border-b border-white/[0.06] px-2.5 py-2">
         <span aria-hidden className="shrink-0 opacity-80" style={{ color: accent }}>
@@ -508,8 +514,11 @@ export function SeatNotes() {
  *   모양으로 온다 — 실제로 그게 이 게임의 전부다.
  * ★ 좁은 화면(lg 미만)에서는 접는다. 가운데 패널(max-w-md)과 겹치면 투표를
  *   가린다 — 그때는 아래로 흐르는 줄이 대신한다.
+ * ★ **폰에서는 `embedded` 로 ☰ 메뉴 안에 끼운다** (touch-controls 의 TouchMenu).
+ *   좁아서 접는다는 위 규칙은 그대로고, 대신 판을 열었을 때는 화면 전체를 쓰므로
+ *   겹칠 것이 없다. 목록을 그리는 코드는 한 벌이어야 해서 갈라 쓰지 않고 껍데기만 바꾼다.
  */
-export function ChatTranscript() {
+export function ChatTranscript({ embedded = false }: { embedded?: boolean } = {}) {
   const messages = useWorldStore((s) => s.messages);
   const seats = useSeats();
   /*
@@ -535,10 +544,21 @@ export function ChatTranscript() {
     }
   }, [messages.length]);
 
-  if (messages.length === 0) return null;
+  if (messages.length === 0) {
+    // 판 안에서는 빈 자리를 그대로 두면 "안 뜬 것"처럼 보인다. 한 줄로 말해 준다.
+    return embedded ? (
+      <p className="py-6 text-center text-[11px] text-neutral-600">아직 오간 말이 없다</p>
+    ) : null;
+  }
 
   return (
-    <div className="absolute bottom-24 right-6 top-28 z-[35] hidden w-[17.5rem] lg:flex">
+    <div
+      className={
+        embedded
+          ? 'flex min-h-0 w-full flex-1'
+          : 'absolute bottom-24 right-6 top-28 z-[35] hidden w-[17.5rem] lg:flex'
+      }
+    >
       <div className={`${GLASS} flex min-h-0 w-full flex-col overflow-hidden`}>
         {/* 이름만 적는다. 개수를 옆에 세우면 읽을 것이 하나 더 는다 */}
         <p className="shrink-0 border-b border-white/[0.06] px-3 py-2 text-[9px] tracking-[0.14em] text-neutral-500">
@@ -940,7 +960,7 @@ function RevealOverlay({ onLeave }: { onLeave: () => void }) {
   const iWon = mine === null ? null : identityRole(mine) === reveal.winner;
 
   return (
-    <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/80 p-6 backdrop-blur">
+    <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/80 p-3 backdrop-blur sm:p-6">
       {/*
         같은 카드 언어(panel)를 입는다. 광택(shine)은 뺐다 — 결과는 한 겹씩 열리는
         것 자체가 연출이라, 위로 번쩍이는 게 하나 더 있으면 시선이 갈린다.
@@ -953,7 +973,7 @@ function RevealOverlay({ onLeave }: { onLeave: () => void }) {
           style={{ '--rc': '#d4a373' } as React.CSSProperties}
         >
           <div aria-hidden className={cardStyles.frame} />
-          <div className="overflow-y-auto p-6">
+          <div className="overflow-y-auto overscroll-contain p-4 sm:p-6">
             <p className={`${cardStyles.kicker} mb-4 text-center`}>Result — 판의 결말</p>
             {/* ① 처형됐는가 */}
         <p className="text-center text-xl font-black tracking-tight text-neutral-100">
@@ -1108,12 +1128,30 @@ function Layer({ show, children }: { show: boolean; children: React.ReactNode })
  *   것만 잠금" 규칙이 그대로 산다(그 규칙은 지금 uiOpen 동안 꺼져 있지만,
  *   경계를 흐려 놓으면 다음에 되살릴 때 또 같은 사고가 난다).
  */
+/**
+ * ★ 좁고 **낮은** 화면에서 넘치지 않게 한다.
+ *
+ *   폰을 가로로 들면 높이가 400px 남짓이다. 좌석이 아홉이면 이 판은 그보다 길어져서
+ *   아래쪽 카드가 화면 밖으로 나가고, 판이 pointer-events-none 위에 떠 있어 **화면을
+ *   굴려도 따라오지 않는다** — 맨 끝 자리는 지목할 방법이 아예 없다.
+ *   그래서 판 자체에 스크롤을 주고(max-h-full + overflow-y-auto), 여백은 좁은 화면에서
+ *   줄인다. 넘치지 않을 때는 아무것도 달라지지 않는다.
+ */
 function PanelShell({ kicker, children }: { kicker: string; children: React.ReactNode }) {
   return (
-    <div className="pointer-events-none absolute inset-0 z-40 flex items-center justify-center p-6">
-      <div className={`${cardStyles.deal} w-full max-w-md`}>
+    /*
+      ★ 넘치면 **바깥 통이 굴러간다.** 판(.panel)에 overflow 를 걸면 안쪽 액자선
+        (.frame, inset:7px 절대배치)이 스크롤 높이 전체로 늘어나 같이 흘러간다.
+      ★ items-center 대신 자식에 m-auto 를 준다. 가운데 정렬과 스크롤을 같이 걸면
+        내용이 통보다 클 때 **위쪽이 잘려서 닿지 않는** 오래된 함정이 있다.
+        m-auto 는 들어갈 때만 가운데로 밀고, 넘치면 위에서부터 쌓는다.
+      ★ pointer-events-none 이지만 굴러간다 — 카드 몸통(.chrome)이 auto 라
+        거기를 짚고 끌면 이 통이 스크롤된다.
+    */
+    <div className="pointer-events-none absolute inset-0 z-40 flex overflow-y-auto overscroll-contain p-3 sm:p-6">
+      <div className={`${cardStyles.deal} m-auto w-full max-w-md`}>
         <div
-          className={`${cardStyles.panel} relative w-full overflow-hidden rounded-2xl p-6`}
+          className={`${cardStyles.panel} relative w-full overflow-hidden rounded-2xl p-4 sm:p-6`}
           style={{ '--rc': '#d4a373' } as React.CSSProperties}
         >
           <div aria-hidden className={cardStyles.frame} />

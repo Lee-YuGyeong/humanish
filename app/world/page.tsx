@@ -13,12 +13,33 @@
  *
  * 조작은 전부 키다 — WASD·Shift·Space 로 움직이고, Enter 로 말하고, M·−·+ 로
  * 소리를 맞춘다. **열고 닫는 판이 없다** (아래 「판은 없다」 상자).
+ *
+ * ┌─ ★ 폰·태블릿에서는 조작이 통째로 다르다 ────────────────────────────────┐
+ * │ 이 화면은 「마우스가 잠기면 논다 / 풀리면 멈춘다」 위에 세워져 있는데,     │
+ * │ **iOS 에는 포인터 잠금이 아예 없다.** 그대로 두면 폰에서 `locked` 가       │
+ * │ 영영 거짓이라 한 발짝도 못 걷는다.                                       │
+ * │                                                                          │
+ * │ 그래서 "지금 조작 중인가"를 잠금에서 떼어 `playing` 하나로 본다:           │
+ * │   데스크톱 → 마우스가 잠겨 있다                                          │
+ * │   터치     → 만질 판이 안 떠 있다 (조이스틱이 곧 조작이다)                │
+ * │ 키를 대신하는 것들도 같이 붙는다: 왼쪽 조이스틱 · 오른쪽 시야 드래그 ·     │
+ * │ 💬(Enter) · ⤒(Space) · ☰(ESC = 소리·기록·퇴장).                          │
+ * │ 조작의 단일 출처는 ./input, 손가락 UI 는 ./touch-controls 다.             │
+ * └──────────────────────────────────────────────────────────────────────────┘
  */
 
 import dynamic from 'next/dynamic';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from 'react';
 
 import { WORLD_SEAT_SLOTS, isMovementLocked, mayChat } from '@/lib/mp/constants';
 import { spawnFor } from '@/lib/mp/spawn';
@@ -37,6 +58,13 @@ import { useQueryClient } from '@tanstack/react-query';
 import { matchHistoryKey, profileStatsKey } from '@/lib/queries/keys';
 import { roleCardOpen, useRoundtableStore } from './roundtable-store';
 import { setActiveRoom, clearActiveRoom } from './active-room';
+import {
+  getTouchMode,
+  getTouchModeServer,
+  subscribeTouchMode,
+  watchPointerKind,
+} from './input';
+import { MenuIcon, SpeakButton, TouchControls, TouchMenu } from './touch-controls';
 
 const WorldScene = dynamic(() => import('./world-scene'), {
   ssr: false,
@@ -57,6 +85,53 @@ interface Ticket {
 
 /** 소리 한 칸. 0.05 면 0→100 이 스무 번이라 길게 누르면 금방 닿는다 */
 const VOLUME_STEP = 0.05;
+
+/** 서버 렌더에서는 layout 효과가 경고를 낸다. 거기서만 보통 효과로 떨어뜨린다 */
+const useIsomorphicLayoutEffect = typeof window === 'undefined' ? useEffect : useLayoutEffect;
+
+/**
+ * 소프트 키보드가 화면 아래를 몇 px 가리고 있는가. 안 떠 있으면 0.
+ *
+ * ┌─ 왜 window 높이로는 안 되나 ────────────────────────────────────────────┐
+ * │ 안드로이드 크롬은 키보드가 뜨면 window 를 줄여 주지만, **iOS 사파리는     │
+ * │ 줄이지 않는다.** 레이아웃 뷰포트는 그대로 두고 보이는 영역만 밀어 올린다. │
+ * │ 그래서 `bottom-6` 짜리 입력줄이 키보드 뒤에 깔려, 뭘 치는지 안 보인다.    │
+ * │                                                                        │
+ * │ 실제로 보이는 창은 visualViewport 가 안다. 레이아웃 높이에서 그걸 빼면    │
+ * │ 가려진 만큼이 나온다. 그 값만큼 입력줄을 들어 올린다.                     │
+ * └────────────────────────────────────────────────────────────────────────┘
+ *
+ * ★ 이 값을 **캔버스에 먹이지 않는다.** 3D 쪽 크기가 바뀌면 r3f 가 렌더 타깃을
+ *   다시 만들어, 키보드가 오르내릴 때마다 화면이 한 번씩 튄다.
+ */
+function useKeyboardInset(active: boolean): number {
+  const [inset, setInset] = useState(0);
+
+  useEffect(() => {
+    if (!active) {
+      setInset(0);
+      return;
+    }
+    const vv = window.visualViewport;
+    if (!vv) return;
+
+    const measure = () => {
+      // offsetTop 은 확대해서 스크롤한 만큼이다. 안 빼면 확대 중에 값이 부풀어 오른다
+      const hidden = window.innerHeight - vv.height - vv.offsetTop;
+      // 1px 남짓의 반올림 오차로 입력줄이 떨리지 않게 바닥을 둔다
+      setInset(hidden > 24 ? Math.round(hidden) : 0);
+    };
+    measure();
+    vv.addEventListener('resize', measure);
+    vv.addEventListener('scroll', measure);
+    return () => {
+      vv.removeEventListener('resize', measure);
+      vv.removeEventListener('scroll', measure);
+    };
+  }, [active]);
+
+  return inset;
+}
 
 /** 0~1 안에서 한 칸 움직인다. 부동소수 찌꺼기가 쌓이지 않게 두 자리에서 자른다 */
 function step(current: number, delta: number): number {
@@ -222,12 +297,31 @@ export default function WorldPage() {
   /** 헤더의 「현재 방에서 퇴장하기」를 눌렀다 — 실수 방지로 한 번 더 묻는다 */
   const [confirmLeave, setConfirmLeave] = useState(false);
   /**
+   * ☰ 판이 떠 있는가 (터치 전용). 데스크톱의 ESC 자리다 — 소리·대화 기록·퇴장이
+   * 전부 키였는데 폰에는 키가 없어서 갈 곳이 없다 (touch-controls 의 TouchMenu).
+   */
+  const [menuOpen, setMenuOpen] = useState(false);
+  /**
    * 로비에서 「게임 시작」으로 넘어온 흐름인가 (`/world?code=`). 이때는 입장 패널
    * (방 만들기·정원 카드)을 띄우지 않는다 — 이미 방이 정해졌으니 **로딩 표시**만
    * 보이고 곧장 3D 월드로 들어간다. 라운지(코드 없이 /world 직접 방문)는 false 라
    * 예전처럼 입장 패널이 뜬다.
    */
   const [gameFlow, setGameFlow] = useState(false);
+
+  /*
+   * 손으로 하는가, 키보드로 하는가 (input.ts 의 watchPointerKind).
+   *
+   * ★ 기기로 한 번 정하고 끝내지 않는다 — 키보드를 붙인 아이패드, 화면이 달린
+   *   노트북이 있어서 실제로 들어온 입력을 보고 뒤집는다. 그래서 이 값은 판 도중에도
+   *   바뀔 수 있고, 바뀌면 조이스틱이 뜨거나 사라진다.
+   */
+  const touchMode = useSyncExternalStore(subscribeTouchMode, getTouchMode, getTouchModeServer);
+  useEffect(() => watchPointerKind(), []);
+  /** ☰ 판의 소리 눈금이 읽는다. 값의 원본은 늘 music.ts 하나다 */
+  const volume = useSyncExternalStore(musicSubscribe, getMusicVolume, () => 0.18);
+  /** 소프트 키보드가 가린 높이. 말하는 중에만 잰다 (위 useKeyboardInset 상자) */
+  const keyboardInset = useKeyboardInset(composing);
 
   const status = useWorldStore((s) => s.status);
   const errorText = useWorldStore((s) => s.errorText);
@@ -404,6 +498,25 @@ export default function WorldPage() {
   const uiOpen = live && (isMovementLocked(phase) || revealResult !== null || cardOpen);
 
   /**
+   * **만질 판이 떠 있어 조작이 멈춘 상태인가.**
+   *
+   * ★ 데스크톱에서는 이 값이 없어도 다리가 멈췄다 — uiOpen 이 참이면 아래 효과가
+   *   포인터 잠금을 풀고, 잠금이 없으면 LocalRig 이 이동키를 무시하기 때문이다.
+   *   **터치에는 그 잠금이 없다.** 판이 떠도 손가락은 그대로 닿으니, 3D 쪽에
+   *   "지금 멈춤"을 알려 줄 값이 따로 필요하다 (world-scene 의 paused).
+   * ★ ☰ 판과 퇴장 확인도 같이 센다 — 둘 다 그 앞에서 걸어 다니면 안 되는 판이다.
+   */
+  const paused = uiOpen || confirmLeave || menuOpen;
+
+  /**
+   * 지금 걷는 중인가 — 손가락 UI 를 띄울지 정하는 하나뿐인 기준.
+   *
+   * 데스크톱의 `locked` 에 해당한다. 터치에는 잠금이 없으므로 **판이 안 떠 있으면
+   * 곧 걷는 중**이다 (머리말의 상자).
+   */
+  const playing = live && (touchMode ? !paused : locked);
+
+  /**
    * 지금 내가 말할 수 있는가. 워커의 채팅 게이트와 **같은 함수**로 판정한다 (I1) —
    * 여기서만 막으면 소켓으로 우회되고, 워커에서만 막으면 입력줄이 열렸는데 말이
    * 안 나가는 게 된다. defense 의 지목된 본인은 예외다 (mayChat 의 상자).
@@ -456,6 +569,23 @@ export default function WorldPage() {
     if (!uiOpen) requestLock();
   }, [locked, composing, uiOpen]);
 
+  /*
+   * 방을 옮기거나 나가면 ☰ 판을 걷는다. 안 걷으면 다음 방에 들어서자마자
+   * 잠깐 멈춤 화면이 떠 있다 — paused 가 참이라 조이스틱도 안 뜬다.
+   */
+  useEffect(() => {
+    if (!live) setMenuOpen(false);
+  }, [live]);
+
+  /*
+   * ★ 판이 뜨면 ☰ 도 걷는다. 대화 기록을 읽는 사이 지목 투표가 시작되면, 안 걷을
+   *   경우 ☰(z-46)이 투표 패널(z-40)을 덮은 채 30초가 흘러간다 — 데스크톱에서
+   *   uiOpen 이 커서를 되찾아 패널부터 보여주는 것과 같은 우선순위다.
+   */
+  useEffect(() => {
+    if (uiOpen) setMenuOpen(false);
+  }, [uiOpen]);
+
   const send = useCallback(() => {
     const text = draft.trim();
     if (!text) return;
@@ -474,10 +604,17 @@ export default function WorldPage() {
     lineRef.current?.blur();
   }, [send]);
 
-  /** 걷기로 (되)돌아간다. 잠금이 거절돼도 화면은 그대로고, requestLock 이 더 두드린다 */
+  /**
+   * 걷기로 (되)돌아간다. 잠금이 거절돼도 화면은 그대로고, requestLock 이 더 두드린다.
+   *
+   * ★ 터치에서는 **아무것도 하지 않는다.** iOS 에는 포인터 잠금이 없어서 요청 자체가
+   *   던지고, 있어도 의미가 없다 — 손가락 조작은 잠글 것이 없다. 터치의 "걷는 중"은
+   *   판이 안 떠 있는 상태 그 자체다 (playing).
+   */
   const resumeWalking = useCallback(() => {
+    if (touchMode) return;
     requestLock();
-  }, []);
+  }, [touchMode]);
 
   /*
    * 표를 던진다.
@@ -609,7 +746,8 @@ export default function WorldPage() {
    */
   const wasUiOpen = useRef(false);
   useEffect(() => {
-    if (!live) {
+    // 터치에는 되돌릴 잠금이 없다 — 판이 걷히면 그대로 걷는 중이다 (playing)
+    if (!live || touchMode) {
       wasUiOpen.current = uiOpen;
       return;
     }
@@ -619,7 +757,7 @@ export default function WorldPage() {
       requestLock();
     }
     wasUiOpen.current = uiOpen;
-  }, [live, uiOpen]);
+  }, [live, uiOpen, touchMode]);
 
   /*
    * 화면(캔버스)을 클릭하면 걷기로 돌아간다.
@@ -638,14 +776,15 @@ export default function WorldPage() {
   useEffect(() => {
     // ② 패널이 떠 있는 동안에는 이 경로를 아예 끈다. 안 끄면 판 바깥(세계)을
     //    한 번 누른 순간 다시 잠겨서 커서가 사라지고, 좌석 카드를 못 누른다
-    if (!live || uiOpen) return;
+    // ★ 터치에서도 끈다 — 손가락 하나하나가 여기 click 으로 오는데 잠글 것이 없다
+    if (!live || uiOpen || touchMode) return;
     const onClick = (e: MouseEvent) => {
       if (e.target !== document.querySelector('canvas')) return;
       requestLock();
     };
     window.addEventListener('click', onClick);
     return () => window.removeEventListener('click', onClick);
-  }, [live, uiOpen]);
+  }, [live, uiOpen, touchMode]);
 
   /*
    * Enter(또는 T) 로 한 마디 한다. 걷는 중에만 받는다.
@@ -683,8 +822,19 @@ export default function WorldPage() {
     }
   }, [composing, canSpeak]);
 
-  /** 입력줄이 뜨면 바로 칠 수 있어야 한다. focus 는 잠금을 풀지 않는다(실측) */
-  useEffect(() => {
+  /**
+   * 입력줄이 뜨면 바로 칠 수 있어야 한다. focus 는 잠금을 풀지 않는다(실측).
+   *
+   * ┌─ ★ 왜 layout 효과인가 (폰) ─────────────────────────────────────────────┐
+   * │ iOS 는 **사용자 제스처와 같은 작업(task) 안에서 부른 focus() 만** 소프트  │
+   * │ 키보드를 올린다. 그냥 useEffect 면 💬 를 누른 제스처 밖으로 밀려서,      │
+   * │ 입력줄은 뜨는데 키보드가 안 올라오고 한 번 더 눌러야 하는 상태가 된다.    │
+   * │ layout 효과는 커밋 중에 동기로 돌아 그 제스처 안에 남는다.               │
+   * │                                                                        │
+   * │ 서버 렌더에서는 layout 효과가 경고를 내므로 그때만 보통 효과로 떨어뜨린다. │
+   * └────────────────────────────────────────────────────────────────────────┘
+   */
+  useIsomorphicLayoutEffect(() => {
     if (composing) lineRef.current?.focus();
   }, [composing]);
 
@@ -774,7 +924,15 @@ export default function WorldPage() {
    */
 
   return (
-    <main className="relative h-screen w-full overflow-hidden bg-[#07050a]">
+    /*
+      ★ h-screen(100vh) 이 아니라 h-dvh 다. 모바일 사파리의 100vh 는 **주소창을 뺀
+        높이가 아니라** 주소창이 숨은 상태의 높이라, 실제로 보이는 것보다 화면이
+        길어진다 — 아래에 두는 조이스틱·버튼이 화면 밖으로 밀려 안 눌린다.
+      ★ overscroll-none 은 당겨서 새로고침, touch-manipulation 은 두 번 두드려
+        확대되는 것을 막는다. **핀치 확대는 그대로 살아 있다** — 게임 화면 하나 때문에
+        앱 전체의 확대를 막지 않는다 (layout.tsx 의 viewport 상자).
+    */
+    <main className="relative h-dvh w-full touch-manipulation overflow-hidden overscroll-none bg-[#07050a]">
       {/*
         ★ 씬은 **입장이 실제로 끝난 뒤(live)** 에 마운트한다. 예전엔 ticket 이 오는
         순간(=아직 connecting, 입장 오버레이가 화면을 덮고 있는 동안) 마운트해서,
@@ -787,6 +945,7 @@ export default function WorldPage() {
           conn={conn}
           spawn={spawn}
           composing={composing}
+          paused={paused}
           onLockChange={setLocked}
           onReady={() => setSceneReady(true)}
         />
@@ -794,10 +953,37 @@ export default function WorldPage() {
         <div className="h-full w-full bg-[#07050a]" />
       )}
 
-      {/* 헤더 */}
-      <header className="pointer-events-none absolute inset-x-0 top-0 flex items-start justify-between gap-4 p-6">
-        <div>
-          {/* 방 안에서는 작업 보드 링크 대신 퇴장 버튼 — 눌러도 바로 안 나가고 한 번 더 묻는다 */}
+      {/*
+        헤더.
+        ★ 좁은 화면에서는 여백을 줄인다 — 세로로 들면 p-6 두 겹이 3D 화면 높이를
+          꽤 먹는다. 위쪽은 노치를 피해 safe-area 만큼 더 내린다.
+      */}
+      {/*
+        ★ z-30 이 필요하다. 터치 조작 면(touch-controls, z-28)이 화면 전체를 덮는데,
+          이 헤더에 z 가 없으면(auto=0) DOM 에서 나중에 오는 그 면이 위가 되어
+          **☰ 버튼이 눌리지 않는다** — 누르는 족족 시야 드래그로 먹힌다.
+          pointer-events-none 이라 버튼 밖 영역은 z 와 무관하게 아래로 뚫린다.
+      */}
+      <header
+        className="pointer-events-none absolute inset-x-0 top-0 z-30 flex items-start justify-between gap-3 p-3 sm:gap-4 sm:p-6"
+        style={{ paddingTop: `calc(0.75rem + env(safe-area-inset-top, 0px))` }}
+      >
+        {/*
+          ┌─ ★ 폰에서는 이 왼쪽 칸을 통째로 비운다 ────────────────────────────┐
+          │ 세로로 든 폰의 폭은 360px 남짓이다. 여기에 왼쪽 칸(제목·방 정보·좌석 │
+          │ 메모, 168px)과 오른쪽 칸(인원·☰)과 **가운데 단계 표시**(200px 쯤)를  │
+          │ 같이 놓으면 산술적으로 안 들어간다 — 무엇을 줄여도 겹친다.          │
+          │                                                                    │
+          │ 그래서 화면 위에는 단계 표시와 ☰ 만 남기고, 나머지는 전부 ☰ 판       │
+          │ 안으로 옮긴다. 3D 를 가리지 않는 게 이 화면의 값이고, 저 정보들은    │
+          │ 멈춰서 읽는 것이지 걸으면서 읽는 게 아니다.                        │
+          │ (데스크톱은 폭이 남으므로 지금 그대로 왼쪽에 선다.)                 │
+          └────────────────────────────────────────────────────────────────────┘
+        */}
+        <div className={live && touchMode ? 'hidden' : undefined}>
+          {/*
+            방 안에서는 작업 보드 링크 대신 퇴장 버튼 — 눌러도 바로 안 나가고 한 번 더 묻는다.
+          */}
           {live ? (
             <button
               type="button"
@@ -839,8 +1025,26 @@ export default function WorldPage() {
           */}
           {live ? <SeatNotes /> : null}
         </div>
-        {/* 소리는 걸으면서 M · − + 로 맞춘다 (판 없음) */}
-        {live ? <StatusChip /> : null}
+        <div className="ml-auto flex shrink-0 items-center gap-2">
+          {/* 소리는 걸으면서 M · − + 로 맞춘다 (판 없음). 폰에서는 인원도 ☰ 판이 말한다 */}
+          {live && !touchMode ? <StatusChip /> : null}
+          {/*
+            ☰ — 데스크톱의 ESC 자리다. 소리·대화 기록·퇴장이 전부 키였는데 폰에는
+            키가 없어서 갈 곳이 없다 (touch-controls 의 TouchMenu).
+            ★ 판이 떠 있는 동안(paused)에는 숨긴다 — 그때는 투표·결과가 화면을 쥐고
+              있고, 여기서 또 판을 열면 두 판이 겹친다.
+          */}
+          {live && touchMode && !paused ? (
+            <button
+              type="button"
+              onClick={() => setMenuOpen(true)}
+              aria-label="메뉴"
+              className="pointer-events-auto flex h-9 w-9 items-center justify-center rounded-full border border-white/15 bg-black/50 text-neutral-200 backdrop-blur active:bg-white/20"
+            >
+              <MenuIcon />
+            </button>
+          ) : null}
+        </div>
       </header>
 
       {/*
@@ -992,7 +1196,8 @@ export default function WorldPage() {
             │   판 밖을 누르면 평소처럼 잠기고 이 판은 같이 사라진다.            │
             └──────────────────────────────────────────────────────────────────┘
           */}
-          {!locked && !confirmLeave ? <ChatTranscript /> : null}
+          {/* ★ 터치에서는 이 자리에 안 띄운다 — ☰ 판 안에 embedded 로 들어간다 */}
+          {!touchMode && !locked && !confirmLeave ? <ChatTranscript /> : null}
 
           {/*
             잠깐 멈춤 — **ESC 로 잡았던 잠금이 풀린 상태에서만** 뜬다 (everLocked).
@@ -1003,7 +1208,9 @@ export default function WorldPage() {
             **pointer-events-none 이라 이 글자를 뚫고 캔버스가 클릭된다** — 그래서
             "클릭하면 계속"이 말 그대로 아무 데나 눌러도 동작한다.
           */}
-          {everLocked && !locked && !composing && !uiOpen && !confirmLeave ? (
+          {/* ★ 터치에는 잡을 잠금이 없다 — everLocked 가 영영 거짓이라 어차피 안 뜨지만,
+                뜻이 "클릭하면 계속"이라 폰에서는 읽어도 할 게 없는 문장이다 */}
+          {!touchMode && everLocked && !locked && !composing && !uiOpen && !confirmLeave ? (
             <div className="pointer-events-none absolute inset-0 z-20 flex flex-col items-center justify-center gap-2">
               <p className="text-lg font-bold text-neutral-100 drop-shadow-[0_2px_12px_rgba(0,0,0,0.9)]">
                 화면을 클릭하면 계속
@@ -1022,6 +1229,59 @@ export default function WorldPage() {
 
           {/* 소리를 만질 때만 잠깐 뜬다 */}
           <VolumeHud visible={volumeHud} />
+
+          {/*
+            손으로 하는 조작 — 조이스틱 · 시야 · 점프 · 말하기 (touch-controls.tsx).
+
+            ★ **걷는 중일 때만** 붙인다. 판이 뜨면 언마운트되고, 그때 오버레이가
+              resetInput() 으로 다리를 멈춘다 — 밀고 있던 손가락의 pointerup 이
+              영영 안 오는 경우를 그 정리가 막는다.
+            ★ 말하는 중에도 뗀다. 소프트 키보드가 화면 절반을 먹은 위에 조이스틱이
+              남아 있으면 글자를 치다가 걸어간다.
+          */}
+          {touchMode && playing && !composing ? <TouchControls /> : null}
+
+          {/*
+            💬 — 조이스틱과 **따로** 뜬다 (touch-controls 의 SpeakButton 상자).
+            투표·판결·최후변론은 다리는 묶여도 입은 열린 단계라, 조이스틱이 사라진
+            판 위에도 이 버튼은 남아야 한다 — 데스크톱의 Enter 가 그때도 되는 것과
+            같은 대칭이다 (I1).
+            ★ 역할 카드가 떠 있으면 뺀다 — 카드부터 읽으라는 데스크톱 안내문과 같은
+              판단이다. ☰·퇴장 확인이 떠 있을 때도 뺀다(그 판들이 화면을 쥔다).
+          */}
+          {touchMode && canSpeak && !composing && !menuOpen && !confirmLeave && !cardOpen ? (
+            <SpeakButton onSpeak={() => setComposing(true)} />
+          ) : null}
+
+          {/* ☰ 판 — 데스크톱의 ESC 자리 (소리 · 대화 기록 · 퇴장) */}
+          {touchMode && menuOpen ? (
+            <TouchMenu
+              roomLine={
+                ticket
+                  ? `${ticket.room.code} · ${ticket.self.nickname} · 사람 ${ticket.room.capacity}` +
+                    (ticket.role ? ` · ${ROLE_LABEL[ticket.role]}` : '')
+                  : ''
+              }
+              volume={volume}
+              onVolume={(next) => setMusicVolume(step(next, 0))}
+              onClose={() => setMenuOpen(false)}
+              onLeave={() => {
+                setMenuOpen(false);
+                setConfirmLeave(true);
+              }}
+              notes={
+                <>
+                  {/* 인원 표시도 여기로 온다 — 걷는 동안에는 화면 위에 자리가 없다 */}
+                  <div className="mb-3 flex">
+                    <StatusChip />
+                  </div>
+                  <SeatNotes embedded />
+                </>
+              }
+            >
+              <ChatTranscript embedded />
+            </TouchMenu>
+          ) : null}
 
           {/* 판 진행 — 단계 HUD(z-30) · 투표/찬반(z-40) · 결과(z-50) */}
           <GameHud
@@ -1077,20 +1337,37 @@ export default function WorldPage() {
               아래에 깔리면 클릭이 패널에 먹혀 커서로는 입력줄을 못 잡는다.
               결과 오버레이(z-50)보다는 아래다 — 거긴 말이 잠긴 단계다.
           */}
-          <div className="absolute inset-x-0 bottom-6 z-[45] flex justify-center px-6">
+          <div
+            className="absolute inset-x-0 z-[45] flex justify-center px-4 sm:px-6"
+            /*
+              ★ 소프트 키보드 위에 올려 둔다. 폰에서 입력창에 포커스가 가면 키보드가
+                화면 절반을 덮는데, iOS 사파리는 그때 window 높이를 **안 바꾼다** —
+                bottom 만 믿으면 입력줄이 키보드 뒤에 깔려 자기가 뭘 치는지 못 본다.
+                keyboardInset 은 visualViewport 로 잰 실제 가림 높이다 (아래 훅).
+              ★ 캔버스는 이 값에 영향받지 않는다. 3D 쪽 크기가 바뀌면 r3f 가 렌더
+                타깃을 다시 만들어 키보드가 오르내릴 때마다 화면이 튄다.
+            */
+            style={{ bottom: `calc(1.5rem + ${keyboardInset}px + env(safe-area-inset-bottom, 0px))` }}
+          >
             {composing ? (
               <ChatLine
                 inputRef={lineRef}
                 draft={draft}
                 onDraft={setDraft}
                 onSend={sendLine}
-                cancelOnBlur={!uiOpen}
+                touchMode={touchMode}
+                /*
+                  ★ 터치에서는 포커스를 잃어도 무르지 않는다. 폰에서는 키보드를
+                    내리는 것만으로 blur 가 나는데, 그때 치던 말이 통째로 사라지면
+                    "썼는데 없어졌다"가 된다. 대신 × 버튼을 준다.
+                */
+                cancelOnBlur={!uiOpen && !touchMode}
                 onCancel={() => {
                   setComposing(false);
                   setDraft('');
                   // 잠금이 살아 있으면 그대로 걷는다. 거절당한 상태였다면 다시 두드린다.
                   // ④ 단, 패널이 떠 있으면 되잡지 않는다 — 커서가 사라진다
-                  if (!uiOpen && !document.pointerLockElement) requestLock();
+                  if (!touchMode && !uiOpen && !document.pointerLockElement) requestLock();
                 }}
               />
             ) : uiOpen ? (
@@ -1108,9 +1385,29 @@ export default function WorldPage() {
                   단계라 canSpeak 이 참인데, 그때 이 문구가 뜨면 거짓말이 된다.
               */
               canSpeak && !cardOpen ? (
-                <p className="rounded-full border border-amber-500/40 bg-black/70 px-5 py-2.5 text-[12px] text-amber-200 backdrop-blur">
-                  <span className="font-bold">Enter</span> 로{' '}
-                  {phase === 'defense' ? '최후변론' : '말하기'}
+                /*
+                  ★ 터치에서는 이 안내를 띄우지 않는다. 판이 떠 있는 동안에도 말할 수
+                    있다는 건 똑같이 알려야 하지만(위 상자, I1), 그건 판 위에 그대로
+                    떠 있는 💬 버튼이 이미 말하고 있다 — 안내 문구가 좁은 화면에서
+                    투표 카드를 한 줄 더 가리기만 한다.
+                */
+                touchMode ? null : (
+                  <p className="rounded-full border border-amber-500/40 bg-black/70 px-5 py-2.5 text-[12px] text-amber-200 backdrop-blur">
+                    <span className="font-bold">Enter</span> 로{' '}
+                    {phase === 'defense' ? '최후변론' : '말하기'}
+                  </p>
+                )
+              ) : null
+            ) : touchMode ? (
+              /*
+                손으로 하는 조작 안내. 키 이름을 그대로 적으면 폰에서는 전부 거짓말이다.
+                ★ 한 번 익히면 다시 읽을 일이 없어서 **판이 시작되면 지운다** — 좁은
+                  화면에서 이 줄은 3D 를 가리는 값이 더 크다. 같은 문장이 ☰ 판 아래에
+                  늘 적혀 있으니 잊어도 찾아볼 데가 있다.
+              */
+              phase === 'idle' ? (
+                <p className="rounded-full border border-white/10 bg-black/60 px-4 py-2 text-center text-[11px] text-neutral-300 backdrop-blur">
+                  왼쪽을 밀어 이동 · 끝까지 밀면 달리기 · 오른쪽을 문질러 시야
                 </p>
               ) : null
             ) : (
@@ -1149,12 +1446,19 @@ function ChatLine({
   onSend,
   onCancel,
   cancelOnBlur,
+  touchMode,
 }: {
   inputRef: React.RefObject<HTMLInputElement | null>;
   draft: string;
   onDraft: (v: string) => void;
   onSend: () => void;
   onCancel: () => void;
+  /**
+   * 손으로 하는 중인가. 참이면 **보내기·닫기 버튼을 붙인다** — 폰 키보드의 확인
+   * 키가 Enter 로 오지 않는 경우가 있고(줄바꿈이나 '완료'로 처리된다), ESC 키는
+   * 아예 없어서 무를 방법이 없다.
+   */
+  touchMode: boolean;
   /**
    * 포커스를 잃으면 무를 것인가.
    *
@@ -1167,8 +1471,11 @@ function ChatLine({
   cancelOnBlur: boolean;
 }) {
   return (
-    <div className="pointer-events-auto flex w-full max-w-xl items-center gap-3 rounded-full border border-[#d4a373]/40 bg-black/75 px-4 py-2.5 backdrop-blur">
-      <span className="shrink-0 text-[11px] font-bold tracking-wide text-[#d4a373]">말하기</span>
+    <div className="pointer-events-auto flex w-full max-w-xl items-center gap-2 rounded-full border border-[#d4a373]/40 bg-black/75 px-4 py-2.5 backdrop-blur sm:gap-3">
+      {/* 좁은 화면에서는 라벨을 접는다 — 버튼 둘이 들어와 자리가 없다 */}
+      <span className="hidden shrink-0 text-[11px] font-bold tracking-wide text-[#d4a373] sm:inline">
+        말하기
+      </span>
       <input
         ref={inputRef}
         value={draft}
@@ -1195,9 +1502,51 @@ function ChatLine({
         }}
         onBlur={cancelOnBlur ? onCancel : undefined}
         maxLength={200}
-        placeholder="Enter 로 보내기 · ESC 로 취소"
-        className="min-w-0 flex-1 bg-transparent text-[13px] text-white outline-none placeholder:text-neutral-600"
+        /*
+          ★ 폰 키보드의 확인 키를 '보내기'로 만든다. 기본값이면 그 자리가 '완료'라
+            눌러도 키보드만 내려가고 말은 안 나간다.
+          ★ 자동 대문자·자동 수정은 끈다. 한 마디씩 던지는 말이라 첫 글자를 멋대로
+            대문자로 바꾸면 영문 닉네임·약어가 계속 어긋난다.
+        */
+        enterKeyHint="send"
+        autoCapitalize="none"
+        autoCorrect="off"
+        placeholder={touchMode ? '한 마디 하고 보내기' : 'Enter 로 보내기 · ESC 로 취소'}
+        className="min-w-0 flex-1 bg-transparent text-[16px] text-white outline-none placeholder:text-neutral-600 sm:text-[13px]"
       />
+
+      {/*
+        ★ 터치 전용 버튼 둘. 폰에는 ESC 가 없어서 × 가 없으면 말하기에서 빠져나올
+          방법이 blur 뿐인데, 그 blur 로 무르면 치던 말이 날아간다(위 cancelOnBlur).
+        ★ onPointerDown 에서 처리한다 — click 을 기다리면 그 사이 input 의 blur 가
+          먼저 나가고, 이 버튼이 사라진 뒤에 클릭이 도착해 아무 일도 안 일어난다.
+      */}
+      {touchMode ? (
+        <>
+          <button
+            type="button"
+            onPointerDown={(e) => {
+              e.preventDefault();
+              onSend();
+            }}
+            aria-label="보내기"
+            className="shrink-0 rounded-full bg-[#d4a373]/90 px-3.5 py-1.5 text-[12px] font-bold text-black active:bg-[#d4a373]"
+          >
+            보내기
+          </button>
+          <button
+            type="button"
+            onPointerDown={(e) => {
+              e.preventDefault();
+              onCancel();
+            }}
+            aria-label="말하기 그만두기"
+            className="shrink-0 rounded-full px-2 py-1.5 text-[15px] leading-none text-neutral-500 active:text-neutral-200"
+          >
+            ×
+          </button>
+        </>
+      ) : null}
     </div>
   );
 }
