@@ -147,7 +147,8 @@ grep -rho 'process\.env\.[A-Z_]*' .open-next/server-functions --include='*.js' |
 | `WORLD_SHARED_SECRET` | `wrangler secret put` **워커 둘 다** | Next 가 티켓에 서명하고 월드 워커가 검증한다 — **두 값이 같아야 한다** |
 | `NEXT_PUBLIC_SUPABASE_URL` · `..._ANON_KEY` | `wrangler secret put` | 서버가 읽고, 브라우저에는 `/api/config` 가 내려준다. 원래 공개값이라 anon 키는 RLS 가 지킨다 |
 | `NEXT_PUBLIC_WORLD_WS_URL` | `wrangler secret put` | `/api/world/ticket` 이 서버에서 읽어 티켓에 실어 준다. 브라우저는 이 이름을 안 본다 |
-| `AGENT_SELF_URL` | `wrangler.jsonc` 의 `vars` | 봇 답변 재생성이 `/api/agent` 를 self-fetch 할 자기 공개 주소. 비밀이 아니다 |
+| `AGENT_SELF_URL` | **넣지 않는다** | 봇 답변 재생성의 self-fetch 주소. `lib/agent/self-call.ts` 가 들어온 요청의 `host` 에서 딴다 — 계정을 옮겨도 저절로 맞는다. 못 박고 싶을 때만 `secret put` (vars 는 배포가 지운다) |
+| `AGENT_SHARED_SECRET` | `wrangler secret put` | **없으면 프로덕션 `/api/agent` 가 통째로 404 다** (fail-closed). 워커 안에서 자기가 서명하고 자기가 검증하므로 아무 랜덤값이면 된다 — `openssl rand -hex 32` |
 | `NEXT_ORIGIN` | `.env.local` (로컬 전용) | Next 는 안 읽는다. `next.config.ts` 의 dev 설정과, `world:deploy` 가 월드 워커에 `--var` 로 실어 보낼 때만 쓴다 |
 | `SUPABASE_DB_URL_DIRECT` | 넣지 않는다 | 마이그레이션 전용 (SPEC §12.2) |
 | `NVIDIA_NIM_*` | 선택 (`secret put`) | `/api/agent` 를 쓸 때만. 없으면 게임도 3D 월드도 DB 문구 풀로 떨어진다 — 그게 폴백이다 (SPEC §17) |
