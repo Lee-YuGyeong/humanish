@@ -1940,6 +1940,8 @@ export class RoomDO {
     const win = Math.max(0, s.phaseEndsAt - now);
     for (const bot of this.roundBots()) {
       // 침묵 추첨은 **좌석마다 · 라운드마다 독립**이다 (BOT_SILENCE_CHANCE).
+      // ★ 지금 그 값은 0 이다 (2026-08-08) — 봇은 주제에 100% 답한다. 추첨 자체는
+      //   되살릴 자리로 남겨 둔다. 되살리는 조건은 상수의 상자에 있다.
       primeForTopic(bot, now, win, Math.random() >= BOT_SILENCE_CHANCE);
     }
   }
