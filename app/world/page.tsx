@@ -4,9 +4,10 @@
  * /world — 여러 명이 같은 3D 공간에서 함께 있는 화면. 소유: 원상
  *
  * 흐름:
- *   방 만들기·입장 (기존 /api/room, /api/room/join — 좌석·역할은 DB가 정한다)
+ *   로비(/main)에서 `?code=` 로 넘어와 /api/room/join (좌석·역할은 DB가 정한다)
  *     → /api/world/ticket 으로 60초짜리 서명 티켓을 받고
  *     → 워커(Durable Object)에 WebSocket으로 붙는다
+ *   코드 없이 열면 로비로 돌려보낸다 — 방을 만들고 고르는 곳은 /main 하나다 (2026-08-08)
  *
  * 이 화면은 Supabase를 직접 읽지 않는다. 게임 규칙·페이즈는 /room/[code]의 몫이고,
  * 여기는 **같이 있는 것**만 책임진다.
@@ -251,10 +252,6 @@ const RESULT_TO_LOBBY_MS = 12_000;
 
 export default function WorldPage() {
   const router = useRouter();
-  const [code, setCode] = useState('');
-  /** 새 방 이름 — **이 이름이 곧 입장 코드다** (lib/server/room.ts codeFromName). 비우면 랜덤 4자 */
-  const [newName, setNewName] = useState('');
-  const [busy, setBusy] = useState(false);
   const [ticket, setTicket] = useState<Ticket | null>(null);
   const [locked, setLocked] = useState(false);
   /**
@@ -301,13 +298,6 @@ export default function WorldPage() {
    * 전부 키였는데 폰에는 키가 없어서 갈 곳이 없다 (touch-controls 의 TouchMenu).
    */
   const [menuOpen, setMenuOpen] = useState(false);
-  /**
-   * 로비에서 「게임 시작」으로 넘어온 흐름인가 (`/world?code=`). 이때는 입장 패널
-   * (방 만들기·정원 카드)을 띄우지 않는다 — 이미 방이 정해졌으니 **로딩 표시**만
-   * 보이고 곧장 3D 월드로 들어간다. 라운지(코드 없이 /world 직접 방문)는 false 라
-   * 예전처럼 입장 패널이 뜬다.
-   */
-  const [gameFlow, setGameFlow] = useState(false);
 
   /*
    * 손으로 하는가, 키보드로 하는가 (input.ts 의 watchPointerKind).
@@ -367,8 +357,7 @@ export default function WorldPage() {
   );
 
   const enter = useCallback(
-    async (roomCode?: string) => {
-      setBusy(true);
+    async (roomCode: string) => {
       try {
         // 방을 옮길 때는 이전 방 상태를 전부 지운다. 안 지우면 새 방에 새어 나온다
         conn.close();
@@ -380,17 +369,15 @@ export default function WorldPage() {
         useRoundtableStore.getState().reset();
         useWorldStore.getState().setStatus('connecting');
 
-        const trimmedName = newName.trim();
-        const room = roomCode
-          ? await postJson<{ room: { id: string } }>('/api/room/join', { code: roomCode.toUpperCase() })
-          : await postJson<{ room: { id: string } }>('/api/room', {
-              // 이름을 지었으면 그 이름이 곧 입장 코드가 된다. 겹치면 409 가 그대로 뜬다.
-              ...(trimmedName ? { name: trimmedName } : null),
-            });
+        // 방 만들기는 여기 없다 — 방은 로비(/main)에서만 만들고, 이 화면은 조인만 한다
+        // (2026-08-08, 입장 패널 제거). 자리는 로비가 이미 배정했고 이 join 은
+        // 같은 쿠키로 원래 자리를 돌려받는 재입장(200)이라 두 번 불러도 안전하다.
+        const room = await postJson<{ room: { id: string } }>('/api/room/join', {
+          code: roomCode.toUpperCase(),
+        });
 
         const t = await postJson<Ticket>('/api/world/ticket', { room_id: room.room.id });
         setTicket(t);
-        setCode(t.room.code);
         useWorldStore.getState().setSelf(t.self.id, {
           seat: t.self.seat,
           nickname: t.self.nickname,
@@ -405,21 +392,20 @@ export default function WorldPage() {
         // 로비가 죽은 방으로 무한히 되돌리지 않게 한다.
         clearActiveRoom();
         useWorldStore.getState().setStatus('error', e instanceof Error ? e.message : String(e));
-      } finally {
-        setBusy(false);
       }
     },
-    // newName 이 바뀌면 enter 도 바뀐다 — 자동 입장 효과는 ref 가드가 재진입을 막는다
-    [conn, events, newName],
+    [conn, events],
   );
 
   useEffect(() => () => conn.close(), [conn]);
 
   /**
-   * `/world?code=ABCD` — 방 목록(/main)에서 넘어온 자동 입장.
+   * `/world?code=ABCD` — 방 목록(/main)에서 넘어온 자동 입장. **이게 유일한 입구다.**
    *
-   * · 자리는 로비가 이미 배정했다(/api/room/join). 여기 enter 의 join 은 같은
-   *   쿠키로 원래 자리를 돌려받는 재입장(200)이라 두 번 불러도 안전하다.
+   * · 코드가 없으면 로비로 보낸다. 예전에는 여기서 입장 패널(방에 들어가기 카드)이
+   *   떴는데 2026-08-08에 뺐다 — 방을 만들고 고르는 곳은 /main 하나여야 하고,
+   *   작업 보드·인트로 바닥의 /world 직행 링크로 들어온 사람이 로비를 건너뛰고
+   *   옛 화면을 만나는 일이 실제로 있었다.
    * · useSearchParams 대신 location.search 를 읽는다 — 이 페이지는 전부 클라이언트
    *   상호작용이라 Suspense 경계를 새로 파느니 마운트 때 한 번 읽는 게 맞다.
    * · ref 가드는 StrictMode 의 이중 실행 방지다. 「새로운 게임 시작하기」로 나온
@@ -431,12 +417,13 @@ export default function WorldPage() {
     const fromList = new URLSearchParams(window.location.search).get('code');
     // 코드는 이제 방 이름일 수 있다 — "4자" 검사를 버리고 비었는지만 본다.
     const normalized = fromList?.replace(/\s+/g, '').toUpperCase() ?? '';
-    if (!normalized) return;
     autoEntered.current = true;
-    setGameFlow(true); // 로비에서 넘어온 흐름 — 입장 패널 대신 로딩 표시를 띄운다
-    setCode(normalized);
+    if (!normalized) {
+      router.replace('/main');
+      return;
+    }
     void enter(normalized);
-  }, [enter]);
+  }, [enter, router]);
 
   /** 세계가 실제로 떠 있는가. 아래 효과들이 전부 이 값을 본다 (선언이 먼저여야 한다) */
   const live = status === 'live' && ticket !== null;
@@ -639,14 +626,12 @@ export default function WorldPage() {
   );
 
   /**
-   * 방을 떠나 입장 패널로 돌아간다 — 결과 화면의 「새로운 게임 시작하기」가 쓴다.
-   * 헤더의 「현재 방에서 퇴장하기」도 이 정리를 거친 뒤 방 목록(/main)으로 나간다 —
+   * 방을 떠나기 전의 공통 정리 — 결과 화면의 「새로운 게임 시작하기」와 헤더의
+   * 「현재 방에서 퇴장하기」가 쓰고, 호출부가 이어서 /main 으로 나간다.
    * 스토어가 전역이라 reset 없이 떠나면 다음 /world 방문에 이전 방 상태가 샌다.
    *
    * `enter` 첫머리의 정리 순서와 같다 — conn.close() 가 핸들러를 먼저 떼므로
-   * (connection.ts close) "연결이 끊겼다" 오류가 입장 패널에 새지 않고,
-   * 스토어 reset 이 status 를 'idle' 로 되돌려 패널이 깨끗하게 뜬다.
-   * `code` 는 남겨 둔다 — 같은 방으로 바로 되돌아갈 수 있게.
+   * (connection.ts close) "연결이 끊겼다" 오류가 떠나는 화면에 새지 않는다.
    */
   const leave = useCallback(() => {
     setConfirmLeave(false);
@@ -657,8 +642,6 @@ export default function WorldPage() {
     setComposing(false);
     setTicket(null);
     setEverLocked(false);
-    // 입장 패널로 돌아가는 길이므로 게임 흐름 플래그를 내린다 — 안 내리면 로딩 표시에 갇힌다
-    setGameFlow(false);
     useWorldStore.getState().reset();
     useRoundtableStore.getState().reset();
   }, [conn]);
@@ -1048,12 +1031,12 @@ export default function WorldPage() {
       </header>
 
       {/*
-        로비에서 「게임 시작」으로 넘어온 흐름(gameFlow)에서는 입장 패널(방 만들기 카드)을
-        띄우지 않는다. 방은 이미 정해졌으니 로딩 표시만 보이고 곧장 월드로 들어간다 —
+        세계가 뜨기 전에는 로딩 표시 하나뿐이다. 방은 로비에서 이미 정해졌으니
+        (?code= 자동 입장, 코드 없으면 /main 으로 돌려보낸다) 여기서 고를 것이 없다 —
         전원이 도착할 때까지의 "다른 인원 대기"는 월드 안의 스크린(warehouse ScreenWaiting)이
-        present/total 로 보여 준다.
+        present/total 로 보여 준다. 입장 패널(방에 들어가기 카드)은 2026-08-08에 뺐다.
       */}
-      {!live && gameFlow ? (
+      {!live ? (
         <div className="absolute inset-0 z-30 flex flex-col items-center justify-center gap-3 bg-[#07050a] p-6 text-center">
           {errorText ? (
             <>
@@ -1073,60 +1056,6 @@ export default function WorldPage() {
               <p className="text-[12px] text-neutral-500">다른 인원의 로딩을 기다리는 중입니다</p>
             </>
           )}
-        </div>
-      ) : null}
-
-      {/* 입장 패널 — 코드 없이 /world 로 직접 온 라운지에서만 뜬다 */}
-      {!live && !gameFlow ? (
-        <div className="absolute inset-0 flex items-center justify-center p-6">
-          <div className="w-full max-w-sm rounded-2xl bg-black/70 p-6 ring-1 ring-white/10 backdrop-blur">
-            <h2 className="text-sm font-bold text-neutral-200">방에 들어가기</h2>
-            <p className="mt-1 text-[11px] leading-relaxed text-neutral-500">
-              같은 방 코드로 들어온 사람들이 같은 공간에서 서로를 봅니다. 빈자리는 채워집니다.
-            </p>
-
-            <div className="mt-4 flex gap-2">
-              <input
-                value={code}
-                // 코드는 이제 방 이름일 수 있다 — 공백 제거 + 대문자 (서버 codeFromName 과 같은 모양)
-                onChange={(e) => setCode(e.target.value.replace(/\s/g, '').toUpperCase().slice(0, 20))}
-                placeholder="방 이름 또는 코드"
-                className="min-w-0 flex-1 rounded-lg bg-white/5 px-3 py-2 text-center font-mono text-sm tracking-widest text-neutral-100 ring-1 ring-white/15 outline-none focus:ring-amber-500/50"
-              />
-              <button
-                type="button"
-                disabled={busy || code.length === 0}
-                onClick={() => void enter(code)}
-                className="shrink-0 rounded-lg bg-amber-500/90 px-5 py-2 text-sm font-bold text-black transition-colors hover:bg-amber-400 disabled:opacity-40"
-              >
-                입장
-              </button>
-            </div>
-
-            {/* 새 방 이름 — **이 이름이 곧 입장 코드다.** 겹치면 서버가 409 로 거절한다 */}
-            <input
-              value={newName}
-              onChange={(e) => setNewName(e.target.value.slice(0, 20))}
-              maxLength={20}
-              placeholder="새 방 이름 (비우면 랜덤 코드)"
-              className="mt-4 w-full rounded-lg bg-white/5 px-3 py-2 text-sm text-neutral-100 ring-1 ring-white/15 outline-none placeholder:text-neutral-600 focus:ring-amber-500/50"
-            />
-            <button
-              type="button"
-              disabled={busy}
-              onClick={() => void enter()}
-              className="mt-2 w-full rounded-lg bg-white/10 px-4 py-2 text-sm font-bold text-neutral-200 transition-colors hover:bg-white/20 disabled:opacity-40"
-            >
-              새 방 만들기
-            </button>
-
-            {status === 'connecting' ? (
-              <p className="mt-3 text-[11px] text-neutral-500">연결 중…</p>
-            ) : null}
-            {errorText ? (
-              <p className="mt-3 text-[11px] leading-relaxed text-red-400">{errorText}</p>
-            ) : null}
-          </div>
         </div>
       ) : null}
 
