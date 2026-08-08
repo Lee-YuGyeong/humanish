@@ -10,7 +10,16 @@
     "skipLibCheck": true,
     "isolatedModules": true,
     "esModuleInterop": true,
-    "forceConsistentCasingInFileNames": true
+    "forceConsistentCasingInFileNames": true,
+
+    // 루트 tsconfig 와 같은 추가 검사. **noUnusedParameters 만 뺀다** —
+    // src/room-do.ts 의 핸들러가 쓰지 않는 request 인자를 받는데, 그건 시그니처가
+    // 계약이라 지울 수 없다. 인자를 지우지 않으려고 규칙 쪽을 뺀다.
+    "noImplicitOverride": true,
+    "noFallthroughCasesInSwitch": true,
+    "noImplicitReturns": true,
+    "noUnusedLocals": true,
+    "allowUnreachableCode": false
   },
   // src 밖의 lib/mp/* 도 검사한다. 계약을 공유하므로 한쪽만 깨지면 안 된다.
   // lib/agent/disguise 는 **파일 하나만** 넣는다 — 봇의 타이핑 지연 곡선을 2D 게임과

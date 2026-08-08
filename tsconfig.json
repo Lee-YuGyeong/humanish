@@ -13,6 +13,16 @@
     "isolatedModules": true,
     "jsx": "preserve",
     "incremental": true,
+
+    // strict 위에 얹는 검사들. 켜도 현재 에러 0이라 코드를 고칠 일이 없다.
+    // 일부러 안 켠 것: noUncheckedIndexedAccess(178건) · noPropertyAccessFromIndexSignature(346건)
+    // · exactOptionalPropertyTypes(13건) — 전부 lib/game/ 의 게임 규칙 코드를 손대게 된다.
+    "noImplicitOverride": true,
+    "noFallthroughCasesInSwitch": true,
+    "noImplicitReturns": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "allowUnreachableCode": false,
     "plugins": [
       {
         "name": "next"

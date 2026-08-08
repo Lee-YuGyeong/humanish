@@ -44,5 +44,21 @@ export default defineConfig({
     // 전부 jsdom으로 돌리면 순수 함수 테스트까지 느려진다.
     environment: 'node',
     setupFiles: ['./tests/setup.ts'],
+    /**
+     * `npm run test:coverage` — 순수 함수와 화면 조각의 커버리지.
+     *
+     * app/ 는 일부러 뺀다. 페이지·라우트 핸들러는 위 상자대로 이 러너가 담당하지
+     * 않는 계층이라(supabase/test.sh · e2e.sh), 포함하면 검사하지 않기로 한 것이
+     * 0% 로 잡혀 숫자만 나빠진다. lib/mp/ 도 뺀다 — 프로토콜은 워커와 함께
+     * `npm run world:verify` 가 실제 소켓으로 확인한다.
+     *
+     * thresholds 는 걸지 않는다. 수치를 모르는 채 잠그면 첫 실행부터 빨간불이다.
+     */
+    coverage: {
+      provider: 'v8',
+      reporter: ['text', 'html'],
+      include: ['lib/**', 'components/**'],
+      exclude: ['lib/mp/**', '**/*.d.ts'],
+    },
   },
 });

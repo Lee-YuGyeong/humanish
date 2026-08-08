@@ -100,7 +100,9 @@ export function getBrowserClient(): Promise<SupabaseClient> {
        *   조용히 깨지는 종류의 실패라 여기서 한 번 더 못 박는다 (SPEC §7.3 참고).
        */
       db.auth.onAuthStateChange((_event, session) => {
-        db.realtime.setAuth(session?.access_token ?? anonKey);
+        // setAuth 는 약속을 돌려주지만 여기서 기다릴 것이 없다 — 실패해도 다음
+        // 토큰 갱신 때 다시 부른다. void 로 의도를 적어 no-floating-promises 를 지난다.
+        void db.realtime.setAuth(session?.access_token ?? anonKey);
       });
 
       return db;
